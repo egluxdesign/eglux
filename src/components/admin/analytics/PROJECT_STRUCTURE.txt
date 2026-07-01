@@ -1,0 +1,151 @@
+EGLUX Admin Dashboard v2.0 - Complete Project Structure
+═══════════════════════════════════════════════════════════════
+
+src/
+├── pages/
+│   └── AdminPage.jsx              ← Root component (auth + routing)
+│
+├── components/
+│   └── admin/
+│       ├── layout/
+│       │   ├── AdminLayout.jsx    ← Sidebar + Topbar wrapper
+│       │   ├── Sidebar.jsx        ← 7-menu navigation (dark)
+│       │   └── Topbar.jsx         ← Search, notif, profile
+│       │
+│       ├── dashboard/
+│       │   └── DashboardOverview.jsx  ← 6 KPI cards + recent orders
+│       │
+│       ├── orders/
+│       │   ├── StatusBadge.jsx        ← Reusable status badge
+│       │   ├── OrderFilters.jsx       ← Search, filter, date range
+│       │   ├── OrdersTable.jsx        ← Full data table + pagination
+│       │   ├── OrderDetailModal.jsx   ← Order detail + status update
+│       │   └── OrdersPage.jsx         ← Main orders page
+│       │
+│       ├── products/
+│       │   ├── ProductStatusBadge.jsx ← Product status badge
+│       │   ├── ProductFilters.jsx     ← Search, category, status
+│       │   ├── ProductsTable.jsx      ← Product table + stock alert
+│       │   ├── ProductForm.jsx        ← Add/Edit + variant manager
+│       │   └── ProductsPage.jsx       ← Main products page
+│       │
+│       ├── customers/
+│       │   ├── CustomersTable.jsx     ← Customer table + stats
+│       │   ├── CustomerDetailModal.jsx  ← Detail + order history
+│       │   └── CustomersPage.jsx      ← Main customers page
+│       │
+│       ├── payments/
+│       │   ├── PaymentsTable.jsx      ← Payment tracking table
+│       │   └── PaymentsPage.jsx       ← Main payments + stats
+│       │
+│       └── analytics/
+│           ├── RevenueChart.jsx           ← Area/Line sales chart
+│           ├── ProductPerformanceChart.jsx ← Horizontal bar chart
+│           ├── StatusDistributionChart.jsx  ← Donut status chart
+│           └── AnalyticsPage.jsx            ← Main analytics page
+│
+├── lib/
+│   └── supabaseClient.js        ← Supabase client config
+│
+└── [your existing files...]
+
+═══════════════════════════════════════════════════════════════
+FEATURES SUMMARY
+═══════════════════════════════════════════════════════════════
+
+✅ AUTHENTICATION
+   • Supabase auth (email/password)
+   • Session persistence
+   • Logout functionality
+
+✅ DASHBOARD (7 Menus)
+   1. Dashboard     - KPI cards + recent orders
+   2. Orders        - Full CRUD + filter + sort + pagination
+   3. Products      - CRUD + variants + stock management
+   4. Customers     - List + detail + order history
+   5. Payments      - Track transactions (Midtrans-ready)
+   6. Analytics     - 3 chart types + date range
+   7. Settings      - Store info + Midtrans credentials
+
+✅ ORDERS MANAGEMENT
+   • Search by customer/phone/ID
+   • Filter by status + date range
+   • Sort by all columns
+   • Pagination (10/25/50/100)
+   • Bulk status update
+   • Export CSV
+   • Detail modal with items
+
+✅ PRODUCTS CRUD
+   • Image preview
+   • Variant manager (size, color, price, stock)
+   • Low stock alert
+   • Bulk actions
+   • Delete confirmation
+
+✅ CUSTOMERS
+   • Order count + total spent
+   • Last order date
+   • Detail modal with full history
+   • Stats cards
+
+✅ PAYMENTS
+   • Status: Pending, Paid, Failed, Expired, Refunded
+   • Transaction ID tracking
+   • Revenue stats
+   • Midtrans integration ready
+
+✅ ANALYTICS
+   • Revenue trend (Area/Line chart)
+   • Top products (Bar chart)
+   • Status distribution (Pie chart)
+   • Date range filter
+   • 4 KPI cards + 3 metric cards
+
+✅ DESIGN
+   • Dark sidebar + light content
+   • Eglux gold (#c9a96e) accent
+   • Responsive (mobile sidebar)
+   • Skeleton loading states
+   • Empty states
+   • Smooth transitions
+
+═══════════════════════════════════════════════════════════════
+DATABASE TABLES USED
+═══════════════════════════════════════════════════════════════
+
+• customers          - Customer data
+• orders             - Order headers
+• order_items        - Order line items
+• products           - Product catalog
+• product_variants   - Product variants
+• payments           - Payment records
+• product_images     - Product images
+
+═══════════════════════════════════════════════════════════════
+NEXT STEPS / BONUS IDEAS
+═══════════════════════════════════════════════════════════════
+
+🔮 Phase 6 Ideas (if you want):
+   • Real-time notifications (Supabase realtime)
+   • Dark mode toggle
+   • PDF invoice generator
+   • Email notifications (Resend/EmailJS)
+   • Multi-language support
+   • Advanced role-based access (admin, staff, viewer)
+   • Inventory alerts (email/SMS when low stock)
+   • Sales forecasting
+   • Customer segmentation
+   • A/B testing for products
+
+🔌 Midtrans Integration:
+   1. Install midtrans-client
+   2. Create payment endpoint
+   3. Setup webhook handler
+   4. Update payment status automatically
+
+📱 Mobile App:
+   • React Native with same Supabase backend
+   • Push notifications for new orders
+
+═══════════════════════════════════════════════════════════════

@@ -1,0 +1,397 @@
+/* =============================================
+   EGLUX BLOG — blog.css
+   Import file ini di BlogPage.jsx
+   ============================================= */
+
+/* ===== BLOG HERO ===== */
+        :root {
+            --primary: #554521;
+            --secondary: #cba65a;
+            --accent: #f5f0e8;
+            --light: #faf8f5;
+            --white: #ffffff;
+            --text-light: #666;
+            --sidebar-dark: #cba65a;
+            --transition: all 0.3s ease;
+        }
+
+.blog-hero {
+  min-height: 40vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, var(--light) 0%, var(--accent) 100%);
+  padding-top: 80px;
+  position: relative;
+  overflow: hidden;
+}
+
+.blog-hero::before {
+  content: '';
+  position: absolute;
+  top: -30%;
+  right: -10%;
+  width: 600px;
+  height: 600px;
+  background: radial-gradient(circle, rgba(201, 169, 110, 0.08) 0%, transparent 70%);
+  border-radius: 50%;
+}
+
+.blog-hero .container {
+  position: relative;
+  z-index: 1;
+  text-align: center;
+}
+
+.blog-hero h1 {
+  font-size: 3rem;
+  font-weight: 800;
+  color: var(--primary);
+  margin-bottom: 1rem;
+}
+
+.blog-hero p {
+  font-size: 1.1rem;
+  color: var(--text-light);
+  max-width: 500px;
+  margin: 0 auto;
+}
+
+/* ===== BLOG LIST VIEW ===== */
+.blog-list {
+  background: var(--light);
+  padding: 4rem 4rem;
+}
+
+.list-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 2rem;
+}
+
+/* ===== BLOG PREVIEW CARD ===== */
+.blog-preview-card {
+  background: var(--white);
+  border-radius: 20px;
+  overflow: hidden;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
+  transition: var(--transition);
+  cursor: pointer;
+  border: 1px solid rgba(0, 0, 0, 0.03);
+}
+
+.blog-preview-card:hover {
+  transform: translateY(-8px);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.1);
+}
+
+.preview-image {
+  width: 100%;
+  height: 220px;
+  overflow: hidden;
+  background: var(--light);
+}
+
+.preview-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: var(--transition);
+}
+
+.blog-preview-card:hover .preview-image img {
+  transform: scale(1.05);
+}
+
+.preview-content {
+  padding: 1.5rem;
+}
+
+.preview-meta {
+  display: flex;
+  gap: 1rem;
+  font-size: 0.8rem;
+  color: var(--text-light);
+  margin-bottom: 0.6rem;
+}
+
+.preview-meta .meta-date {
+  font-weight: 600;
+  color: var(--secondary);
+}
+
+.preview-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--primary);
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ===== BLOG DETAIL VIEW ===== */
+.blog-detail {
+  background: var(--white);
+  padding: 4rem 4rem;
+}
+
+.back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: var(--accent);
+  color: var(--primary);
+  padding: 0.7rem 1.2rem;
+  border-radius: 50px;
+  font-weight: 600;
+  font-size: 0.9rem;
+  cursor: pointer;
+  border: none;
+  margin-bottom: 2rem;
+  transition: var(--transition);
+}
+
+.back-btn:hover {
+  background: var(--secondary);
+  color: var(--white);
+}
+
+.article-full {
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.article-header {
+  margin-bottom: 2rem;
+}
+
+.article-meta {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  margin-bottom: 1rem;
+  font-size: 0.9rem;
+  color: var(--text-light);
+  flex-wrap: wrap;
+}
+
+.article-meta .meta-date {
+  font-weight: 600;
+  color: var(--secondary);
+}
+
+.article-header h2 {
+  font-size: 2.2rem;
+  font-weight: 800;
+  color: var(--primary);
+  line-height: 1.2;
+}
+
+.article-cover {
+  width: 100%;
+  height: 400px;
+  border-radius: 20px;
+  overflow: hidden;
+  margin-bottom: 2rem;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.08);
+  background: var(--light);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-light);
+}
+
+.article-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.article-body {
+  font-size: 1.05rem;
+  line-height: 1.9;
+  color: var(--primary);
+}
+
+.article-body p {
+  margin-bottom: 1.2rem;
+}
+
+/* ===== ARTICLE MEDIA GRID — LAYOUT BARU ===== */
+/* Video (A) di kiri tall, Gallery (B) di kanan 3 stacked */
+/* Video FULL fit container, gallery bisa lebih tinggi */
+
+.article-media-grid {
+  display: flex;
+  flex-direction: row;
+  gap: 1rem;
+  margin: 2rem auto;
+  max-width: 800px;
+  min-height: 500px;
+  padding: 0 1rem;
+}
+
+/* Video Player — kiri, flex lebih besar (A) */
+.video-player {
+  flex: 1.5;
+  border-radius: 16px;
+  overflow: hidden;
+  background: #000;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.15);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* Video FULL fit container — object-fit: cover */
+.video-player video,
+.video-player iframe {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;        /* ← FULL fit container */
+  border: none;
+  display: block;
+}
+
+/* Article Gallery — kanan, 3 foto stacked (B1, B2, B3) */
+/* Gallery bisa lebih tinggi dari video */
+.article-gallery {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  min-width: 0;
+  min-height: 0;
+}
+
+.article-gallery img {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  object-fit: cover;
+  border-radius: 12px;
+  display: block;
+}
+
+/* ===== SKELETON LOADER ===== */
+.skeleton-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 2rem;
+}
+
+.skeleton-card {
+  background: var(--white);
+  border-radius: 20px;
+  overflow: hidden;
+  height: 340px;
+}
+
+.skeleton-image {
+  width: 100%;
+  height: 220px;
+  background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+.skeleton-text {
+  padding: 1.5rem;
+}
+
+.skeleton-line {
+  height: 12px;
+  background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: 6px;
+  margin-bottom: 8px;
+}
+
+.skeleton-line.short {
+  width: 60%;
+}
+
+@keyframes shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* ===== EMPTY & ERROR STATE ===== */
+.empty-state,
+.error-state {
+  text-align: center;
+  padding: 5rem 2rem;
+  color: var(--text-light);
+}
+
+.empty-state-icon {
+  font-size: 4rem;
+  margin-bottom: 1.5rem;
+  opacity: 0.5;
+}
+
+.empty-state h3 {
+  color: var(--primary);
+  font-size: 1.3rem;
+}
+
+.error-state h3 {
+  color: #ff4444;
+  font-size: 1.3rem;
+}
+
+/* ===== RESPONSIVE ===== */
+@media (max-width: 1024px) {
+  .list-grid,
+  .skeleton-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 768px) {
+  .blog-hero h1       { font-size: 2.2rem; }
+  .list-grid,
+  .skeleton-grid      { grid-template-columns: 1fr; }
+  .article-header h2  { font-size: 1.6rem; }
+  .article-cover      { height: 300px; }
+
+  /* Mobile: stack vertical */
+  .article-media-grid {
+    flex-direction: column;
+    min-height: auto;
+    max-width: 100%;
+    margin: 2rem auto;
+    padding: 0 1rem;
+  }
+
+  .video-player {
+    flex: none;
+    height: 680px;
+    width: 100%;
+  }
+
+  /* Video FULL fit di mobile juga */
+  .video-player video,
+  .video-player iframe {
+    height: 680px;
+    object-fit: cover;        /* ← FULL fit container */
+  }
+
+  .article-gallery {
+    flex: none;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .article-gallery img {
+    flex: none;
+    height: 250px;
+    width: 100%;
+  }
+}

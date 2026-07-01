@@ -1,0 +1,17 @@
+/* Color tokens */
+--admin-bg: #f8f9fc
+--admin-sidebar: #1a1d2b
+--admin-sidebar-active: #2d3142
+--admin-primary: #c9a96e      /* Eglux gold */
+--admin-primary-hover: #b8985e
+--admin-success: #22c55e
+--admin-warning: #f59e0b
+--admin-danger: #ef4444
+--admin-info: #3b82f6
+
+/* Layout */
+Sidebar width: 260px (desktop), 0 → slide-in (mobile)
+Topbar height: 64px
+Content padding: 24px
+Card border-radius: 16px
+Card shadow: 0 1px 3px rgba(0,0,0,0.05)
