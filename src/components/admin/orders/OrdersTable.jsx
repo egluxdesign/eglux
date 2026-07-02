@@ -1,5 +1,5 @@
 // src/components/admin/orders/OrdersTable.jsx
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { 
   ChevronLeft, 
   ChevronRight, 
@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import StatusBadge from './StatusBadge';
 
-const rupiah = (n) => 'Rp ' + Number(n).toLocaleString('id-ID');
+const rupiah = (n) => 'Rp ' + Number(n || 0).toLocaleString('id-ID');
 
 const OrdersTable = ({ 
   orders, 
@@ -24,11 +24,29 @@ const OrdersTable = ({
   onViewDetail,
   onStatusChange,
   sortConfig,
-  onSort
+  onSort,
+  resetKey,
 }) => {
   const [page, setPage] = useState(1);
   const [rowsPerPage, setRowsPerPage] = useState(10);
   const [actionMenuOpen, setActionMenuOpen] = useState(null);
+
+  // Reset ke halaman 1 setiap filter/search/sort berubah, biar gak "kehilangan" hasil
+  // ketika sedang di halaman lanjut lalu filter berubah jadi lebih sedikit hasil.
+  useEffect(() => {
+    setPage(1);
+  }, [resetKey]);
+
+  // Tutup action menu kalau klik di luar area menu
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (!e.target.closest('[data-order-action-menu]')) {
+        setActionMenuOpen(null);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   const totalPages = Math.ceil(orders.length / rowsPerPage);
   const startIndex = (page - 1) * rowsPerPage;
@@ -186,7 +204,7 @@ const OrdersTable = ({
                     >
                       <Eye className="w-4 h-4 text-[#6b7280]" />
                     </button>
-                    <div className="relative">
+                    <div className="relative" data-order-action-menu>
                       <button
                         onClick={() => setActionMenuOpen(actionMenuOpen === order.id ? null : order.id)}
                         className="p-1.5 hover:bg-[#f8f9fc] rounded-lg transition-colors"
@@ -195,7 +213,9 @@ const OrdersTable = ({
                       </button>
                       {actionMenuOpen === order.id && (
                         <div className="absolute right-0 top-full mt-1 w-40 bg-white rounded-xl shadow-lg border border-[#e8ecf4] py-1 z-10">
-                          {['pending', 'confirmed', 'paid', 'shipped', 'cancelled'].map((status) => (
+                          {['pending', 'confirmed', 'paid', 'shipped', 'cancelled']
+                            .filter((status) => status !== order.status)
+                            .map((status) => (
                             <button
                               key={status}
                               onClick={() => { onStatusChange(order.id, status); setActionMenuOpen(null); }}
@@ -216,7 +236,7 @@ const OrdersTable = ({
       </div>
 
       {/* Pagination */}
-      <div className="flex items-center justify-between px-4 py-3 border-t border-[#e8ecf4]">
+      <div className="flex items-center justify-between px-4 py-3 border-t border-[#e8ecf4] flex-wrap gap-3">
         <div className="flex items-center gap-3">
           <span className="text-[0.8rem] text-[#6b7280]">
             Showing {startIndex + 1} to {Math.min(startIndex + rowsPerPage, orders.length)} of {orders.length} orders

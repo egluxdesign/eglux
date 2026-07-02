@@ -4,7 +4,7 @@ const STATUS_CONFIG = {
   confirmed: { label: 'Confirmed', bg: 'bg-blue-50',    text: 'text-blue-600',    border: 'border-blue-100',    dot: 'bg-blue-500' },
   paid:      { label: 'Paid',      bg: 'bg-emerald-50', text: 'text-emerald-600', border: 'border-emerald-100', dot: 'bg-emerald-500' },
   shipped:   { label: 'Shipped',   bg: 'bg-violet-50',  text: 'text-violet-600',  border: 'border-violet-100',  dot: 'bg-violet-500' },
-  cancelled: { label: 'Cancelled', bg: 'bg-red-50',    text: 'text-red-600',     border: 'border-red-100',     dot: 'bg-red-500' },
+  cancelled: { label: 'Cancelled', bg: 'bg-red-50',     text: 'text-red-600',     border: 'border-red-100',     dot: 'bg-red-500' },
 };
 
 const StatusBadge = ({ status, size = 'md' }) => {

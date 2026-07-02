@@ -4,11 +4,13 @@ import { supabase } from '../../../lib/supabaseClient';
 import OrderFilters from './OrderFilters';
 import OrdersTable from './OrdersTable';
 import OrderDetailModal from './OrderDetailModal';
-import { ShoppingBag } from 'lucide-react';
+import { ShoppingBag, AlertTriangle } from 'lucide-react';
 
 const OrdersPage = () => {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState(null);
+  const [actionError, setActionError] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [dateRange, setDateRange] = useState({ start: '', end: '' });
@@ -18,6 +20,8 @@ const OrdersPage = () => {
 
   const fetchOrders = useCallback(async () => {
     setLoading(true);
+    setFetchError(null);
+
     let query = supabase
       .from('orders')
       .select('*, customers(name, phone, email)')
@@ -36,7 +40,15 @@ const OrdersPage = () => {
       query = query.lte('created_at', dateRange.end + 'T23:59:59');
     }
 
-    const { data } = await query;
+    const { data, error } = await query;
+
+    if (error) {
+      setFetchError('Gagal memuat data order. Coba refresh.');
+      setOrders([]);
+      setLoading(false);
+      return;
+    }
+
     let result = data || [];
 
     // Client-side search
@@ -91,27 +103,54 @@ const OrdersPage = () => {
   };
 
   const handleStatusChange = async (orderId, newStatus) => {
-    await supabase.from('orders').update({ status: newStatus }).eq('id', orderId);
+    setActionError(null);
+    const previous = orders.find(o => o.id === orderId)?.status;
+
+    // Optimistic update
     setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o));
+
+    const { error } = await supabase.from('orders').update({ status: newStatus }).eq('id', orderId);
+
+    if (error) {
+      // Revert kalau gagal
+      setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: previous } : o));
+      setActionError('Gagal update status order. Coba lagi.');
+    }
   };
 
   const handleBulkStatusChange = async (newStatus) => {
-    await supabase.from('orders').update({ status: newStatus }).in('id', selectedOrders);
-    setOrders(prev => prev.map(o => selectedOrders.includes(o.id) ? { ...o, status: newStatus } : o));
+    setActionError(null);
+    const targetIds = [...selectedOrders];
+    const previousStatuses = new Map(orders.filter(o => targetIds.includes(o.id)).map(o => [o.id, o.status]));
+
+    setOrders(prev => prev.map(o => targetIds.includes(o.id) ? { ...o, status: newStatus } : o));
     setSelectedOrders([]);
+
+    const { error } = await supabase.from('orders').update({ status: newStatus }).in('id', targetIds);
+
+    if (error) {
+      setOrders(prev => prev.map(o => 
+        targetIds.includes(o.id) ? { ...o, status: previousStatuses.get(o.id) } : o
+      ));
+      setActionError('Gagal update status untuk order yang dipilih. Coba lagi.');
+    }
   };
+
+  // Escape field buat CSV: bungkus kutip dua dan escape kutip dua di dalamnya
+  const csvField = (val) => `"${String(val ?? '').replace(/"/g, '""')}"`;
 
   const handleExport = () => {
     const csv = [
-      ['Order ID', 'Customer', 'Phone', 'Date', 'Amount', 'Status', 'Address'].join(','),
+      ['Order ID', 'Customer', 'Phone', 'Date', 'Amount', 'Status', 'Payment Status', 'Address'].join(','),
       ...orders.map(o => [
-        o.id,
-        `"${o.customers?.name || ''}"`,
-        o.customers?.phone || '',
-        new Date(o.created_at).toISOString(),
+        csvField(o.id),
+        csvField(o.customers?.name || ''),
+        csvField(o.customers?.phone || ''),
+        csvField(new Date(o.created_at).toISOString()),
         o.total_amount,
-        o.status,
-        `"${o.shipping_address || ''}"`
+        csvField(o.status),
+        csvField(o.payment_status),
+        csvField(o.shipping_address || '')
       ].join(','))
     ].join('\n');
 
@@ -124,10 +163,13 @@ const OrdersPage = () => {
     URL.revokeObjectURL(url);
   };
 
+  // Key ini berubah tiap filter/search/sort berubah -> dipakai OrdersTable buat reset ke halaman 1
+  const filterResetKey = `${statusFilter}|${searchQuery}|${dateRange.start}|${dateRange.end}|${sortConfig.key}|${sortConfig.direction}`;
+
   return (
     <div className="space-y-4">
       {/* Page Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-[1.5rem] font-bold text-[#1a1d2b]">Orders</h1>
           <p className="text-[0.85rem] text-[#9ca3af] mt-1">
@@ -140,6 +182,13 @@ const OrdersPage = () => {
           <span className="text-[0.8rem] text-[#9ca3af]">total orders</span>
         </div>
       </div>
+
+      {(fetchError || actionError) && (
+        <div className="flex items-center gap-3 bg-red-50 text-red-600 px-4 py-3 rounded-xl text-[0.85rem]">
+          <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+          {fetchError || actionError}
+        </div>
+      )}
 
       {/* Filters */}
       <OrderFilters
@@ -166,6 +215,7 @@ const OrdersPage = () => {
         onStatusChange={handleStatusChange}
         sortConfig={sortConfig}
         onSort={handleSort}
+        resetKey={filterResetKey}
       />
 
       {/* Detail Modal */}
