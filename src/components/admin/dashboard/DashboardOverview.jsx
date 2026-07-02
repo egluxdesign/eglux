@@ -8,16 +8,15 @@ import {
   CheckCircle, 
   Truck, 
   XCircle,
-  ArrowUpRight,
-  ArrowDownRight
+  AlertTriangle,
 } from 'lucide-react';
 
-const rupiah = (n) => 'Rp ' + Number(n).toLocaleString('id-ID');
+const rupiah = (n) => 'Rp ' + Number(n || 0).toLocaleString('id-ID');
 
 const STAT_CONFIG = [
   { 
     id: 'total_revenue', 
-    label: 'Total Revenue', 
+    label: 'Total Revenue (Paid)', 
     icon: TrendingUp, 
     color: 'emerald',
     prefix: 'Rp '
@@ -67,10 +66,13 @@ const COLOR_MAP = {
   red: { bg: 'bg-red-50', text: 'text-red-600', icon: 'text-red-500', border: 'border-red-100' },
 };
 
+// Trend dihitung dari data asli (30 hari terakhir vs 30 hari sebelumnya),
+// bukan angka acak. Kalau tidak ada data pembanding, badge trend disembunyikan.
 const StatCard = ({ config, value, trend }) => {
   const colors = COLOR_MAP[config.color];
   const Icon = config.icon;
-  const isPositive = trend >= 0;
+  const hasTrend = trend !== null && trend !== undefined && Number.isFinite(trend);
+  const isPositive = hasTrend && trend >= 0;
 
   return (
     <div className={`bg-white rounded-2xl p-5 border ${colors.border} hover:shadow-md transition-shadow`}>
@@ -78,10 +80,9 @@ const StatCard = ({ config, value, trend }) => {
         <div className={`w-10 h-10 ${colors.bg} rounded-xl flex items-center justify-center`}>
           <Icon className={`w-5 h-5 ${colors.icon}`} />
         </div>
-        {trend !== undefined && (
+        {hasTrend && (
           <div className={`flex items-center gap-1 text-[0.75rem] font-medium ${isPositive ? 'text-emerald-500' : 'text-red-500'}`}>
-            {isPositive ? <ArrowUpRight className="w-3.5 h-3.5" /> : <ArrowDownRight className="w-3.5 h-3.5" />}
-            {Math.abs(trend)}%
+            {isPositive ? '↑' : '↓'} {Math.abs(trend)}%
           </div>
         )}
       </div>
@@ -93,7 +94,19 @@ const StatCard = ({ config, value, trend }) => {
   );
 };
 
-const DashboardOverview = () => {
+const REVENUE_STATUSES = ['paid', 'shipped']; // status yang dihitung sebagai revenue nyata
+
+const calcRevenue = (orderList) =>
+  orderList
+    .filter((o) => REVENUE_STATUSES.includes(o.status))
+    .reduce((sum, o) => sum + (o.total_amount || 0), 0);
+
+const pctChange = (current, previous) => {
+  if (!previous) return null; // gak ada data pembanding, jangan tampilkan trend palsu
+  return Math.round(((current - previous) / previous) * 100);
+};
+
+const DashboardOverview = ({ onNavigate }) => {
   const [stats, setStats] = useState({
     total_revenue: 0,
     total_orders: 0,
@@ -102,8 +115,10 @@ const DashboardOverview = () => {
     shipped: 0,
     cancelled: 0,
   });
+  const [trends, setTrends] = useState({ total_revenue: null, total_orders: null });
   const [recentOrders, setRecentOrders] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
     fetchDashboardData();
@@ -111,24 +126,43 @@ const DashboardOverview = () => {
 
   const fetchDashboardData = async () => {
     setLoading(true);
+    setError(null);
 
-    // Fetch all orders
-    const { data: orders } = await supabase
+    const { data: orders, error: fetchError } = await supabase
       .from('orders')
       .select('*, customers(name, phone)')
       .order('created_at', { ascending: false });
 
+    if (fetchError) {
+      setError('Gagal memuat data dashboard. Coba refresh halaman.');
+      setLoading(false);
+      return;
+    }
+
     const orderList = orders || [];
 
-    // Calculate stats
     const newStats = {
-      total_revenue: orderList.reduce((sum, o) => sum + (o.total_amount || 0), 0),
+      total_revenue: calcRevenue(orderList),
       total_orders: orderList.length,
-      pending: orderList.filter(o => o.status === 'pending').length,
-      paid: orderList.filter(o => o.status === 'paid').length,
-      shipped: orderList.filter(o => o.status === 'shipped').length,
-      cancelled: orderList.filter(o => o.status === 'cancelled').length,
+      pending: orderList.filter((o) => o.status === 'pending').length,
+      paid: orderList.filter((o) => o.status === 'paid').length,
+      shipped: orderList.filter((o) => o.status === 'shipped').length,
+      cancelled: orderList.filter((o) => o.status === 'cancelled').length,
     };
+
+    // Bandingkan 30 hari terakhir vs 30 hari sebelumnya untuk trend asli
+    const now = Date.now();
+    const day30 = 30 * 24 * 60 * 60 * 1000;
+    const last30 = orderList.filter((o) => now - new Date(o.created_at).getTime() <= day30);
+    const prev30 = orderList.filter((o) => {
+      const age = now - new Date(o.created_at).getTime();
+      return age > day30 && age <= day30 * 2;
+    });
+
+    setTrends({
+      total_revenue: pctChange(calcRevenue(last30), calcRevenue(prev30)),
+      total_orders: pctChange(last30.length, prev30.length),
+    });
 
     setStats(newStats);
     setRecentOrders(orderList.slice(0, 5));
@@ -161,6 +195,13 @@ const DashboardOverview = () => {
         <p className="text-[0.85rem] text-[#9ca3af] mt-1">Overview of your store performance</p>
       </div>
 
+      {error && (
+        <div className="flex items-center gap-3 bg-red-50 text-red-600 px-4 py-3 rounded-xl text-[0.85rem]">
+          <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+          {error}
+        </div>
+      )}
+
       {/* Stat cards */}
       {loading ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -179,7 +220,7 @@ const DashboardOverview = () => {
               key={config.id}
               config={config}
               value={stats[config.id]}
-              trend={Math.floor(Math.random() * 20) - 5} // Placeholder trend
+              trend={trends[config.id]}
             />
           ))}
         </div>
@@ -192,7 +233,10 @@ const DashboardOverview = () => {
             <h2 className="text-[1rem] font-bold text-[#1a1d2b]">Recent Orders</h2>
             <p className="text-[0.8rem] text-[#9ca3af]">Latest 5 orders from your store</p>
           </div>
-          <button className="text-[0.8rem] text-[#c9a96e] font-medium hover:underline">
+          <button
+            onClick={() => onNavigate?.('orders')}
+            className="text-[0.8rem] text-[#c9a96e] font-medium hover:underline"
+          >
             View All
           </button>
         </div>

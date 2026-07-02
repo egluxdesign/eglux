@@ -1,100 +1,91 @@
 // src/components/admin/layout/NotificationDropdown.jsx
 import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../../../lib/supabaseClient';
-import { Bell, ShoppingBag, Package, AlertTriangle, CheckCircle, X, Clock } from 'lucide-react';
+import { Bell, ShoppingBag, AlertTriangle, Clock } from 'lucide-react';
 
-const NotificationDropdown = () => {
+const TYPE_STYLE = {
+  order: { icon: ShoppingBag, color: 'text-blue-500', bg: 'bg-blue-50' },
+  stock: { icon: AlertTriangle, color: 'text-amber-500', bg: 'bg-amber-50' },
+};
+
+const NotificationDropdown = ({ onNavigate }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [notifications, setNotifications] = useState([]);
-  const [unreadCount, setUnreadCount] = useState(0);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const dropdownRef = useRef(null);
+
+  const unreadCount = notifications.filter((n) => !n.is_read).length;
 
   useEffect(() => {
     fetchNotifications();
-    
-    // Close dropdown when clicking outside
+
+    // Realtime: notifikasi baru (dari trigger order/stock) langsung muncul tanpa refresh
+    const channel = supabase
+      .channel('notifications-live')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'notifications' },
+        (payload) => {
+          setNotifications((prev) => [payload.new, ...prev].slice(0, 20));
+        }
+      )
+      .subscribe();
+
     const handleClickOutside = (e) => {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
         setIsOpen(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+
+    return () => {
+      supabase.removeChannel(channel);
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
   }, []);
 
   const fetchNotifications = async () => {
     setLoading(true);
-    
-    // Fetch recent orders (last 24 hours)
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    
-    const [ordersRes, productsRes] = await Promise.all([
-      supabase
-        .from('orders')
-        .select('*, customers(name)')
-        .gte('created_at', yesterday.toISOString())
-        .order('created_at', { ascending: false })
-        .limit(5),
-      supabase
-        .from('products')
-        .select('*')
-        .lt('stock', 5)
-        .eq('status', 'active')
-        .limit(5)
-    ]);
+    setError(null);
 
-    const notifs = [];
+    const { data, error: fetchError } = await supabase
+      .from('notifications')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(20);
 
-    // New orders notifications
-    (ordersRes.data || []).forEach(order => {
-      notifs.push({
-        id: `order-${order.id}`,
-        type: 'order',
-        title: 'New Order',
-        message: `${order.customers?.name || 'Someone'} placed an order for ${rupiah(order.total_amount)}`,
-        time: order.created_at,
-        icon: ShoppingBag,
-        color: 'text-blue-500',
-        bg: 'bg-blue-50',
-        read: false,
-      });
-    });
+    if (fetchError) {
+      setError('Gagal memuat notifikasi.');
+      setLoading(false);
+      return;
+    }
 
-    // Low stock notifications
-    (productsRes.data || []).forEach(product => {
-      notifs.push({
-        id: `stock-${product.id}`,
-        type: 'stock',
-        title: 'Low Stock Alert',
-        message: `${product.name} only has ${product.stock} units left`,
-        time: new Date().toISOString(),
-        icon: AlertTriangle,
-        color: 'text-amber-500',
-        bg: 'bg-amber-50',
-        read: false,
-      });
-    });
-
-    // Sort by time (newest first)
-    notifs.sort((a, b) => new Date(b.time) - new Date(a.time));
-    
-    setNotifications(notifs);
-    setUnreadCount(notifs.filter(n => !n.read).length);
+    setNotifications(data || []);
     setLoading(false);
   };
 
-  const markAsRead = (id) => {
-    setNotifications(prev => 
-      prev.map(n => n.id === id ? { ...n, read: true } : n)
-    );
-    setUnreadCount(prev => Math.max(0, prev - 1));
+  const markAsRead = async (id) => {
+    setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, is_read: true } : n)));
+    await supabase.from('notifications').update({ is_read: true }).eq('id', id);
   };
 
-  const markAllAsRead = () => {
-    setNotifications(prev => prev.map(n => ({ ...n, read: true })));
-    setUnreadCount(0);
+  const markAllAsRead = async () => {
+    const unreadIds = notifications.filter((n) => !n.is_read).map((n) => n.id);
+    if (unreadIds.length === 0) return;
+    setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
+    await supabase.from('notifications').update({ is_read: true }).in('id', unreadIds);
+  };
+
+  const handleNotifClick = (notif) => {
+    markAsRead(notif.id);
+    setIsOpen(false);
+    onNavigate?.(notif.type === 'stock' ? 'products' : 'orders');
+  };
+
+  const goToOrders = () => {
+    setIsOpen(false);
+    onNavigate?.('orders');
   };
 
   const getTimeAgo = (iso) => {
@@ -102,7 +93,7 @@ const NotificationDropdown = () => {
     const minutes = Math.floor(diff / 60000);
     const hours = Math.floor(diff / 3600000);
     const days = Math.floor(diff / 86400000);
-    
+
     if (minutes < 1) return 'Just now';
     if (minutes < 60) return `${minutes}m ago`;
     if (hours < 24) return `${hours}h ago`;
@@ -142,7 +133,12 @@ const NotificationDropdown = () => {
 
           {/* Content */}
           <div className="max-h-[400px] overflow-auto">
-            {loading ? (
+            {error ? (
+              <div className="p-6 text-center">
+                <AlertTriangle className="w-8 h-8 text-red-300 mx-auto mb-2" />
+                <p className="text-[0.8rem] text-red-500">{error}</p>
+              </div>
+            ) : loading ? (
               <div className="p-6 space-y-3">
                 {[...Array(3)].map((_, i) => (
                   <div key={i} className="flex gap-3 animate-pulse">
@@ -163,29 +159,30 @@ const NotificationDropdown = () => {
             ) : (
               <div className="divide-y divide-[#f3f4f6]">
                 {notifications.map((notif) => {
-                  const Icon = notif.icon;
+                  const style = TYPE_STYLE[notif.type] || TYPE_STYLE.order;
+                  const Icon = style.icon;
                   return (
                     <div
                       key={notif.id}
-                      onClick={() => markAsRead(notif.id)}
+                      onClick={() => handleNotifClick(notif)}
                       className={`flex gap-3 px-5 py-3 cursor-pointer hover:bg-[#f8f9fc] transition-colors ${
-                        !notif.read ? 'bg-[#c9a96e]/5' : ''
+                        !notif.is_read ? 'bg-[#c9a96e]/5' : ''
                       }`}
                     >
-                      <div className={`w-8 h-8 ${notif.bg} rounded-lg flex items-center justify-center flex-shrink-0`}>
-                        <Icon className={`w-4 h-4 ${notif.color}`} />
+                      <div className={`w-8 h-8 ${style.bg} rounded-lg flex items-center justify-center flex-shrink-0`}>
+                        <Icon className={`w-4 h-4 ${style.color}`} />
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
                           <p className="text-[0.8rem] font-semibold text-[#1a1d2b]">{notif.title}</p>
-                          {!notif.read && (
+                          {!notif.is_read && (
                             <div className="w-1.5 h-1.5 rounded-full bg-[#c9a96e]" />
                           )}
                         </div>
                         <p className="text-[0.75rem] text-[#6b7280] mt-0.5 truncate">{notif.message}</p>
                         <p className="text-[0.7rem] text-[#9ca3af] mt-1 flex items-center gap-1">
                           <Clock className="w-3 h-3" />
-                          {getTimeAgo(notif.time)}
+                          {getTimeAgo(notif.created_at)}
                         </p>
                       </div>
                     </div>
@@ -198,7 +195,7 @@ const NotificationDropdown = () => {
           {/* Footer */}
           <div className="px-5 py-3 border-t border-[#e8ecf4] bg-[#f8f9fc]">
             <button
-              onClick={() => { setIsOpen(false); window.location.hash = 'orders'; }}
+              onClick={goToOrders}
               className="w-full text-center text-[0.8rem] text-[#6b7280] hover:text-[#1a1d2b] transition-colors"
             >
               View all activity
@@ -209,7 +206,5 @@ const NotificationDropdown = () => {
     </div>
   );
 };
-
-const rupiah = (n) => 'Rp ' + Number(n).toLocaleString('id-ID');
 
 export default NotificationDropdown;

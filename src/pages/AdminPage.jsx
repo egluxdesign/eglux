@@ -8,9 +8,10 @@ import ProductsPage from '../components/admin/products/ProductsPage';
 import CustomersPage from '../components/admin/customers/CustomersPage';
 import PaymentsPage from '../components/admin/payments/PaymentsPage';
 import AnalyticsPage from '../components/admin/analytics/AnalyticsPage';
+import ProfilePage from '../components/admin/profile/ProfilePage';
 
 // ── Login Form ────────────────────────────────────────────────
-const LoginForm = ({ onLogin }) => {
+const LoginForm = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -26,7 +27,9 @@ const LoginForm = ({ onLogin }) => {
       setLoading(false);
       return;
     }
-    onLogin();
+    // Tidak perlu set session manual di sini.
+    // onAuthStateChange di AdminPage akan otomatis menangkap sesi baru.
+    setLoading(false);
   };
 
   return (
@@ -52,6 +55,7 @@ const LoginForm = ({ onLogin }) => {
               onChange={(e) => setEmail(e.target.value)}
               placeholder="admin@eglux.id"
               required
+              autoComplete="username"
               className="w-full py-3 px-4 bg-[#f8f9fc] border border-[#e8ecf4] rounded-xl text-[0.9rem]
                          text-[#1a1d2b] outline-none focus:border-[#c9a96e] focus:ring-2 focus:ring-[#c9a96e]/20
                          transition-all placeholder-[#9ca3af]"
@@ -65,6 +69,7 @@ const LoginForm = ({ onLogin }) => {
               onChange={(e) => setPassword(e.target.value)}
               placeholder="••••••••"
               required
+              autoComplete="current-password"
               className="w-full py-3 px-4 bg-[#f8f9fc] border border-[#e8ecf4] rounded-xl text-[0.9rem]
                          text-[#1a1d2b] outline-none focus:border-[#c9a96e] focus:ring-2 focus:ring-[#c9a96e]/20
                          transition-all placeholder-[#9ca3af]"
@@ -89,63 +94,172 @@ const LoginForm = ({ onLogin }) => {
 };
 
 // ── Settings Page ──────────────────────────────────────────────
-const SettingsPage = () => (
-  <div className="space-y-6">
-    <div>
-      <h1 className="text-[1.5rem] font-bold text-[#1a1d2b]">Settings</h1>
-      <p className="text-[0.85rem] text-[#9ca3af] mt-1">Manage your store settings</p>
-    </div>
+const SettingsPage = () => {
+  const [form, setForm] = useState({
+    storeName: 'EGLUX',
+    email: 'hello@eglux.id',
+    phone: '+62 812-3456-7890',
+    midtransServerKey: '',
+    midtransClientKey: '',
+  });
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState(null); // { type: 'success' | 'error', message }
 
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-      <div className="bg-white rounded-2xl border border-[#e8ecf4] p-6">
-        <h3 className="text-[1rem] font-bold text-[#1a1d2b] mb-4">Store Information</h3>
-        <div className="space-y-4">
-          <div>
-            <label className="block text-[0.8rem] font-semibold text-[#1a1d2b] mb-2">Store Name</label>
-            <input type="text" defaultValue="EGLUX" className="w-full px-4 py-2.5 bg-[#f8f9fc] border border-[#e8ecf4] rounded-xl text-[0.9rem] outline-none" />
+  useEffect(() => {
+    const loadSettings = async () => {
+      const { data, error } = await supabase
+        .from('store_settings')
+        .select('*')
+        .single();
+      if (!error && data) {
+        setForm((prev) => ({
+          ...prev,
+          storeName: data.store_name ?? prev.storeName,
+          email: data.email ?? prev.email,
+          phone: data.phone ?? prev.phone,
+          midtransServerKey: data.midtrans_server_key ?? '',
+          midtransClientKey: data.midtrans_client_key ?? '',
+        }));
+      }
+    };
+    loadSettings();
+  }, []);
+
+  const handleChange = (field) => (e) => {
+    setForm((prev) => ({ ...prev, [field]: e.target.value }));
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    setStatus(null);
+    const { error } = await supabase
+      .from('store_settings')
+      .upsert({
+        id: 1, // single-row settings table
+        store_name: form.storeName,
+        email: form.email,
+        phone: form.phone,
+        midtrans_server_key: form.midtransServerKey,
+        midtrans_client_key: form.midtransClientKey,
+        updated_at: new Date().toISOString(),
+      });
+    setSaving(false);
+    if (error) {
+      setStatus({ type: 'error', message: 'Gagal menyimpan pengaturan. Coba lagi.' });
+      return;
+    }
+    setStatus({ type: 'success', message: 'Pengaturan berhasil disimpan.' });
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-[1.5rem] font-bold text-[#1a1d2b]">Settings</h1>
+          <p className="text-[0.85rem] text-[#9ca3af] mt-1">Manage your store settings</p>
+        </div>
+        <button
+          onClick={handleSave}
+          disabled={saving}
+          className="py-2.5 px-6 bg-[#1a1d2b] text-white rounded-xl text-[0.9rem]
+                     font-bold cursor-pointer transition-all hover:bg-[#2d3142]
+                     disabled:opacity-60 disabled:cursor-not-allowed shadow-lg shadow-[#1a1d2b]/20"
+        >
+          {saving ? 'Saving...' : 'Save Changes'}
+        </button>
+      </div>
+
+      {status && (
+        <div
+          className={`text-[0.85rem] px-4 py-3 rounded-xl ${
+            status.type === 'success'
+              ? 'bg-green-50 text-green-600'
+              : 'bg-red-50 text-red-500'
+          }`}
+        >
+          {status.message}
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="bg-white rounded-2xl border border-[#e8ecf4] p-6">
+          <h3 className="text-[1rem] font-bold text-[#1a1d2b] mb-4">Store Information</h3>
+          <div className="space-y-4">
+            <div>
+              <label className="block text-[0.8rem] font-semibold text-[#1a1d2b] mb-2">Store Name</label>
+              <input
+                type="text"
+                value={form.storeName}
+                onChange={handleChange('storeName')}
+                className="w-full px-4 py-2.5 bg-[#f8f9fc] border border-[#e8ecf4] rounded-xl text-[0.9rem] outline-none focus:border-[#c9a96e]"
+              />
+            </div>
+            <div>
+              <label className="block text-[0.8rem] font-semibold text-[#1a1d2b] mb-2">Email</label>
+              <input
+                type="email"
+                value={form.email}
+                onChange={handleChange('email')}
+                className="w-full px-4 py-2.5 bg-[#f8f9fc] border border-[#e8ecf4] rounded-xl text-[0.9rem] outline-none focus:border-[#c9a96e]"
+              />
+            </div>
+            <div>
+              <label className="block text-[0.8rem] font-semibold text-[#1a1d2b] mb-2">Phone</label>
+              <input
+                type="text"
+                value={form.phone}
+                onChange={handleChange('phone')}
+                className="w-full px-4 py-2.5 bg-[#f8f9fc] border border-[#e8ecf4] rounded-xl text-[0.9rem] outline-none focus:border-[#c9a96e]"
+              />
+            </div>
           </div>
-          <div>
-            <label className="block text-[0.8rem] font-semibold text-[#1a1d2b] mb-2">Email</label>
-            <input type="email" defaultValue="hello@eglux.id" className="w-full px-4 py-2.5 bg-[#f8f9fc] border border-[#e8ecf4] rounded-xl text-[0.9rem] outline-none" />
-          </div>
-          <div>
-            <label className="block text-[0.8rem] font-semibold text-[#1a1d2b] mb-2">Phone</label>
-            <input type="text" defaultValue="+62 812-3456-7890" className="w-full px-4 py-2.5 bg-[#f8f9fc] border border-[#e8ecf4] rounded-xl text-[0.9rem] outline-none" />
+        </div>
+
+        <div className="bg-white rounded-2xl border border-[#e8ecf4] p-6">
+          <h3 className="text-[1rem] font-bold text-[#1a1d2b] mb-4">Payment Settings</h3>
+          <div className="space-y-4">
+            <div>
+              <label className="block text-[0.8rem] font-semibold text-[#1a1d2b] mb-2">Midtrans Server Key</label>
+              <input
+                type="password"
+                value={form.midtransServerKey}
+                onChange={handleChange('midtransServerKey')}
+                placeholder="••••••••••••"
+                className="w-full px-4 py-2.5 bg-[#f8f9fc] border border-[#e8ecf4] rounded-xl text-[0.9rem] outline-none focus:border-[#c9a96e]"
+              />
+            </div>
+            <div>
+              <label className="block text-[0.8rem] font-semibold text-[#1a1d2b] mb-2">Midtrans Client Key</label>
+              <input
+                type="password"
+                value={form.midtransClientKey}
+                onChange={handleChange('midtransClientKey')}
+                placeholder="••••••••••••"
+                className="w-full px-4 py-2.5 bg-[#f8f9fc] border border-[#e8ecf4] rounded-xl text-[0.9rem] outline-none focus:border-[#c9a96e]"
+              />
+            </div>
+            <div className="flex items-center gap-3 p-3 bg-blue-50 rounded-xl">
+              <div className="w-2 h-2 rounded-full bg-blue-500" />
+              <span className="text-[0.8rem] text-blue-600">Midtrans integration ready for sandbox mode</span>
+            </div>
           </div>
         </div>
       </div>
-
-      <div className="bg-white rounded-2xl border border-[#e8ecf4] p-6">
-        <h3 className="text-[1rem] font-bold text-[#1a1d2b] mb-4">Payment Settings</h3>
-        <div className="space-y-4">
-          <div>
-            <label className="block text-[0.8rem] font-semibold text-[#1a1d2b] mb-2">Midtrans Server Key</label>
-            <input type="password" placeholder="••••••••••••" className="w-full px-4 py-2.5 bg-[#f8f9fc] border border-[#e8ecf4] rounded-xl text-[0.9rem] outline-none" />
-          </div>
-          <div>
-            <label className="block text-[0.8rem] font-semibold text-[#1a1d2b] mb-2">Midtrans Client Key</label>
-            <input type="password" placeholder="••••••••••••" className="w-full px-4 py-2.5 bg-[#f8f9fc] border border-[#e8ecf4] rounded-xl text-[0.9rem] outline-none" />
-          </div>
-          <div className="flex items-center gap-3 p-3 bg-blue-50 rounded-xl">
-            <div className="w-2 h-2 rounded-full bg-blue-500" />
-            <span className="text-[0.8rem] text-blue-600">Midtrans integration ready for sandbox mode</span>
-          </div>
-        </div>
-      </div>
     </div>
-  </div>
-);
+  );
+};
 
 // ── Page Router ──────────────────────────────────────────────
-const PageRouter = ({ page }) => {
+const PageRouter = ({ page, onNavigate }) => {
   switch (page) {
-    case 'dashboard': return <DashboardOverview />;
+    case 'dashboard': return <DashboardOverview onNavigate={onNavigate} />;
     case 'orders': return <OrdersPage />;
     case 'products': return <ProductsPage />;
     case 'customers': return <CustomersPage />;
     case 'payments': return <PaymentsPage />;
     case 'analytics': return <AnalyticsPage />;
     case 'settings': return <SettingsPage />;
+    case 'profile': return <ProfilePage />;
     default: return <DashboardOverview />;
   }
 };
@@ -157,13 +271,16 @@ const AdminPage = () => {
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session));
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, newSession) => {
+      setSession(newSession);
+    });
     return () => subscription.unsubscribe();
   }, []);
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
     setSession(null);
+    setActivePage('dashboard');
   };
 
   if (session === undefined) {
@@ -175,12 +292,12 @@ const AdminPage = () => {
   }
 
   if (!session) {
-    return <LoginForm onLogin={() => setSession(supabase.auth.getSession().then(({ data }) => data.session))} />;
+    return <LoginForm />;
   }
 
   return (
-    <AdminLayout activePage={activePage} onNavigate={setActivePage}>
-      <PageRouter page={activePage} />
+    <AdminLayout activePage={activePage} onNavigate={setActivePage} onLogout={handleLogout}>
+      <PageRouter page={activePage} onNavigate={setActivePage} />
     </AdminLayout>
   );
 };

@@ -3,9 +3,19 @@ import { useState, useEffect } from 'react';
 import Sidebar from './Sidebar';
 import Topbar from './Topbar';
 
-const AdminLayout = ({ children, activePage, onNavigate }) => {
+const COLLAPSE_STORAGE_KEY = 'eglux_admin_sidebar_collapsed';
+
+const AdminLayout = ({ children, activePage, onNavigate, onLogout }) => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+  const [collapsed, setCollapsed] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    try {
+      return localStorage.getItem(COLLAPSE_STORAGE_KEY) === 'true';
+    } catch {
+      return false;
+    }
+  });
 
   useEffect(() => {
     const checkMobile = () => {
@@ -18,8 +28,22 @@ const AdminLayout = ({ children, activePage, onNavigate }) => {
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  const toggleSidebar = () => setSidebarOpen(!sidebarOpen);
+  const toggleSidebar = () => setSidebarOpen((prev) => !prev);
   const closeSidebar = () => { if (isMobile) setSidebarOpen(false); };
+
+  const toggleCollapse = () => {
+    setCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(COLLAPSE_STORAGE_KEY, String(next));
+      } catch {
+        // ignore storage errors (private browsing, etc.)
+      }
+      return next;
+    });
+  };
+
+  const desktopMargin = collapsed ? 'lg:ml-[76px]' : 'lg:ml-[260px]';
 
   return (
     <div className="min-h-screen bg-[#f8f9fc] flex">
@@ -28,6 +52,7 @@ const AdminLayout = ({ children, activePage, onNavigate }) => {
         <div 
           className="fixed inset-0 bg-black/40 z-40 lg:hidden"
           onClick={closeSidebar}
+          aria-hidden="true"
         />
       )}
 
@@ -35,19 +60,22 @@ const AdminLayout = ({ children, activePage, onNavigate }) => {
       <Sidebar 
         isOpen={sidebarOpen} 
         isMobile={isMobile}
+        collapsed={collapsed}
         activePage={activePage}
         onNavigate={(page) => { onNavigate(page); closeSidebar(); }}
+        onClose={closeSidebar}
+        onToggleCollapse={toggleCollapse}
       />
 
       {/* Main content */}
-      <div className={`flex-1 flex flex-col min-h-screen transition-all duration-300 ${
-        !isMobile && sidebarOpen ? 'ml-[260px]' : 'ml-0'
-      }`}>
+      <div className={`flex-1 flex flex-col min-h-screen w-full transition-all duration-300 ml-0 ${desktopMargin}`}>
         <Topbar 
           onMenuToggle={toggleSidebar}
           isMobile={isMobile}
+          onLogout={onLogout}
+          onNavigate={onNavigate}
         />
-        <main className="flex-1 p-6 overflow-auto">
+        <main className="flex-1 p-4 sm:p-6 overflow-auto">
           {children}
         </main>
       </div>
