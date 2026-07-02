@@ -99,7 +99,6 @@ const SettingsPage = () => {
     storeName: 'EGLUX',
     email: 'hello@eglux.id',
     phone: '+62 812-3456-7890',
-    midtransServerKey: '',
     midtransClientKey: '',
   });
   const [saving, setSaving] = useState(false);
@@ -117,7 +116,6 @@ const SettingsPage = () => {
           storeName: data.store_name ?? prev.storeName,
           email: data.email ?? prev.email,
           phone: data.phone ?? prev.phone,
-          midtransServerKey: data.midtrans_server_key ?? '',
           midtransClientKey: data.midtrans_client_key ?? '',
         }));
       }
@@ -139,7 +137,6 @@ const SettingsPage = () => {
         store_name: form.storeName,
         email: form.email,
         phone: form.phone,
-        midtrans_server_key: form.midtransServerKey,
         midtrans_client_key: form.midtransClientKey,
         updated_at: new Date().toISOString(),
       });
@@ -219,28 +216,26 @@ const SettingsPage = () => {
           <h3 className="text-[1rem] font-bold text-[#1a1d2b] mb-4">Payment Settings</h3>
           <div className="space-y-4">
             <div>
-              <label className="block text-[0.8rem] font-semibold text-[#1a1d2b] mb-2">Midtrans Server Key</label>
-              <input
-                type="password"
-                value={form.midtransServerKey}
-                onChange={handleChange('midtransServerKey')}
-                placeholder="••••••••••••"
-                className="w-full px-4 py-2.5 bg-[#f8f9fc] border border-[#e8ecf4] rounded-xl text-[0.9rem] outline-none focus:border-[#c9a96e]"
-              />
-            </div>
-            <div>
               <label className="block text-[0.8rem] font-semibold text-[#1a1d2b] mb-2">Midtrans Client Key</label>
               <input
-                type="password"
+                type="text"
                 value={form.midtransClientKey}
                 onChange={handleChange('midtransClientKey')}
-                placeholder="••••••••••••"
+                placeholder="SB-Mid-client-xxxxxxxxxxxx"
                 className="w-full px-4 py-2.5 bg-[#f8f9fc] border border-[#e8ecf4] rounded-xl text-[0.9rem] outline-none focus:border-[#c9a96e]"
               />
+              <p className="text-[0.75rem] text-[#9ca3af] mt-1.5">
+                Client Key aman ditaruh di sini — dipakai buat load Snap.js di sisi browser.
+              </p>
             </div>
-            <div className="flex items-center gap-3 p-3 bg-blue-50 rounded-xl">
-              <div className="w-2 h-2 rounded-full bg-blue-500" />
-              <span className="text-[0.8rem] text-blue-600">Midtrans integration ready for sandbox mode</span>
+            <div className="flex items-start gap-3 p-3 bg-amber-50 rounded-xl">
+              <div className="w-2 h-2 rounded-full bg-amber-500 mt-1.5 flex-shrink-0" />
+              <span className="text-[0.8rem] text-amber-700">
+                Server Key <strong>sengaja gak ada</strong> di sini. Itu kredensial rahasia buat
+                verifikasi webhook — disimpan sebagai secret di Edge Function
+                (<code className="text-[0.75rem]">supabase secrets set MIDTRANS_SERVER_KEY=...</code>),
+                bukan di database yang bisa diakses lewat client.
+              </span>
             </div>
           </div>
         </div>

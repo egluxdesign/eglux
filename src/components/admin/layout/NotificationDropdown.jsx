@@ -1,11 +1,12 @@
 // src/components/admin/layout/NotificationDropdown.jsx
 import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../../../lib/supabaseClient';
-import { Bell, ShoppingBag, AlertTriangle, Clock } from 'lucide-react';
+import { Bell, ShoppingBag, AlertTriangle, CreditCard, Clock } from 'lucide-react';
 
 const TYPE_STYLE = {
   order: { icon: ShoppingBag, color: 'text-blue-500', bg: 'bg-blue-50' },
   stock: { icon: AlertTriangle, color: 'text-amber-500', bg: 'bg-amber-50' },
+  payment: { icon: CreditCard, color: 'text-emerald-500', bg: 'bg-emerald-50' },
 };
 
 const NotificationDropdown = ({ onNavigate }) => {
@@ -80,7 +81,9 @@ const NotificationDropdown = ({ onNavigate }) => {
   const handleNotifClick = (notif) => {
     markAsRead(notif.id);
     setIsOpen(false);
-    onNavigate?.(notif.type === 'stock' ? 'products' : 'orders');
+    if (notif.type === 'stock') onNavigate?.('products');
+    else if (notif.type === 'payment') onNavigate?.('payments');
+    else onNavigate?.('orders');
   };
 
   const goToOrders = () => {
