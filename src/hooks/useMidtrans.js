@@ -3,22 +3,18 @@ import { useEffect } from 'react';
 
 export const useMidtrans = (clientKey) => {
   useEffect(() => {
-    if (!clientKey) return;
-
-    // Tentukan URL berdasarkan mode di .env
-    const isProduction = import.meta.env.VITE_MIDTRANS_MODE === 'production';
-    const baseUrl = isProduction 
-      ? "https://app.midtrans.com/snap/snap.js" 
-      : "https://app.sandbox.midtrans.com/snap/snap.js";
+    console.log("Hook useMidtrans dipanggil, ClientKey:", clientKey); // <--- CEK INI
+    
+    if (!clientKey) {
+      console.error("Midtrans Client Key tidak ditemukan!");
+      return;
+    }
 
     const script = document.createElement('script');
-    script.src = baseUrl;
-    script.setAttribute('data-client-key', clientKey);
-    script.async = true;
+    // ... sisa kode Anda ...
+    script.onload = () => console.log("Snap script berhasil dimuat"); // <--- CEK INI
+    
     document.body.appendChild(script);
-
-    return () => {
-      document.body.removeChild(script);
-    };
+    // ...
   }, [clientKey]);
 };
