@@ -85,7 +85,7 @@ export const SIDEBAR_CATEGORIES = [
 export const HERO_DATA = {
   // TODO: Ganti dengan URL Supabase Storage
   // Contoh: supabase.storage.from('eglux-assets').getPublicUrl('hero/heroBg.png')
-  bgImage:  '/src/assets/img/heroBg.png',
+  bgImage:  '/src/assets/img/heroBg.jpg',
   // TODO: Logo putih untuk overlay hero
   logo1:  '/src/assets/img/Logo2.png',
   subtitle: 'Kitchen & Home Decor',

@@ -3,12 +3,51 @@
   <head>
     <meta charset="UTF-8" />
 
-    <!-- ✅ Favicon — pakai path absolut dari root public/ -->
-    <link rel="icon" type="image/png"     href="/src/assets/img/favEglux.png" sizes="32x32" />
-    <link rel="apple-touch-icon"          href="/apple-touch-icon.png" />
+    <!-- ✅ Favicon — disajikan dari /public agar static & cacheable -->
+    <link rel="icon" type="image/png" href="/favEglux.png" sizes="32x32" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
 
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Eglux — Produk Rumah Tangga Berkualitas</title>
+    <meta name="theme-color" content="#c9a96e" />
+
+    <!-- ── Primary SEO Meta ───────────────────────────────────── -->
+    <title>Eglux — Produk Rumah Tangga & Dapur Berkualitas | Shop Now</title>
+    <meta
+      name="description"
+      content="Eglux menghadirkan perlengkapan dapur, tempat prasmanan, storage, dan home decor estetik berkualitas. Belanja produk rumah tangga premium dengan desain elegan. Gratis ongkir & garansi resmi."
+    />
+    <meta name="keywords" content="eglux, tempat prasmanan, perlengkapan dapur, home decor, storage, bathroom, nampan, wadah saji, dekorasi rumah, produk rumah tangga" />
+    <meta name="author" content="Eglux" />
+    <meta name="robots" content="index, follow" />
+    <link rel="canonical" href="https://eglux.vercel.app/" />
+
+    <!-- ── Open Graph / Facebook / WhatsApp ──────────────────── -->
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://eglux.vercel.app/" />
+    <meta property="og:title" content="Eglux — Produk Rumah Tangga & Dapur Berkualitas" />
+    <meta
+      property="og:description"
+      content="Perlengkapan dapur, tempat prasmanan, storage, dan home decor estetik berkualitas. Desain elegan untuk rumah modern."
+    />
+    <meta property="og:image" content="https://eglux.vercel.app/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:site_name" content="Eglux" />
+    <meta property="og:locale" content="id_ID" />
+
+    <!-- ── Twitter Card ──────────────────────────────────────── -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Eglux — Produk Rumah Tangga & Dapur Berkualitas" />
+    <meta
+      name="twitter:description"
+      content="Perlengkapan dapur, tempat prasmanan, storage, dan home decor estetik berkualitas."
+    />
+    <meta name="twitter:image" content="https://eglux.vercel.app/og-image.png" />
+
+    <!-- ── Preconnect (speed up external resources) ──────────── -->
+    <link rel="preconnect" href="https://down-id.img.susercontent.com" crossorigin />
+    <link rel="dns-prefetch" href="https://down-id.img.susercontent.com" />
+    <link rel="preconnect" href="https://images.unsplash.com" crossorigin />
   </head>
   <body>
     <div id="root"></div>
