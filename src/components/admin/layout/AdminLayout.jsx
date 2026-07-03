@@ -75,7 +75,7 @@ const AdminLayout = ({ children, activePage, onNavigate, onLogout }) => {
           onLogout={onLogout}
           onNavigate={onNavigate}
         />
-        <main className="flex-1 p-4 sm:p-6 overflow-auto">
+        <main className="flex-1 min-w-0 overflow-y-auto">
           {children}
         </main>
       </div>

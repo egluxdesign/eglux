@@ -98,61 +98,47 @@ const ProductsPage = () => {
   // ── Save (create/update) ───────────────────────────────────
   // Alurnya bertahap: 1) simpan baris produk dulu buat dapet product_id yang valid,
   // 2) baru upload gambar & proses varian yang butuh product_id itu.
-  const handleSaveProduct = async ({ productInfo, variants, removedVariantIds, uploadNewImages, removedImageIds }) => {
+  const handleSaveProduct = async (formData) => {
+  const { 
+    productInfo, images, removedImageIds, 
+    variants, removedVariantIds, removedVariantImageIds 
+  } = formData;
+
+  try {
     let productId = editingProduct?.id;
 
-    if (editingProduct) {
+    // 1. Insert / Update Produk Utama
+    if (productId) {
       const { error } = await supabase.from('products').update(productInfo).eq('id', productId);
-      if (error) throw new Error(mapSlugError(error) || 'Gagal update produk.');
+      if (error) throw new Error(`Gagal update produk: ${error.message}`);
     } else {
-      const { data: newProduct, error } = await supabase
-        .from('products')
-        .insert(productInfo)
-        .select()
-        .single();
-      if (error) throw new Error(mapSlugError(error) || 'Gagal membuat produk.');
-      productId = newProduct.id;
+      const { data, error } = await supabase.from('products').insert(productInfo).select('id').single();
+      if (error) throw new Error(`Gagal buat produk: ${error.message}`);
+      productId = data.id;
     }
 
-    // ── Images ──
-    // Hapus gambar yang di-remove admin (dari Storage & tabel product_images)
+    // 2. Hapus Gambar Produk Lama yang Dihapus User
     if (removedImageIds.length > 0) {
-      const { data: toDelete } = await supabase
-        .from('product_images')
-        .select('id, url')
-        .in('id', removedImageIds);
-
-      for (const img of toDelete || []) {
-        const path = extractStoragePath(img.url, productId);
-        if (path) await supabase.storage.from('product-images').remove([path]);
-      }
-      await supabase.from('product_images').delete().in('id', removedImageIds);
+      const { error } = await supabase.from('product_images').delete().in('id', removedImageIds);
+      if (error) throw new Error(`Gagal hapus gambar lama: ${error.message}`);
     }
 
-    // Upload file baru ke Storage, lalu upsert semua baris gambar (lama + baru)
-    const resolvedImages = await uploadNewImages(productId);
-    for (const img of resolvedImages) {
-      if (img.id) {
-        await supabase
-          .from('product_images')
-          .update({ is_primary: img.is_primary, position: img.position })
-          .eq('id', img.id);
-      } else {
-        await supabase.from('product_images').insert({
-          product_id: productId,
-          url: img.url,
-          is_primary: img.is_primary,
-          position: img.position,
-        });
-      }
+    // 3. Hapus Gambar Varian Lama yang Dihapus User
+    if (removedVariantImageIds.length > 0) {
+      const { error } = await supabase.from('product_images').delete().in('id', removedVariantImageIds);
+      if (error) throw new Error(`Gagal hapus gambar varian: ${error.message}`);
     }
 
-    // ── Variants ──
-    // Update yang punya id (udah ada di DB), insert yang belum, hapus yang di-remove.
-    // Kalau ada varian yang gagal dihapus karena masih direferensikan order lama,
-    // fallback-nya di-nonaktifkan aja (is_active: false) daripada bikin seluruh save gagal.
+    // 4. Hapus Varian yang Dihapus User
+    if (removedVariantIds.length > 0) {
+      const { error } = await supabase.from('product_variants').delete().in('id', removedVariantIds);
+      if (error) throw new Error(`Gagal hapus varian: ${error.message}`);
+    }
+
+    // 5. Looping Varian (Insert/Update + Upload Gambar Varian)
     for (const v of variants) {
-      const payload = {
+      let variantId = v.id;
+      const variantPayload = {
         product_id: productId,
         name: v.name,
         attributes: v.attributes,
@@ -161,37 +147,79 @@ const ProductsPage = () => {
         sku: v.sku,
         is_active: v.is_active,
       };
-      if (v.id) {
-        await supabase.from('product_variants').update(payload).eq('id', v.id);
+
+      if (variantId) {
+        const { error } = await supabase.from('product_variants').update(variantPayload).eq('id', variantId);
+        if (error) throw new Error(`Gagal update varian "${v.name}": ${error.message}`);
       } else {
-        await supabase.from('product_variants').insert(payload);
+        const { data, error } = await supabase.from('product_variants').insert(variantPayload).select('id').single();
+        if (error) throw new Error(`Gagal buat varian "${v.name}": ${error.message}`);
+        variantId = data.id;
+      }
+
+      // Kalau varian punya gambar baru, upload ke Storage lalu insert ke DB
+      if (v.image?.isNew && v.image.file) {
+        const fileExt = v.image.file.name.split('.').pop();
+        const filePath = `products/${productId}/variants/${variantId}-${Date.now()}.${ext}`;
+        
+        const { error: uploadErr } = await supabase.storage
+          .from('product-images') // Pastikan nama bucket ini sama dengan yang lu pakai
+          .upload(filePath, v.image.file);
+          
+        if (uploadErr) throw new Error(`Gagal upload gambar varian "${v.name}": ${uploadErr.message}`);
+
+        const { data: urlData } = supabase.storage.from('product-images').getPublicUrl(filePath);
+
+        const { error: dbErr } = await supabase.from('product_images').insert({
+          product_id: productId,
+          variant_id: variantId, // <-- Disinilah gunanya kolom baru
+          url: urlData.publicUrl,
+          is_primary: false,
+          position: 0,
+        });
+        if (dbErr) throw new Error(`Gagal simpan data gambar varian: ${dbErr.message}`);
       }
     }
 
-    const skippedDeletes = [];
-    for (const variantId of removedVariantIds) {
-      const { error } = await supabase.from('product_variants').delete().eq('id', variantId);
-      if (error) {
-        if (error.code === FK_VIOLATION) {
-          // Varian ini pernah dipakai di order — jangan dihapus, nonaktifkan aja
-          await supabase.from('product_variants').update({ is_active: false }).eq('id', variantId);
-          skippedDeletes.push(variantId);
-        } else {
-          throw new Error('Gagal menghapus salah satu varian.');
-        }
+    // 6. Looping Gambar Produk Utama (Bukan Varian)
+    for (const img of images) {
+      if (img.isNew && img.file) {
+        const fileExt = img.file.name.split('.').pop();
+        const filePath = `products/${productId}/${Date.now()}-${img._key}.${ext}`;
+        
+        const { error: uploadErr } = await supabase.storage
+          .from('product-images')
+          .upload(filePath, img.file);
+          
+        if (uploadErr) throw new Error(`Gagal upload gambar produk: ${uploadErr.message}`);
+
+        const { data: urlData } = supabase.storage.from('product-images').getPublicUrl(filePath);
+
+        const { error: dbErr } = await supabase.from('product_images').insert({
+          product_id: productId,
+          variant_id: null, // Null karena ini gambar level produk
+          url: urlData.publicUrl,
+          is_primary: img.isPrimary,
+          position: img.position,
+        });
+        if (dbErr) throw new Error(`Gagal simpan data gambar produk: ${dbErr.message}`);
+        
+      } else if (!img.isNew && img.isPrimary) {
+        // Kalau gambar lama yang di-set jadi primary
+        await supabase.from('product_images').update({ is_primary: true }).eq('id', img.id);
       }
     }
 
+    // 7. Selesai, refresh data & tutup modal
+    await fetchProducts(); // Ganti dengan function fetch lu sendiri
     setShowForm(false);
     setEditingProduct(null);
-    await fetchProducts();
 
-    if (skippedDeletes.length > 0) {
-      setActionError(
-        `${skippedDeletes.length} varian gak bisa dihapus karena pernah dipesan customer — otomatis dinonaktifkan aja.`
-      );
-    }
-  };
+  } catch (err) {
+    // Error ini bakal ditangkap oleh ProductForm.jsx dan ditampilkan di layar
+    throw new Error(err.message); 
+  }
+};
 
   // Ekstrak path Storage dari public URL, buat keperluan .remove()
   const extractStoragePath = (url, productId) => {

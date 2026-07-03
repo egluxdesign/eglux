@@ -1,16 +1,17 @@
 // src/components/admin/products/ProductForm.jsx
+//
+// Catatan arsitektur: komponen ini CUMA ngumpulin data (termasuk File objects
+// buat gambar) dan nge-preview-nya secara lokal. Proses upload ke Supabase
+// Storage & penyimpanan ke database sepenuhnya ditangani di ProductsPage
+// (handleSaveProduct) — biar semua logic Supabase ada di satu tempat, gampang
+// di-debug kalau ada error.
+
 import { useState, useEffect } from 'react';
-import { X, Plus, Trash2, Image as ImageIcon, Save, Star, Loader2, AlertTriangle } from 'lucide-react';
-import { supabase } from '../../../lib/supabaseClient';
+import { X, Plus, Trash2, Image as ImageIcon, Save, Star, Loader2, AlertTriangle, Camera } from 'lucide-react';
 
 const CATEGORY_OPTIONS = [
   'sofa', 'table', 'chair', 'bed', 'storage', 'lighting', 'decor'
 ];
-
-// GANTI kalau nama bucket Storage lu beda. Bucket ini harus:
-// - public (biar gambar bisa diakses langsung lewat URL di storefront)
-// - punya policy INSERT buat role 'authenticated' (admin yang login)
-const STORAGE_BUCKET = 'product-images';
 
 const slugify = (str) =>
   str
@@ -21,8 +22,8 @@ const slugify = (str) =>
     .replace(/^-+|-+$/g, '');
 
 const emptyVariant = () => ({
-  _key: crypto.randomUUID(), // cuma buat React key, BUKAN dikirim ke database
-  id: null,                  // null = varian baru (belum ada di DB)
+  _key: crypto.randomUUID(), // React key + penanda korelasi ke ProductsPage, BUKAN dikirim ke DB
+  id: null,                  // null = varian baru
   name: '',
   size: '',
   color: '',
@@ -30,6 +31,7 @@ const emptyVariant = () => ({
   stock: 0,
   sku: '',
   is_active: true,
+  image: null,               // { id, url, file, isNew } | null
 });
 
 const ProductForm = ({ product, onSave, onCancel }) => {
@@ -44,7 +46,8 @@ const ProductForm = ({ product, onSave, onCancel }) => {
   });
   const [variants, setVariants] = useState([]);
   const [removedVariantIds, setRemovedVariantIds] = useState([]);
-  const [images, setImages] = useState([]); // { _key, id, url, file?, isNew, isPrimary, position }
+  const [removedVariantImageIds, setRemovedVariantImageIds] = useState([]);
+  const [images, setImages] = useState([]); // gambar level produk
   const [removedImageIds, setRemovedImageIds] = useState([]);
   const [slugTouched, setSlugTouched] = useState(false);
   const [errors, setErrors] = useState({});
@@ -62,46 +65,43 @@ const ProductForm = ({ product, onSave, onCancel }) => {
         is_active: product.is_active ?? true,
         badge: product.badge || '',
       });
-      setSlugTouched(true); // produk existing udah punya slug, jangan auto-overwrite
+      setSlugTouched(true);
 
-      setVariants(
-        (product.variants || []).map((v) => ({
-          _key: v.id,
-          id: v.id,
-          name: v.name || '',
-          size: v.attributes?.size || '',
-          color: v.attributes?.color || '',
-          price: v.price ?? '',
-          stock: v.stock ?? 0,
-          sku: v.sku || '',
-          is_active: v.is_active ?? true,
-        }))
-      );
-
+      const productLevelImages = (product.images || []).filter((img) => !img.variant_id);
       setImages(
-        (product.images || [])
+        productLevelImages
           .slice()
           .sort((a, b) => a.position - b.position)
           .map((img) => ({
-            _key: img.id,
-            id: img.id,
-            url: img.url,
-            file: null,
-            isNew: false,
-            isPrimary: img.is_primary,
-            position: img.position,
+            _key: img.id, id: img.id, url: img.url, file: null,
+            isNew: false, isPrimary: img.is_primary, position: img.position,
           }))
+      );
+
+      setVariants(
+        (product.variants || []).map((v) => {
+          const variantImage = (product.images || []).find((img) => img.variant_id === v.id);
+          return {
+            _key: v.id,
+            id: v.id,
+            name: v.name || '',
+            size: v.attributes?.size || '',
+            color: v.attributes?.color || '',
+            price: v.price ?? '',
+            stock: v.stock ?? 0,
+            sku: v.sku || '',
+            is_active: v.is_active ?? true,
+            image: variantImage
+              ? { id: variantImage.id, url: variantImage.url, file: null, isNew: false }
+              : null,
+          };
+        })
       );
     }
   }, [product]);
 
-  // Auto-generate slug dari nama, KECUALI admin udah pernah ngedit slug manual
   const handleNameChange = (name) => {
-    setForm((f) => ({
-      ...f,
-      name,
-      slug: slugTouched ? f.slug : slugify(name),
-    }));
+    setForm((f) => ({ ...f, name, slug: slugTouched ? f.slug : slugify(name) }));
   };
 
   const handleSlugChange = (slug) => {
@@ -128,23 +128,41 @@ const ProductForm = ({ product, onSave, onCancel }) => {
   const removeVariant = (key) => {
     const target = variants.find((v) => v._key === key);
     if (target?.id) setRemovedVariantIds((prev) => [...prev, target.id]);
+    if (target?.image?.id) setRemovedVariantImageIds((prev) => [...prev, target.image.id]);
     setVariants((prev) => prev.filter((v) => v._key !== key));
   };
 
-  // ── Images ────────────────────────────────────────────────
+  const setVariantImage = (key, file) => {
+    if (!file) return;
+    setVariants((prev) =>
+      prev.map((v) => {
+        if (v._key !== key) return v;
+        // Kalau sebelumnya udah ada gambar tersimpan, tandai buat dihapus dulu
+        if (v.image?.id) setRemovedVariantImageIds((ids) => [...ids, v.image.id]);
+        return { ...v, image: { id: null, url: URL.createObjectURL(file), file, isNew: true } };
+      })
+    );
+  };
+
+  const removeVariantImage = (key) => {
+    setVariants((prev) =>
+      prev.map((v) => {
+        if (v._key !== key) return v;
+        if (v.image?.id) setRemovedVariantImageIds((ids) => [...ids, v.image.id]);
+        return { ...v, image: null };
+      })
+    );
+  };
+
+  // ── Product-level images ────────────────────────────────────
   const handleImageSelect = (e) => {
     const files = Array.from(e.target.files || []);
     const newImages = files.map((file, i) => ({
-      _key: crypto.randomUUID(),
-      id: null,
-      url: URL.createObjectURL(file), // preview lokal sebelum ke-upload
-      file,
-      isNew: true,
-      isPrimary: images.length === 0 && i === 0, // gambar pertama otomatis jadi primary kalau belum ada gambar lain
-      position: images.length + i,
+      _key: crypto.randomUUID(), id: null, url: URL.createObjectURL(file), file,
+      isNew: true, isPrimary: images.length === 0 && i === 0, position: images.length + i,
     }));
     setImages((prev) => [...prev, ...newImages]);
-    e.target.value = ''; // biar bisa pilih file yang sama lagi kalau perlu
+    e.target.value = '';
   };
 
   const removeImage = (key) => {
@@ -152,7 +170,6 @@ const ProductForm = ({ product, onSave, onCancel }) => {
     if (target?.id) setRemovedImageIds((prev) => [...prev, target.id]);
     setImages((prev) => {
       const next = prev.filter((img) => img._key !== key);
-      // Kalau yang dihapus adalah primary, jadiin gambar pertama yang tersisa sebagai primary
       if (target?.isPrimary && next.length > 0) next[0] = { ...next[0], isPrimary: true };
       return next;
     });
@@ -160,27 +177,6 @@ const ProductForm = ({ product, onSave, onCancel }) => {
 
   const setPrimaryImage = (key) => {
     setImages((prev) => prev.map((img) => ({ ...img, isPrimary: img._key === key })));
-  };
-
-  // Upload semua file baru ke Storage, return array siap insert ke product_images
-  const uploadNewImages = async (productId) => {
-    const uploaded = [];
-    for (const img of images) {
-      if (!img.isNew) {
-        uploaded.push({ id: img.id, url: img.url, is_primary: img.isPrimary, position: img.position });
-        continue;
-      }
-      const ext = img.file.name.split('.').pop();
-      const path = `${productId}/${crypto.randomUUID()}.${ext}`;
-      const { error: uploadError } = await supabase.storage
-        .from(STORAGE_BUCKET)
-        .upload(path, img.file, { cacheControl: '3600', upsert: false });
-      if (uploadError) throw new Error(`Gagal upload gambar: ${uploadError.message}`);
-
-      const { data: publicUrlData } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(path);
-      uploaded.push({ id: null, url: publicUrlData.publicUrl, is_primary: img.isPrimary, position: img.position });
-    }
-    return uploaded;
   };
 
   const handleSubmit = async (e) => {
@@ -200,7 +196,13 @@ const ProductForm = ({ product, onSave, onCancel }) => {
           is_active: form.is_active,
           badge: form.badge || null,
         },
+        images: images.map((img) => ({
+          _key: img._key, id: img.id, file: img.file, isNew: img.isNew,
+          isPrimary: img.isPrimary, position: img.position,
+        })),
+        removedImageIds,
         variants: variants.map((v) => ({
+          _key: v._key,
           id: v.id,
           name: v.name.trim() || [v.size, v.color].filter(Boolean).join(' / ') || 'Default',
           attributes: {
@@ -211,10 +213,10 @@ const ProductForm = ({ product, onSave, onCancel }) => {
           stock: Number(v.stock) || 0,
           sku: v.sku || null,
           is_active: v.is_active,
+          image: v.image ? { id: v.image.id, file: v.image.file, isNew: v.image.isNew } : null,
         })),
         removedVariantIds,
-        uploadNewImages,
-        removedImageIds,
+        removedVariantImageIds,
       });
     } catch (err) {
       setSaveError(err.message || 'Gagal menyimpan produk.');
@@ -231,7 +233,6 @@ const ProductForm = ({ product, onSave, onCancel }) => {
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onCancel} />
 
       <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-[800px] max-h-[90vh] overflow-hidden flex flex-col">
-        {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-[#e8ecf4]">
           <h2 className="text-[1.1rem] font-bold text-[#1a1d2b]">
             {product ? 'Edit Product' : 'Add New Product'}
@@ -241,7 +242,6 @@ const ProductForm = ({ product, onSave, onCancel }) => {
           </button>
         </div>
 
-        {/* Form */}
         <form onSubmit={handleSubmit} className="flex-1 overflow-auto p-6">
           {saveError && (
             <div className="flex items-center gap-2 bg-red-50 text-red-600 px-4 py-3 rounded-xl text-[0.85rem] mb-5">
@@ -256,8 +256,7 @@ const ProductForm = ({ product, onSave, onCancel }) => {
               <div className="md:col-span-2">
                 <label className="block text-[0.8rem] font-semibold text-[#1a1d2b] mb-2">Product Name *</label>
                 <input
-                  type="text"
-                  value={form.name}
+                  type="text" value={form.name}
                   onChange={(e) => handleNameChange(e.target.value)}
                   placeholder="e.g., Scandinavian Sofa"
                   className={inputClass('name')}
@@ -270,8 +269,7 @@ const ProductForm = ({ product, onSave, onCancel }) => {
                   Slug * <span className="font-normal text-[#9ca3af]">(URL produk, otomatis dari nama)</span>
                 </label>
                 <input
-                  type="text"
-                  value={form.slug}
+                  type="text" value={form.slug}
                   onChange={(e) => handleSlugChange(e.target.value)}
                   placeholder="scandinavian-sofa"
                   className={inputClass('slug')}
@@ -306,11 +304,9 @@ const ProductForm = ({ product, onSave, onCancel }) => {
               <div>
                 <label className="block text-[0.8rem] font-semibold text-[#1a1d2b] mb-2">Base Price (Rp) *</label>
                 <input
-                  type="number"
-                  value={form.base_price}
+                  type="number" value={form.base_price}
                   onChange={(e) => setForm({ ...form, base_price: e.target.value })}
-                  placeholder="0"
-                  min="0"
+                  placeholder="0" min="0"
                   className={inputClass('base_price')}
                 />
                 {errors.base_price && <p className="text-red-500 text-[0.75rem] mt-1">{errors.base_price}</p>}
@@ -320,8 +316,7 @@ const ProductForm = ({ product, onSave, onCancel }) => {
               <div>
                 <label className="block text-[0.8rem] font-semibold text-[#1a1d2b] mb-2">Badge (opsional)</label>
                 <input
-                  type="text"
-                  value={form.badge}
+                  type="text" value={form.badge}
                   onChange={(e) => setForm({ ...form, badge: e.target.value })}
                   placeholder="New, Best Seller, dll"
                   className="w-full px-4 py-2.5 bg-[#f8f9fc] border border-[#e8ecf4] rounded-xl text-[0.9rem] text-[#1a1d2b] outline-none focus:border-[#c9a96e] focus:ring-2 focus:ring-[#c9a96e]/20 transition-all placeholder-[#9ca3af]"
@@ -342,7 +337,7 @@ const ProductForm = ({ product, onSave, onCancel }) => {
               </div>
             </div>
 
-            {/* Images */}
+            {/* Product-level Images */}
             <div className="border border-[#e8ecf4] rounded-xl overflow-hidden">
               <div className="px-4 py-3 bg-[#f8f9fc] border-b border-[#e8ecf4] flex items-center justify-between">
                 <h3 className="text-[0.9rem] font-semibold text-[#1a1d2b]">Images</h3>
@@ -372,21 +367,13 @@ const ProductForm = ({ product, onSave, onCancel }) => {
                       )}
                       <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-xl flex items-center justify-center gap-2">
                         {!img.isPrimary && (
-                          <button
-                            type="button"
-                            onClick={() => setPrimaryImage(img._key)}
-                            className="p-1.5 bg-white rounded-lg hover:bg-[#c9a96e] hover:text-white transition-colors"
-                            title="Set as primary"
-                          >
+                          <button type="button" onClick={() => setPrimaryImage(img._key)}
+                            className="p-1.5 bg-white rounded-lg hover:bg-[#c9a96e] hover:text-white transition-colors" title="Set as primary">
                             <Star className="w-3.5 h-3.5" />
                           </button>
                         )}
-                        <button
-                          type="button"
-                          onClick={() => removeImage(img._key)}
-                          className="p-1.5 bg-white rounded-lg text-red-500 hover:bg-red-500 hover:text-white transition-colors"
-                          title="Remove"
-                        >
+                        <button type="button" onClick={() => removeImage(img._key)}
+                          className="p-1.5 bg-white rounded-lg text-red-500 hover:bg-red-500 hover:text-white transition-colors" title="Remove">
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       </div>
@@ -401,13 +388,10 @@ const ProductForm = ({ product, onSave, onCancel }) => {
               <div className="px-4 py-3 bg-[#f8f9fc] border-b border-[#e8ecf4] flex items-center justify-between">
                 <div>
                   <h3 className="text-[0.9rem] font-semibold text-[#1a1d2b]">Variants</h3>
-                  <p className="text-[0.7rem] text-[#9ca3af]">Stok dikelola per varian. Produk tanpa varian gak akan punya stok yang bisa dijual.</p>
+                  <p className="text-[0.7rem] text-[#9ca3af]">Stok dikelola per varian. Tiap varian bisa punya 1 foto sendiri (opsional).</p>
                 </div>
-                <button
-                  type="button"
-                  onClick={addVariant}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-[#c9a96e]/10 text-[#c9a96e] rounded-lg text-[0.8rem] font-medium hover:bg-[#c9a96e]/20 transition-colors flex-shrink-0"
-                >
+                <button type="button" onClick={addVariant}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-[#c9a96e]/10 text-[#c9a96e] rounded-lg text-[0.8rem] font-medium hover:bg-[#c9a96e]/20 transition-colors flex-shrink-0">
                   <Plus className="w-3.5 h-3.5" />
                   Add Variant
                 </button>
@@ -421,70 +405,83 @@ const ProductForm = ({ product, onSave, onCancel }) => {
               ) : (
                 <div className="divide-y divide-[#f3f4f6]">
                   {variants.map((variant) => (
-                    <div key={variant._key} className="px-4 py-4 grid grid-cols-2 md:grid-cols-7 gap-3 items-end">
-                      <div>
-                        <label className="block text-[0.7rem] font-medium text-[#6b7280] mb-1">Size</label>
-                        <input
-                          type="text" value={variant.size}
-                          onChange={(e) => updateVariant(variant._key, 'size', e.target.value)}
-                          placeholder="S, M, L"
-                          className="w-full px-3 py-2 bg-[#f8f9fc] border border-[#e8ecf4] rounded-lg text-[0.85rem] outline-none focus:border-[#c9a96e] transition-all"
-                        />
+                    <div key={variant._key} className="px-4 py-4 flex flex-col md:flex-row gap-3 md:items-end">
+                      {/* Variant photo */}
+                      <div className="flex-shrink-0">
+                        <label className="block text-[0.7rem] font-medium text-[#6b7280] mb-1">Photo</label>
+                        <div className="relative w-14 h-14">
+                          {variant.image ? (
+                            <>
+                              <img src={variant.image.url} alt="" className="w-14 h-14 rounded-lg object-cover border border-[#e8ecf4]" />
+                              <button
+                                type="button"
+                                onClick={() => removeVariantImage(variant._key)}
+                                className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center hover:bg-red-600"
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            </>
+                          ) : (
+                            <label className="w-14 h-14 rounded-lg border-2 border-dashed border-[#e8ecf4] flex items-center justify-center cursor-pointer hover:border-[#c9a96e] transition-colors">
+                              <Camera className="w-4 h-4 text-[#9ca3af]" />
+                              <input
+                                type="file" accept="image/*" className="hidden"
+                                onChange={(e) => setVariantImage(variant._key, e.target.files?.[0])}
+                              />
+                            </label>
+                          )}
+                        </div>
                       </div>
-                      <div>
-                        <label className="block text-[0.7rem] font-medium text-[#6b7280] mb-1">Color</label>
-                        <input
-                          type="text" value={variant.color}
-                          onChange={(e) => updateVariant(variant._key, 'color', e.target.value)}
-                          placeholder="Black, White"
-                          className="w-full px-3 py-2 bg-[#f8f9fc] border border-[#e8ecf4] rounded-lg text-[0.85rem] outline-none focus:border-[#c9a96e] transition-all"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[0.7rem] font-medium text-[#6b7280] mb-1">Price</label>
-                        <input
-                          type="number" value={variant.price}
-                          onChange={(e) => updateVariant(variant._key, 'price', e.target.value)}
-                          placeholder="= base price"
-                          className="w-full px-3 py-2 bg-[#f8f9fc] border border-[#e8ecf4] rounded-lg text-[0.85rem] outline-none focus:border-[#c9a96e] transition-all"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[0.7rem] font-medium text-[#6b7280] mb-1">Stock *</label>
-                        <input
-                          type="number" value={variant.stock}
-                          onChange={(e) => updateVariant(variant._key, 'stock', e.target.value)}
-                          placeholder="0" min="0"
-                          className="w-full px-3 py-2 bg-[#f8f9fc] border border-[#e8ecf4] rounded-lg text-[0.85rem] outline-none focus:border-[#c9a96e] transition-all"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[0.7rem] font-medium text-[#6b7280] mb-1">SKU</label>
-                        <input
-                          type="text" value={variant.sku}
-                          onChange={(e) => updateVariant(variant._key, 'sku', e.target.value)}
-                          placeholder="SKU"
-                          className="w-full px-3 py-2 bg-[#f8f9fc] border border-[#e8ecf4] rounded-lg text-[0.85rem] outline-none focus:border-[#c9a96e] transition-all"
-                        />
-                      </div>
-                      <div className="flex flex-col items-center">
-                        <label className="block text-[0.7rem] font-medium text-[#6b7280] mb-1">Active</label>
-                        <button
-                          type="button"
-                          onClick={() => updateVariant(variant._key, 'is_active', !variant.is_active)}
-                          className={`relative w-9 h-5 rounded-full transition-colors ${variant.is_active ? 'bg-[#c9a96e]' : 'bg-[#e8ecf4]'}`}
-                        >
-                          <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${variant.is_active ? 'translate-x-4' : ''}`} />
-                        </button>
-                      </div>
-                      <div>
-                        <button
-                          type="button"
-                          onClick={() => removeVariant(variant._key)}
-                          className="p-2 hover:bg-red-50 rounded-lg transition-colors text-red-400"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+
+                      <div className="grid grid-cols-2 md:grid-cols-6 gap-3 flex-1">
+                        <div>
+                          <label className="block text-[0.7rem] font-medium text-[#6b7280] mb-1">Size</label>
+                          <input type="text" value={variant.size}
+                            onChange={(e) => updateVariant(variant._key, 'size', e.target.value)}
+                            placeholder="S, M, L"
+                            className="w-full px-3 py-2 bg-[#f8f9fc] border border-[#e8ecf4] rounded-lg text-[0.85rem] outline-none focus:border-[#c9a96e] transition-all" />
+                        </div>
+                        <div>
+                          <label className="block text-[0.7rem] font-medium text-[#6b7280] mb-1">Color</label>
+                          <input type="text" value={variant.color}
+                            onChange={(e) => updateVariant(variant._key, 'color', e.target.value)}
+                            placeholder="Black, White"
+                            className="w-full px-3 py-2 bg-[#f8f9fc] border border-[#e8ecf4] rounded-lg text-[0.85rem] outline-none focus:border-[#c9a96e] transition-all" />
+                        </div>
+                        <div>
+                          <label className="block text-[0.7rem] font-medium text-[#6b7280] mb-1">Price</label>
+                          <input type="number" value={variant.price}
+                            onChange={(e) => updateVariant(variant._key, 'price', e.target.value)}
+                            placeholder="= base price"
+                            className="w-full px-3 py-2 bg-[#f8f9fc] border border-[#e8ecf4] rounded-lg text-[0.85rem] outline-none focus:border-[#c9a96e] transition-all" />
+                        </div>
+                        <div>
+                          <label className="block text-[0.7rem] font-medium text-[#6b7280] mb-1">Stock *</label>
+                          <input type="number" value={variant.stock}
+                            onChange={(e) => updateVariant(variant._key, 'stock', e.target.value)}
+                            placeholder="0" min="0"
+                            className="w-full px-3 py-2 bg-[#f8f9fc] border border-[#e8ecf4] rounded-lg text-[0.85rem] outline-none focus:border-[#c9a96e] transition-all" />
+                        </div>
+                        <div>
+                          <label className="block text-[0.7rem] font-medium text-[#6b7280] mb-1">SKU</label>
+                          <input type="text" value={variant.sku}
+                            onChange={(e) => updateVariant(variant._key, 'sku', e.target.value)}
+                            placeholder="SKU"
+                            className="w-full px-3 py-2 bg-[#f8f9fc] border border-[#e8ecf4] rounded-lg text-[0.85rem] outline-none focus:border-[#c9a96e] transition-all" />
+                        </div>
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex flex-col items-center">
+                            <label className="block text-[0.7rem] font-medium text-[#6b7280] mb-1">Active</label>
+                            <button type="button" onClick={() => updateVariant(variant._key, 'is_active', !variant.is_active)}
+                              className={`relative w-9 h-5 rounded-full transition-colors ${variant.is_active ? 'bg-[#c9a96e]' : 'bg-[#e8ecf4]'}`}>
+                              <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${variant.is_active ? 'translate-x-4' : ''}`} />
+                            </button>
+                          </div>
+                          <button type="button" onClick={() => removeVariant(variant._key)}
+                            className="p-2 hover:bg-red-50 rounded-lg transition-colors text-red-400">
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -494,20 +491,13 @@ const ProductForm = ({ product, onSave, onCancel }) => {
           </div>
         </form>
 
-        {/* Footer */}
         <div className="px-6 py-4 border-t border-[#e8ecf4] flex justify-end gap-3">
-          <button
-            type="button"
-            onClick={onCancel}
-            className="px-5 py-2.5 bg-[#f8f9fc] text-[#1a1d2b] rounded-xl text-[0.85rem] font-medium hover:bg-[#f0f1f5] transition-colors"
-          >
+          <button type="button" onClick={onCancel}
+            className="px-5 py-2.5 bg-[#f8f9fc] text-[#1a1d2b] rounded-xl text-[0.85rem] font-medium hover:bg-[#f0f1f5] transition-colors">
             Cancel
           </button>
-          <button
-            onClick={handleSubmit}
-            disabled={saving}
-            className="flex items-center gap-2 px-5 py-2.5 bg-[#c9a96e] text-white rounded-xl text-[0.85rem] font-medium hover:bg-[#b8985e] transition-colors disabled:opacity-60"
-          >
+          <button onClick={handleSubmit} disabled={saving}
+            className="flex items-center gap-2 px-5 py-2.5 bg-[#c9a96e] text-white rounded-xl text-[0.85rem] font-medium hover:bg-[#b8985e] transition-colors disabled:opacity-60">
             {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
             {saving ? 'Saving...' : (product ? 'Update Product' : 'Create Product')}
           </button>
