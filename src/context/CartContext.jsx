@@ -32,10 +32,12 @@ export const CartProvider = ({ children }) => {
   const totalPrice = cart.reduce((s, i) => s + (i.price || 0) * i.qty, 0);
 
   const addItem = useCallback((product, variant, qty) => {
+    console.log('VALUE product.price:', product.price, typeof product.price);
+    
     setCart((prev) => {
       const variantId   = variant?.id ?? null;
       const variantName = variant?.name ?? null;
-      const unitPrice    = variant?.price ?? product.price ?? 0;
+      const unitPrice   = variant?.price ?? product.price ?? 0;
 
       const existing = prev.find(
         (i) => i.productId === product.id && i.variantId === variantId
