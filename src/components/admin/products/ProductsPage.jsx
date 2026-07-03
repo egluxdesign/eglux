@@ -160,7 +160,7 @@ const ProductsPage = () => {
       // Kalau varian punya gambar baru, upload ke Storage lalu insert ke DB
       if (v.image?.isNew && v.image.file) {
         const fileExt = v.image.file.name.split('.').pop();
-        const filePath = `products/${productId}/variants/${variantId}-${Date.now()}.${ext}`;
+        const filePath = `products/${productId}/variants/${variantId}-${Date.now()}.${fileExt}`;
         
         const { error: uploadErr } = await supabase.storage
           .from('product-images') // Pastikan nama bucket ini sama dengan yang lu pakai
