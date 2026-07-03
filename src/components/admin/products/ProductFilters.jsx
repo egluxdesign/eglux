@@ -1,13 +1,10 @@
 // src/components/admin/products/ProductFilters.jsx
-import { useState } from 'react';
 import { Search, Filter, Plus, Download, RefreshCw } from 'lucide-react';
 
 const STATUS_OPTIONS = [
   { value: 'all', label: 'All Status' },
   { value: 'active', label: 'Active' },
   { value: 'inactive', label: 'Inactive' },
-  { value: 'draft', label: 'Draft' },
-  { value: 'archived', label: 'Archived' },
 ];
 
 const CATEGORY_OPTIONS = [
@@ -21,10 +18,10 @@ const CATEGORY_OPTIONS = [
   { value: 'decor', label: 'Decor' },
 ];
 
-const ProductFilters = ({ 
-  searchQuery, 
-  onSearchChange, 
-  statusFilter, 
+const ProductFilters = ({
+  searchQuery,
+  onSearchChange,
+  statusFilter,
   onStatusChange,
   categoryFilter,
   onCategoryChange,
@@ -45,7 +42,7 @@ const ProductFilters = ({
             type="text"
             value={searchQuery}
             onChange={(e) => onSearchChange(e.target.value)}
-            placeholder="Search by product name, SKU..."
+            placeholder="Search by product name or variant SKU..."
             className="w-full pl-10 pr-4 py-2.5 bg-[#f8f9fc] border border-[#e8ecf4] rounded-xl text-[0.85rem]
                        text-[#1a1d2b] outline-none focus:border-[#c9a96e] focus:ring-2 focus:ring-[#c9a96e]/20
                        transition-all placeholder-[#9ca3af]"
@@ -117,15 +114,13 @@ const ProductFilters = ({
           <span className="text-[0.8rem] text-[#6b7280]">{selectedCount} product(s) selected</span>
           <div className="h-4 w-px bg-[#e8ecf4]" />
           <select
-            onChange={(e) => { if (e.target.value) { onBulkStatusChange(e.target.value); e.target.value = ''; } }}
+            onChange={(e) => { if (e.target.value) { onBulkStatusChange(e.target.value === 'active'); e.target.value = ''; } }}
             className="px-3 py-1.5 bg-[#f8f9fc] border border-[#e8ecf4] rounded-lg text-[0.8rem] outline-none"
             defaultValue=""
           >
             <option value="" disabled>Update Status</option>
             <option value="active">Active</option>
             <option value="inactive">Inactive</option>
-            <option value="draft">Draft</option>
-            <option value="archived">Archived</option>
           </select>
           <button
             onClick={onBulkDelete}

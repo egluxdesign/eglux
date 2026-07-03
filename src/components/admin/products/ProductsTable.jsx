@@ -1,5 +1,5 @@
 // src/components/admin/products/ProductsTable.jsx
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { 
   ChevronLeft, 
   ChevronRight, 
@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 import ProductStatusBadge from './ProductStatusBadge';
 
-const rupiah = (n) => 'Rp ' + Number(n).toLocaleString('id-ID');
+const rupiah = (n) => 'Rp ' + Number(n || 0).toLocaleString('id-ID');
 
 const ProductsTable = ({ 
   products, 
@@ -34,6 +34,14 @@ const ProductsTable = ({
   const [rowsPerPage, setRowsPerPage] = useState(10);
   const [actionMenuOpen, setActionMenuOpen] = useState(null);
   const [deleteConfirm, setDeleteConfirm] = useState(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (!e.target.closest('[data-product-action-menu]')) setActionMenuOpen(null);
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   const totalPages = Math.ceil(products.length / rowsPerPage);
   const startIndex = (page - 1) * rowsPerPage;
@@ -119,12 +127,6 @@ const ProductsTable = ({
                 <th className="px-4 py-3 text-left text-[0.75rem] font-semibold text-[#6b7280] uppercase tracking-wider">Product</th>
                 <th 
                   className="px-4 py-3 text-left text-[0.75rem] font-semibold text-[#6b7280] uppercase tracking-wider cursor-pointer hover:text-[#1a1d2b] transition-colors"
-                  onClick={() => handleSort('sku')}
-                >
-                  <div className="flex items-center gap-1">SKU {getSortIcon('sku')}</div>
-                </th>
-                <th 
-                  className="px-4 py-3 text-left text-[0.75rem] font-semibold text-[#6b7280] uppercase tracking-wider cursor-pointer hover:text-[#1a1d2b] transition-colors"
                   onClick={() => handleSort('category')}
                 >
                   <div className="flex items-center gap-1">Category {getSortIcon('category')}</div>
@@ -133,19 +135,16 @@ const ProductsTable = ({
                   className="px-4 py-3 text-left text-[0.75rem] font-semibold text-[#6b7280] uppercase tracking-wider cursor-pointer hover:text-[#1a1d2b] transition-colors"
                   onClick={() => handleSort('base_price')}
                 >
-                  <div className="flex items-center gap-1">Price {getSortIcon('base_price')}</div>
+                  <div className="flex items-center gap-1">Base Price {getSortIcon('base_price')}</div>
+                </th>
+                <th className="px-4 py-3 text-left text-[0.75rem] font-semibold text-[#6b7280] uppercase tracking-wider">
+                  Stock
                 </th>
                 <th 
                   className="px-4 py-3 text-left text-[0.75rem] font-semibold text-[#6b7280] uppercase tracking-wider cursor-pointer hover:text-[#1a1d2b] transition-colors"
-                  onClick={() => handleSort('stock')}
+                  onClick={() => handleSort('is_active')}
                 >
-                  <div className="flex items-center gap-1">Stock {getSortIcon('stock')}</div>
-                </th>
-                <th 
-                  className="px-4 py-3 text-left text-[0.75rem] font-semibold text-[#6b7280] uppercase tracking-wider cursor-pointer hover:text-[#1a1d2b] transition-colors"
-                  onClick={() => handleSort('status')}
-                >
-                  <div className="flex items-center gap-1">Status {getSortIcon('status')}</div>
+                  <div className="flex items-center gap-1">Status {getSortIcon('is_active')}</div>
                 </th>
                 <th className="px-4 py-3 text-right text-[0.75rem] font-semibold text-[#6b7280] uppercase tracking-wider">Actions</th>
               </tr>
@@ -167,8 +166,8 @@ const ProductsTable = ({
                   <td className="px-4 py-3.5">
                     <div className="flex items-center gap-3">
                       <div className="w-10 h-10 bg-[#f8f9fc] rounded-lg flex items-center justify-center flex-shrink-0 overflow-hidden">
-                        {product.image_url ? (
-                          <img src={product.image_url} alt={product.name} className="w-full h-full object-cover" />
+                        {product.primaryImage ? (
+                          <img src={product.primaryImage} alt={product.name} className="w-full h-full object-cover" />
                         ) : (
                           <ImageIcon className="w-5 h-5 text-[#d1d5db]" />
                         )}
@@ -178,9 +177,6 @@ const ProductsTable = ({
                         <p className="text-[0.75rem] text-[#9ca3af]">{product.variants?.length || 0} variant(s)</p>
                       </div>
                     </div>
-                  </td>
-                  <td className="px-4 py-3.5">
-                    <span className="text-[0.8rem] font-mono text-[#6b7280]">{product.sku || 'N/A'}</span>
                   </td>
                   <td className="px-4 py-3.5">
                     <span className="text-[0.8rem] text-[#6b7280] capitalize">{product.category || 'N/A'}</span>
@@ -199,7 +195,7 @@ const ProductsTable = ({
                     </div>
                   </td>
                   <td className="px-4 py-3.5">
-                    <ProductStatusBadge status={product.status} size="sm" />
+                    <ProductStatusBadge isActive={product.is_active} size="sm" />
                   </td>
                   <td className="px-4 py-3.5">
                     <div className="flex items-center justify-end gap-1">
@@ -217,7 +213,7 @@ const ProductsTable = ({
                       >
                         <Trash2 className="w-4 h-4 text-red-400" />
                       </button>
-                      <div className="relative">
+                      <div className="relative" data-product-action-menu>
                         <button
                           onClick={() => setActionMenuOpen(actionMenuOpen === product.id ? null : product.id)}
                           className="p-1.5 hover:bg-[#f8f9fc] rounded-lg transition-colors"
@@ -226,15 +222,12 @@ const ProductsTable = ({
                         </button>
                         {actionMenuOpen === product.id && (
                           <div className="absolute right-0 top-full mt-1 w-44 bg-white rounded-xl shadow-lg border border-[#e8ecf4] py-1 z-10">
-                            {['active', 'inactive', 'draft', 'archived'].map((status) => (
-                              <button
-                                key={status}
-                                onClick={() => { onStatusChange(product.id, status); setActionMenuOpen(null); }}
-                                className="w-full text-left px-4 py-2 text-[0.8rem] text-[#6b7280] hover:bg-[#f8f9fc] hover:text-[#1a1d2b] transition-colors capitalize"
-                              >
-                                Mark as {status}
-                              </button>
-                            ))}
+                            <button
+                              onClick={() => { onStatusChange(product.id, !product.is_active); setActionMenuOpen(null); }}
+                              className="w-full text-left px-4 py-2 text-[0.8rem] text-[#6b7280] hover:bg-[#f8f9fc] hover:text-[#1a1d2b] transition-colors"
+                            >
+                              Mark as {product.is_active ? 'Inactive' : 'Active'}
+                            </button>
                             <div className="border-t border-[#f3f4f6] my-1" />
                             <button
                               onClick={() => handleDelete(product)}
@@ -254,7 +247,7 @@ const ProductsTable = ({
         </div>
 
         {/* Pagination */}
-        <div className="flex items-center justify-between px-4 py-3 border-t border-[#e8ecf4]">
+        <div className="flex items-center justify-between px-4 py-3 border-t border-[#e8ecf4] flex-wrap gap-3">
           <div className="flex items-center gap-3">
             <span className="text-[0.8rem] text-[#6b7280]">
               Showing {startIndex + 1} to {Math.min(startIndex + rowsPerPage, products.length)} of {products.length} products
@@ -312,6 +305,7 @@ const ProductsTable = ({
             <h3 className="text-[1.1rem] font-bold text-[#1a1d2b] text-center mb-2">Delete Product?</h3>
             <p className="text-[0.85rem] text-[#6b7280] text-center mb-6">
               Are you sure you want to delete <strong>{deleteConfirm.name}</strong>? This action cannot be undone.
+              Kalau produk ini pernah dipesan customer, penghapusan bakal ditolak otomatis.
             </p>
             <div className="flex gap-3">
               <button
