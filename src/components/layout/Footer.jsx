@@ -48,7 +48,7 @@ const Footer = () => (
 
       {/* Bottom bar */}
       <div className="border-t border-white/10 pt-8 text-center text-white/50 text-[0.85rem]">
-        &copy; 2026 Eglux — Still Under Construction
+        &copy; 2026 Eglux — All rights reserved.
       </div>
     </div>
   </footer>

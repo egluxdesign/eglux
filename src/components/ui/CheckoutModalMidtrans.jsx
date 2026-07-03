@@ -126,8 +126,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
         onPending: () => {
           // Relevan buat QRIS/transfer bank: belum tentu langsung lunas
           // saat popup ditutup. Order tetap tersimpan, status final dari webhook.
-          clearCart();
-          onClose();
+          // JANGAN clearCart di sini — customer bisa klik "Bayar Sekarang" lagi untuk retry.
           showToast('Menunggu pembayaran kamu, ya! Kami akan proses begitu terkonfirmasi.');
         },
         onError: () => {

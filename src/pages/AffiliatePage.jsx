@@ -15,9 +15,10 @@ import '../assets/styles/affiliate.css';
 import '../assets/styles/globals.css';
 
 export default function AffiliatePage() {
+  const { openCart } = useCartActions();
   return (
     <>
-      <HeaderProducts />
+      <HeaderProducts onCartOpen={openCart} />
       
       {/* Primary Nav — biasanya di dalam HeaderProducts, tapi kalau terpisah: */}
       {/* <PrimaryNav activeLink="affiliate" /> */}
