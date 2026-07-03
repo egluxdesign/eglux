@@ -2,7 +2,7 @@
 // Panel keranjang slide-in dari kanan.
 import { useCart, rupiah } from '../../context/CartContext';
 
-const CartPanel = ({ isOpen, onClose, onCheckout }) => {
+const CartPanel = ({ isOpen, onClose, onCheckout, onCheckoutMidtrans }) => {
   const { cart, totalPrice, updateQty, removeItem } = useCart();
 
   return (
@@ -98,13 +98,27 @@ const CartPanel = ({ isOpen, onClose, onCheckout }) => {
               {totalPrice > 0 ? rupiah(totalPrice) : 'Rp 0'}
             </span>
           </div>
+
+          {/* Bayar langsung via Midtrans (QRIS, transfer, e-wallet, dll) */}
+          <button
+            onClick={onCheckoutMidtrans}
+            disabled={cart.length === 0}
+            className="w-full py-4 bg-eglux-primary text-white border-none rounded-xl
+                       text-[0.95rem] font-bold cursor-pointer transition-all duration-300
+                       hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed mb-2.5"
+          >
+            Bayar Sekarang
+          </button>
+
+          {/* Checkout manual, lanjut konfirmasi via WhatsApp */}
           <button
             onClick={onCheckout}
-            className="w-full py-4 bg-eglux-secondary text-white border-none rounded-xl
-                       text-[0.95rem] font-bold cursor-pointer transition-all duration-300
-                       hover:bg-eglux-primary"
+            disabled={cart.length === 0}
+            className="w-full py-3.5 bg-white text-eglux-primary border-[1.5px] border-eglux-primary
+                       rounded-xl text-[0.88rem] font-semibold cursor-pointer transition-all duration-300
+                       hover:bg-eglux-accent disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            Lanjut Checkout
+            Checkout via WhatsApp
           </button>
         </div>
       </div>
