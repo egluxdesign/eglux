@@ -5,10 +5,23 @@ const ProductModal = ({ product, onClose, onAddToCart, onCheckoutNow }) => {
   const [variants, setVariants] = useState([]);
   const [selectedVariant, setSelectedVariant] = useState(null);
   const [qty, setQty] = useState(1);
-  const [activeImage, setActiveImage] = useState(product?.image || '');
+  const [activeImage, setActiveImage] = useState('');
 
-  // 1. INISIALISASI SAAT MODAL DIBUKA
-  // Hanya set gambar primary sekali di awal. Gak bakal berubah ke gambar varian.
+  // 1. PISAHKAN GAMBAR UMUM (DIFILTER KETAT BUKAN MILIK VARIAN)
+  const generalImages = useMemo(() => {
+    if (!product?.images) return [];
+    // HANYA ambil gambar yang variant_id-nya NULL
+    return product.images.filter(img => !img.variant_id);
+  }, [product]);
+
+  // 2. CARI GAMBAR VARIAN YANG SEDANG DIPILIH
+  const variantImage = useMemo(() => {
+    if (!selectedVariant || !product?.images) return null;
+    // HANYA ambil gambar yang variant_id-nya COCOK
+    return product.images.find(img => img.variant_id === selectedVariant.id) || null;
+  }, [selectedVariant, product]);
+
+  // 3. INISIALISASI SAAT MODAL DIBUKA
   useEffect(() => {
     if (!product) return;
     const v = product.variants ?? [];
@@ -16,24 +29,16 @@ const ProductModal = ({ product, onClose, onAddToCart, onCheckoutNow }) => {
     setSelectedVariant(v[0] ?? null);
     setQty(1);
     
-    const primaryImg = product.images?.find(img => img.is_primary);
-    setActiveImage(primaryImg?.url || product.image || '');
-  }, [product]);
-
-  // 2. CARI GAMBAR VARIAN (Murni Baca Data, Gak Ngubah Apa-apa)
-  const variantImage = useMemo(() => {
-    if (!selectedVariant || !product?.images) return null;
-    return product.images.find(img => img.variant_id === selectedVariant.id) || null;
-  }, [selectedVariant, product]);
+    // AMAN: Hanya mengambil dari generalImages yang udah difilter
+    const primary = generalImages.find(img => img.is_primary) || generalImages[0];
+    setActiveImage(primary?.url || ''); // Kalau gak ada gambar umum, biarkan kosong
+  }, [product, generalImages]);
 
   if (!product) return null;
 
-  // 3. LOGIK HARGA
+  // 4. LOGIK HARGA
   const effectivePrice = selectedVariant?.price ?? product.price;
   const subtotal = effectivePrice ? effectivePrice * qty : null;
-
-  // 4. FILTER GAMBAR UNTUK THUMBNAIL (Hanya Yang Bukan Punya Varian)
-  const generalImages = product.images?.filter(img => !img.variant_id) || [];
 
   return (
     <div
@@ -42,7 +47,6 @@ const ProductModal = ({ product, onClose, onAddToCart, onCheckoutNow }) => {
       role="dialog" aria-modal="true"
     >
       <div className="bg-white rounded-[20px] max-w-[520px] w-full max-h-[90vh] overflow-y-auto relative">
-        {/* Tombol Close */}
         <button
           onClick={onClose}
           className="absolute top-4 right-4 z-[2] w-[34px] h-[34px] rounded-full bg-black/[0.07]
@@ -52,19 +56,26 @@ const ProductModal = ({ product, onClose, onAddToCart, onCheckoutNow }) => {
           &times;
         </button>
 
-        {/* 5. AREA GAMBAR (FLEX: KIRI UTAMA, KANAN VARIAN) */}
-        <div className="flex h-[260px] md:h-[300px] overflow-hidden rounded-t-[20px]">
+        {/* 5. AREA GAMBAR (KIRI: UTAMA, KANAN: VARIAN) */}
+        <div className="flex h-[260px] md:h-[300px] overflow-hidden rounded-t-[20px] bg-[#f3f4f6]">
           
-          {/* Gambar Utama (Selalu di kiri) */}
-          <img 
-            src={activeImage} 
-            alt={product.name}
-            // Kalau ada gambar varian, lebarnya jadi 66%. Kalau gak ada, 100%.
-            className={`${variantImage ? 'w-2/3' : 'w-full'} h-full object-cover transition-all duration-300`} 
-            loading="lazy" 
-          />
+          {/* GAMBAR UTAMA (KIRI) - 100% AMAN KARENA activeImage DARI generalImages */}
+          {activeImage ? (
+            <img 
+              src={activeImage} 
+              alt={product.name}
+              className={`${variantImage ? 'w-2/3' : 'w-full'} h-full object-cover transition-all duration-300`} 
+              loading="lazy" 
+            />
+          ) : (
+            // FALLBACK JIKA USER LUPA UPLOAD GAMBAR UTAMA
+            <div className={`${variantImage ? 'w-2/3' : 'w-full'} h-full flex flex-col items-center justify-center text-[#9ca3af]`}>
+              <span className="text-3xl mb-2">📷</span>
+              <span className="text-[0.8rem]">Upload gambar utama di Admin</span>
+            </div>
+          )}
           
-          {/* Gambar Varian (Selalu di kanan, kalau ada) */}
+          {/* GAMBAR VARIAN (KANAN) - PASTI MUNCUL DI KANAN */}
           {variantImage && (
             <img 
               src={variantImage.url} 
@@ -74,7 +85,7 @@ const ProductModal = ({ product, onClose, onAddToCart, onCheckoutNow }) => {
           )}
         </div>
 
-        {/* 6. THUMBNIL GALERI UMUM */}
+        {/* 6. THUMBNIL GALERI (HANYA MENAMPILKAN GAMBAR UMUM) */}
         {generalImages.length > 1 && (
           <div className="flex gap-2 px-6 pt-4">
             {generalImages.map((img) => (

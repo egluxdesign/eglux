@@ -43,8 +43,10 @@ const useProducts = () => {
 
       // Bentuk ulang data produk
       const shaped = data.map((p) => {
-        const primaryImage =
-          p.product_images.find((img) => img.is_primary) || p.product_images[0];
+        // Filter dulu: AMBIL GAMBAR YANG BUKAN MILIK VARIAN
+      const nonVariantImages = p.product_images.filter((img) => !img.variant_id);
+      const primaryImage =
+        nonVariantImages.find((img) => img.is_primary) || nonVariantImages[0] || p.product_images[0];
         return {
           id:       p.id,
           name:     p.name,
