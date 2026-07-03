@@ -185,7 +185,7 @@ const ProductsPage = () => {
     for (const img of images) {
       if (img.isNew && img.file) {
         const fileExt = img.file.name.split('.').pop();
-        const filePath = `products/${productId}/${Date.now()}-${img._key}.${ext}`;
+        const filePath = `products/${productId}/${Date.now()}-${img._key}.${fileExt}`;
         
         const { error: uploadErr } = await supabase.storage
           .from('product-images')
