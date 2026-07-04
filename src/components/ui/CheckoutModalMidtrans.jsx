@@ -273,7 +273,9 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
       shipping_address: form.address.trim(),
       shipping_city: form.city.trim(),
       shipping_postal_code: form.postal,
-      shipping_area_id: parseInt(selectedAreaId, 10),
+      // FIX Task 1-t: Biteship area_id adalah STRING alphanumerik (format "IDNP6...IDZ12250"),
+      // bukan integer. parseInt() return NaN → DB store null → create-biteship-order reject.
+      shipping_area_id: String(selectedAreaId || '').trim() || null,
       shipping_area_name: selectedArea?.name || null,
       courier_code: (selectedShipping?.courier || '').toLowerCase(),
       courier_service: selectedShipping?.service || null,
