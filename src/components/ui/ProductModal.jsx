@@ -90,7 +90,7 @@ const ProductModal = ({ product, onClose, onAddToCart, onCheckoutNow }) => {
           <div className="flex gap-2 px-6 pt-4">
             {generalImages.map((img) => (
               <button 
-                key={img.id} 
+                key={img.id || img.url} // <- PAKAI INI 
                 onClick={() => setActiveImage(img.url)}
                 className={`w-16 h-16 rounded-lg overflow-hidden border-2 transition-all ${
                   activeImage === img.url ? 'border-eglux-secondary' : 'border-transparent opacity-70 hover:opacity-100'
@@ -137,7 +137,8 @@ const ProductModal = ({ product, onClose, onAddToCart, onCheckoutNow }) => {
               <div className="flex flex-wrap gap-2 mb-5">
                 {variants.map((v) => (
                   <button
-                    key={v.id}
+                    key={v.id || v.name || Math.random()} // <- PAKAI INI
+
                     onClick={() => setSelectedVariant(v)}
                     className={`py-1.5 px-4 border-[1.5px] rounded-lg text-[0.82rem] cursor-pointer font-medium text-eglux-primary transition-all duration-300 text-center
                       ${selectedVariant?.id === v.id

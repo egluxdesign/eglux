@@ -1,14 +1,15 @@
 // src/components/admin/customers/CustomerDetailModal.jsx
 import { useState, useEffect } from 'react';
 import { supabase } from '../../../lib/supabaseClient';
-import { X, User, Phone, Mail, MapPin, ShoppingBag, Calendar, ArrowUpRight } from 'lucide-react';
+import { X, User, Phone, Mail, MapPin, ShoppingBag, Calendar, ArrowUpRight, AlertTriangle } from 'lucide-react';
 import StatusBadge from '../orders/StatusBadge';
 
-const rupiah = (n) => 'Rp ' + Number(n).toLocaleString('id-ID');
+const rupiah = (n) => 'Rp ' + Number(n || 0).toLocaleString('id-ID');
 
 const CustomerDetailModal = ({ customer, onClose }) => {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
 
   useEffect(() => {
     if (customer) fetchCustomerOrders();
@@ -16,11 +17,24 @@ const CustomerDetailModal = ({ customer, onClose }) => {
 
   const fetchCustomerOrders = async () => {
     setLoading(true);
-    const { data } = await supabase
+    setLoadError(null);
+
+    // order_items gak dipakai di tampilan ini, jadi gak perlu di-join —
+    // hemat bandwidth query.
+    const { data, error } = await supabase
       .from('orders')
-      .select('*, order_items(*)')
+      .select('*')
       .eq('customer_id', customer.id)
       .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('[CustomerDetail] fetch orders failed:', error);
+      setLoadError('Gagal memuat riwayat order customer ini.');
+      setOrders([]);
+      setLoading(false);
+      return;
+    }
+
     setOrders(data || []);
     setLoading(false);
   };
@@ -47,7 +61,9 @@ const CustomerDetailModal = ({ customer, onClose }) => {
             </div>
             <div>
               <h2 className="text-[1.1rem] font-bold text-[#1a1d2b]">{customer.name || 'Unknown'}</h2>
-              <p className="text-[0.75rem] text-[#9ca3af]">Customer since {new Date(customer.created_at).toLocaleDateString('id-ID', { month: 'long', year: 'numeric' })}</p>
+              <p className="text-[0.75rem] text-[#9ca3af]">
+                Customer since {new Date(customer.created_at).toLocaleDateString('id-ID', { month: 'long', year: 'numeric' })}
+              </p>
             </div>
           </div>
           <button onClick={onClose} className="p-2 hover:bg-[#f8f9fc] rounded-lg transition-colors">
@@ -57,6 +73,13 @@ const CustomerDetailModal = ({ customer, onClose }) => {
 
         {/* Content */}
         <div className="flex-1 overflow-auto p-6">
+          {loadError && (
+            <div className="flex items-center gap-2 bg-red-50 text-red-600 px-4 py-3 rounded-xl text-[0.85rem] mb-5">
+              <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+              {loadError}
+            </div>
+          )}
+
           {/* Stats Cards */}
           <div className="grid grid-cols-3 gap-3 mb-6">
             <div className="bg-[#f8f9fc] rounded-xl p-4 text-center">
@@ -66,7 +89,7 @@ const CustomerDetailModal = ({ customer, onClose }) => {
             </div>
             <div className="bg-[#f8f9fc] rounded-xl p-4 text-center">
               <ArrowUpRight className="w-5 h-5 text-emerald-500 mx-auto mb-2" />
-              <p className="text-[1.25rem] font-bold text-[#1a1d2b]">{rupiah(customer.total_spent || 0)}</p>
+              <p className="text-[1.25rem] font-bold text-[#1a1d2b]">{rupiah(customer.total_spent)}</p>
               <p className="text-[0.75rem] text-[#9ca3af]">Total Spent</p>
             </div>
             <div className="bg-[#f8f9fc] rounded-xl p-4 text-center">

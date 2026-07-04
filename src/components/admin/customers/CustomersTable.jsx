@@ -14,7 +14,7 @@ import {
   ShoppingBag
 } from 'lucide-react';
 
-const rupiah = (n) => 'Rp ' + Number(n).toLocaleString('id-ID');
+const rupiah = (n) => 'Rp ' + Number(n || 0).toLocaleString('id-ID');
 
 const CustomersTable = ({ 
   customers, 
@@ -149,7 +149,7 @@ const CustomersTable = ({
                   </div>
                 </td>
                 <td className="px-4 py-3.5">
-                  <span className="text-[0.85rem] font-semibold text-[#1a1d2b]">{rupiah(customer.total_spent || 0)}</span>
+                  <span className="text-[0.85rem] font-semibold text-[#1a1d2b]">{rupiah(customer.total_spent)}</span>
                 </td>
                 <td className="px-4 py-3.5">
                   <span className="text-[0.8rem] text-[#6b7280]">
@@ -175,7 +175,7 @@ const CustomersTable = ({
       </div>
 
       {/* Pagination */}
-      <div className="flex items-center justify-between px-4 py-3 border-t border-[#e8ecf4]">
+      <div className="flex items-center justify-between px-4 py-3 border-t border-[#e8ecf4] flex-wrap gap-3">
         <div className="flex items-center gap-3">
           <span className="text-[0.8rem] text-[#6b7280]">
             Showing {startIndex + 1} to {Math.min(startIndex + rowsPerPage, customers.length)} of {customers.length} customers

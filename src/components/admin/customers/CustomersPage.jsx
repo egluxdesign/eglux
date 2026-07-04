@@ -3,60 +3,81 @@ import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../../../lib/supabaseClient';
 import CustomersTable from './CustomersTable';
 import CustomerDetailModal from './CustomerDetailModal';
-import { Users, Search } from 'lucide-react';
+import { Users, Search, AlertTriangle } from 'lucide-react';
+
+const rupiah = (n) => 'Rp ' + Number(n || 0).toLocaleString('id-ID');
+
+// Sama seperti definisi "revenue" di Dashboard — cuma order yang beneran
+// lunas yang dihitung sebagai uang masuk, biar angkanya konsisten di semua
+// halaman admin (Dashboard, Customers, dst).
+const REVENUE_STATUSES = ['paid', 'shipped'];
 
 const CustomersPage = () => {
   const [customers, setCustomers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [detailCustomer, setDetailCustomer] = useState(null);
   const [sortConfig, setSortConfig] = useState({ key: 'created_at', direction: 'desc' });
 
   const fetchCustomers = useCallback(async () => {
     setLoading(true);
+    setFetchError(null);
 
-    // Fetch customers with order aggregation
-    const { data: customersData } = await supabase
+    const { data: customersData, error: customersErr } = await supabase
       .from('customers')
       .select('*')
       .order('created_at', { ascending: false });
 
+    if (customersErr) {
+      console.error('[Customers] fetch customers failed:', customersErr);
+      setFetchError('Gagal memuat data customer. Coba refresh.');
+      setCustomers([]);
+      setLoading(false);
+      return;
+    }
+
     let result = customersData || [];
 
-    // Fetch orders to calculate stats per customer
-    const { data: ordersData } = await supabase
+    const { data: ordersData, error: ordersErr } = await supabase
       .from('orders')
       .select('id, customer_id, total_amount, status, created_at');
 
+    if (ordersErr) {
+      console.error('[Customers] fetch orders failed:', ordersErr);
+      setFetchError('Gagal memuat riwayat order customer. Coba refresh.');
+      setCustomers([]);
+      setLoading(false);
+      return;
+    }
+
     const orders = ordersData || [];
 
-    // Enrich customer data with order stats
-    result = result.map(customer => {
-      const customerOrders = orders.filter(o => o.customer_id === customer.id);
+    result = result.map((customer) => {
+      const customerOrders = orders.filter((o) => o.customer_id === customer.id);
+      const completedOrders = customerOrders.filter((o) => REVENUE_STATUSES.includes(o.status));
       return {
         ...customer,
         order_count: customerOrders.length,
-        total_spent: customerOrders.reduce((sum, o) => sum + (o.total_amount || 0), 0),
-        last_order: customerOrders.length > 0 
+        total_spent: completedOrders.reduce((sum, o) => sum + (o.total_amount || 0), 0),
+        last_order: customerOrders.length > 0
           ? customerOrders.sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0].created_at
           : null,
       };
     });
 
-    // Client-side search
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
-      result = result.filter(c => 
+      result = result.filter((c) =>
         c.name?.toLowerCase().includes(q) ||
         c.email?.toLowerCase().includes(q) ||
         c.phone?.includes(q)
       );
     }
 
-    // Sort
     result.sort((a, b) => {
-      let valA = a[sortConfig.key] || 0;
-      let valB = b[sortConfig.key] || 0;
+      let valA = a[sortConfig.key] ?? 0;
+      let valB = b[sortConfig.key] ?? 0;
 
       if (typeof valA === 'string') {
         valA = valA.toLowerCase();
@@ -78,9 +99,9 @@ const CustomersPage = () => {
   }, [fetchCustomers]);
 
   const handleSort = (key) => {
-    setSortConfig(prev => ({
+    setSortConfig((prev) => ({
       key,
-      direction: prev.key === key && prev.direction === 'asc' ? 'desc' : 'asc'
+      direction: prev.key === key && prev.direction === 'asc' ? 'desc' : 'asc',
     }));
   };
 
@@ -90,12 +111,10 @@ const CustomersPage = () => {
   return (
     <div className="space-y-4">
       {/* Page Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-[1.5rem] font-bold text-[#1a1d2b]">Customers</h1>
-          <p className="text-[0.85rem] text-[#9ca3af] mt-1">
-            Manage your customer base
-          </p>
+          <p className="text-[0.85rem] text-[#9ca3af] mt-1">Manage your customer base</p>
         </div>
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2 bg-white px-4 py-2 rounded-xl border border-[#e8ecf4]">
@@ -111,6 +130,13 @@ const CustomersPage = () => {
           </div>
         </div>
       </div>
+
+      {fetchError && (
+        <div className="flex items-center gap-3 bg-red-50 text-red-600 px-4 py-3 rounded-xl text-[0.85rem]">
+          <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+          {fetchError}
+        </div>
+      )}
 
       {/* Search */}
       <div className="bg-white rounded-2xl border border-[#e8ecf4] p-4">
@@ -147,7 +173,5 @@ const CustomersPage = () => {
     </div>
   );
 };
-
-const rupiah = (n) => 'Rp ' + Number(n).toLocaleString('id-ID');
 
 export default CustomersPage;

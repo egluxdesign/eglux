@@ -12,17 +12,24 @@ import {
   CheckCircle,
   XCircle,
   Clock,
-  AlertTriangle
+  AlertTriangle,
+  Ban,
+  RotateCcw,
+  Eye
 } from 'lucide-react';
 
-const rupiah = (n) => 'Rp ' + Number(n).toLocaleString('id-ID');
+const rupiah = (n) => 'Rp ' + Number(n || 0).toLocaleString('id-ID');
 
+// Kunci di sini HARUS sama persis dengan nilai yang ditulis webhook Midtrans
+// (mapMidtransStatus): success, pending, challenge, failed, cancelled, expired, refunded.
 const PAYMENT_STATUS_CONFIG = {
-  pending:   { label: 'Pending',   icon: Clock,         color: 'text-amber-500',   bg: 'bg-amber-50',   border: 'border-amber-100' },
-  paid:      { label: 'Paid',      icon: CheckCircle,   color: 'text-emerald-500', bg: 'bg-emerald-50', border: 'border-emerald-100' },
-  failed:    { label: 'Failed',    icon: XCircle,       color: 'text-red-500',     bg: 'bg-red-50',     border: 'border-red-100' },
-  expired:   { label: 'Expired',   icon: AlertTriangle, color: 'text-gray-500',    bg: 'bg-gray-50',    border: 'border-gray-100' },
-  refunded:  { label: 'Refunded',  icon: CreditCard,    color: 'text-blue-500',    bg: 'bg-blue-50',    border: 'border-blue-100' },
+  pending:   { label: 'Pending',   icon: Clock,         color: 'text-amber-500',  bg: 'bg-amber-50',   border: 'border-amber-100' },
+  challenge: { label: 'Challenge', icon: AlertTriangle, color: 'text-orange-500', bg: 'bg-orange-50',  border: 'border-orange-100' },
+  success:   { label: 'Success',   icon: CheckCircle,   color: 'text-emerald-500',bg: 'bg-emerald-50', border: 'border-emerald-100' },
+  failed:    { label: 'Failed',    icon: XCircle,       color: 'text-red-500',    bg: 'bg-red-50',     border: 'border-red-100' },
+  cancelled: { label: 'Cancelled', icon: Ban,           color: 'text-gray-500',   bg: 'bg-gray-50',    border: 'border-gray-100' },
+  expired:   { label: 'Expired',   icon: AlertTriangle, color: 'text-gray-400',   bg: 'bg-gray-50',    border: 'border-gray-100' },
+  refunded:  { label: 'Refunded',  icon: RotateCcw,     color: 'text-blue-500',   bg: 'bg-blue-50',    border: 'border-blue-100' },
 };
 
 const PaymentStatusBadge = ({ status }) => {
@@ -36,11 +43,20 @@ const PaymentStatusBadge = ({ status }) => {
   );
 };
 
+// payment_method gak ada di tabel payments — info metode bayar (qris, gopay,
+// bank_transfer, dll) ada di dalam raw_payload (field payment_type dari Midtrans).
+const formatMethod = (payment) => {
+  const raw = payment.raw_payload?.payment_type || payment.provider;
+  if (!raw) return 'N/A';
+  return String(raw).replace(/_/g, ' ');
+};
+
 const PaymentsTable = ({ 
   payments, 
   loading, 
   sortConfig,
-  onSort
+  onSort,
+  onViewDetail,
 }) => {
   const [page, setPage] = useState(1);
   const [rowsPerPage, setRowsPerPage] = useState(10);
@@ -98,13 +114,7 @@ const PaymentsTable = ({
         <table className="w-full">
           <thead>
             <tr className="bg-[#f8f9fc] border-b border-[#e8ecf4]">
-              <th className="px-4 py-3 text-left text-[0.75rem] font-semibold text-[#6b7280] uppercase tracking-wider">Payment ID</th>
-              <th 
-                className="px-4 py-3 text-left text-[0.75rem] font-semibold text-[#6b7280] uppercase tracking-wider cursor-pointer hover:text-[#1a1d2b] transition-colors"
-                onClick={() => handleSort('order_id')}
-              >
-                <div className="flex items-center gap-1">Order {getSortIcon('order_id')}</div>
-              </th>
+              <th className="px-4 py-3 text-left text-[0.75rem] font-semibold text-[#6b7280] uppercase tracking-wider">Customer / Order</th>
               <th 
                 className="px-4 py-3 text-left text-[0.75rem] font-semibold text-[#6b7280] uppercase tracking-wider cursor-pointer hover:text-[#1a1d2b] transition-colors"
                 onClick={() => handleSort('amount')}
@@ -117,29 +127,29 @@ const PaymentsTable = ({
               >
                 <div className="flex items-center gap-1">Status {getSortIcon('status')}</div>
               </th>
-              <th 
-                className="px-4 py-3 text-left text-[0.75rem] font-semibold text-[#6b7280] uppercase tracking-wider cursor-pointer hover:text-[#1a1d2b] transition-colors"
-                onClick={() => handleSort('payment_method')}
-              >
-                <div className="flex items-center gap-1">Method {getSortIcon('payment_method')}</div>
-              </th>
+              <th className="px-4 py-3 text-left text-[0.75rem] font-semibold text-[#6b7280] uppercase tracking-wider">Method</th>
               <th 
                 className="px-4 py-3 text-left text-[0.75rem] font-semibold text-[#6b7280] uppercase tracking-wider cursor-pointer hover:text-[#1a1d2b] transition-colors"
                 onClick={() => handleSort('created_at')}
               >
                 <div className="flex items-center gap-1">Date {getSortIcon('created_at')}</div>
               </th>
-              <th className="px-4 py-3 text-left text-[0.75rem] font-semibold text-[#6b7280] uppercase tracking-wider">Transaction ID</th>
+              <th className="px-4 py-3 text-left text-[0.75rem] font-semibold text-[#6b7280] uppercase tracking-wider">Reference ID</th>
+              <th className="px-4 py-3 text-right text-[0.75rem] font-semibold text-[#6b7280] uppercase tracking-wider">Detail</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[#f3f4f6]">
             {paginatedPayments.map((payment) => (
               <tr key={payment.id} className="hover:bg-[#f8f9fc] transition-colors">
                 <td className="px-4 py-3.5">
-                  <span className="text-[0.8rem] font-mono text-[#6b7280]">#{payment.id.slice(0, 8)}</span>
-                </td>
-                <td className="px-4 py-3.5">
-                  <span className="text-[0.8rem] font-mono text-[#6b7280]">#{payment.order_id?.slice(0, 8) || 'N/A'}</span>
+                  <div>
+                    <p className="text-[0.85rem] font-medium text-[#1a1d2b]">
+                      {payment.orders?.customers?.name || 'Unknown Customer'}
+                    </p>
+                    <p className="text-[0.75rem] text-[#9ca3af] font-mono">
+                      Order #{payment.order_id?.slice(0, 8) || 'N/A'}
+                    </p>
+                  </div>
                 </td>
                 <td className="px-4 py-3.5">
                   <span className="text-[0.85rem] font-semibold text-[#1a1d2b]">{rupiah(payment.amount)}</span>
@@ -148,7 +158,7 @@ const PaymentsTable = ({
                   <PaymentStatusBadge status={payment.status} />
                 </td>
                 <td className="px-4 py-3.5">
-                  <span className="text-[0.8rem] text-[#6b7280] capitalize">{payment.payment_method || 'N/A'}</span>
+                  <span className="text-[0.8rem] text-[#6b7280] capitalize">{formatMethod(payment)}</span>
                 </td>
                 <td className="px-4 py-3.5">
                   <span className="text-[0.8rem] text-[#6b7280]">
@@ -156,7 +166,16 @@ const PaymentsTable = ({
                   </span>
                 </td>
                 <td className="px-4 py-3.5">
-                  <span className="text-[0.75rem] font-mono text-[#9ca3af]">{payment.transaction_id || '—'}</span>
+                  <span className="text-[0.75rem] font-mono text-[#9ca3af]">{payment.provider_reference_id || '—'}</span>
+                </td>
+                <td className="px-4 py-3.5 text-right">
+                  <button
+                    onClick={() => onViewDetail(payment)}
+                    className="p-1.5 hover:bg-[#f8f9fc] rounded-lg transition-colors"
+                    title="View Detail"
+                  >
+                    <Eye className="w-4 h-4 text-[#6b7280]" />
+                  </button>
                 </td>
               </tr>
             ))}
@@ -165,7 +184,7 @@ const PaymentsTable = ({
       </div>
 
       {/* Pagination */}
-      <div className="flex items-center justify-between px-4 py-3 border-t border-[#e8ecf4]">
+      <div className="flex items-center justify-between px-4 py-3 border-t border-[#e8ecf4] flex-wrap gap-3">
         <div className="flex items-center gap-3">
           <span className="text-[0.8rem] text-[#6b7280]">
             Showing {startIndex + 1} to {Math.min(startIndex + rowsPerPage, payments.length)} of {payments.length} payments
