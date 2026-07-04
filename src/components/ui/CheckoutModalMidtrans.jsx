@@ -154,26 +154,57 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
   // ===== Auto-fetch rates begitu area dipilih =====
   const fetchRates = useCallback(
     async (areaId) => {
-      if (!areaId || cart.length === 0) return;
+      // Per Biteship docs: destination_area_id is STRING. Keep as string, no Number() conversion.
+      const areaIdStr = areaId != null ? String(areaId).trim() : '';
+      if (!areaIdStr) {
+        console.error('[fetchRates] Empty areaId:', areaId);
+        showToast('Area ID tidak valid, coba pilih ulang area tujuan.');
+        return;
+      }
+      if (cart.length === 0) return;
+
       setShippingLoading(true);
       setShippingOptions([]);
       setSelectedShipping(null);
 
       try {
-        const { data, error } = await supabase.functions.invoke('check-biteship-rates', {
-          body: {
-            destination_area_id: parseInt(areaId, 10),
-            items: cart.map((item) => ({
-              product_id: item.productId,
-              name: item.name,
-              price: item.price || 0,
-              qty: item.qty,
-              weight_in_gram: item.weight_gram || 500,
-            })),
-          },
+        // Pakai fetch native (konsisten dengan search-biteship-areas Task 1-f)
+        const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+        const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+        const payload = {
+          destination_area_id: areaIdStr,  // ← STRING per Biteship docs
+          items: cart.map((item) => ({
+            product_id: item.productId,
+            name: item.name,
+            price: item.price || 0,
+            qty: item.qty,
+            weight_in_gram: item.weight_gram || 500,
+          })),
+        };
+
+        console.log('[fetchRates] Sending to check-biteship-rates:', {
+          destination_area_id: payload.destination_area_id,
+          type: typeof payload.destination_area_id,
+          items_count: payload.items.length,
         });
-        if (error) throw new Error(error.message);
-        if (data.error) throw new Error(data.error);
+
+        const resp = await fetch(`${supabaseUrl}/functions/v1/check-biteship-rates`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${anonKey}`,
+            apikey: anonKey,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload),
+        });
+
+        const data = await resp.json();
+        if (!resp.ok || data.error) {
+          throw new Error(
+            data.error?.message || data.error || `HTTP ${resp.status}`
+          );
+        }
 
         setShippingOptions(data.pricing || []);
         if (!data.pricing?.length) showToast('Tidak ada kurir tersedia untuk area ini.');
