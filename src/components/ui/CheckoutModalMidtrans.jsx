@@ -88,17 +88,39 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
       setSelectedShipping(null);
 
       try {
-        const { data, error } = await supabase.functions.invoke('search-biteship-areas', {
-          method: 'GET',
-          query: { postal_code: postal },
-        });
-        if (error) throw new Error(error.message);
-        if (data.error) throw new Error(data.error);
+        // supabase-js v2 functions.invoke TIDAK support method:GET + query param.
+        // Pakai fetch langsung dengan anon key di header Authorization.
+        const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+        const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+        const resp = await fetch(
+          `${supabaseUrl}/functions/v1/search-biteship-areas?postal_code=${encodeURIComponent(postal)}`,
+          {
+            method: 'GET',
+            headers: {
+              Authorization: `Bearer ${anonKey}`,
+              apikey: anonKey,
+              'Content-Type': 'application/json',
+            },
+          }
+        );
+
+        const data = await resp.json();
+        if (!resp.ok || data.error) {
+          throw new Error(
+            data.error?.message || data.error || `HTTP ${resp.status}`
+          );
+        }
 
         setAreas(data.areas || []);
         // Auto-select kalau cuma 1 area match
         if (data.areas?.length === 1) {
           setSelectedAreaId(String(data.areas[0].id));
+        }
+
+        // Show "tidak ditemukan" jika 0 results
+        if (resp.ok && (!data.areas || data.areas.length === 0)) {
+          showToast(`Kode pos ${postal} tidak ditemukan di Biteship.`);
         }
       } catch (err) {
         let msg = err.message;
