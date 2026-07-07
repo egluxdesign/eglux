@@ -2,41 +2,207 @@
 // ============================================================================
 // EGLUX Checkout — Midtrans Snap (payment) + Biteship (shipping aggregator)
 //
-// Form fields 1:1 dengan requirement Midtrans customer_details + Biteship rates:
-//   - name, email (opsional), phone → customer_details
-//   - address, city, postal_code → billing_address + shipping_address
-//   - postal_code → Biteship /v1/areas_by_postal_code → destination_area_id
-//   - destination_area_id + cart items → Biteship /v1/rates/calculate → kurir list
-//   - selected kurir → shipping_cost → masuk ke gross_amount Midtrans
+// [v2] Perubahan:
+//   1. Phone input → react-phone-input-2 (lock Indonesia, bendera + +62 prefix)
+//      - Format storage: E.164 (+628xxx) ke DB & Midtrans
+//      - Validasi: digit pertama setelah +62 WAJIB 8 (HP only, reject landline)
+//      - Jika user input "+62 08xxx" → error "Jangan pakai 0 di depan"
+//      - Jika user input "+62 21xxx" (landline) → error "Harus diawali angka 8"
+//   2. Email input → inline error message di bawah field (bukan cuma toast)
+//   3. City input → react-select searchable dropdown (97 kota Indonesia)
 //
-// Database: kolom terstruktur (shipping_cost, courier_code, dst.) — bukan di notes.
+// Dependencies baru:
+//   npm install react-phone-input-2 react-select
+//
+// Catatan DB:
+//   - customers.phone: VARCHAR(20) minimum (untuk accommodate +628xxxxxxxxxx)
+//   - orders.shipping_city: VARCHAR(100) (sudah ada)
 // ============================================================================
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useCart, rupiah } from '../../context/CartContext';
 import { supabase } from '../../lib/supabaseClient';
 import { useMidtransSnap } from '../../hooks/useMidtransSnap';
-import { Truck, Loader2, MapPin, User, Package, ShieldCheck } from 'lucide-react';
+import {
+  Truck,
+  Loader2,
+  MapPin,
+  User,
+  Package,
+  ShieldCheck,
+  AlertCircle,
+} from 'lucide-react';
+import PhoneInput from 'react-phone-input-2';
+import 'react-phone-input-2/lib/style.css';
+import Select from 'react-select';
+import { INDONESIAN_CITIES } from '../../data/indonesianCities';
 
 const INITIAL_FORM = {
   name: '',
   email: '',
-  phone: '',
+  phone: '', // E.164: +628xxxxxxxxxx (13-15 char total)
   address: '',
-  city: '',
+  city: '', // city name string (dari dropdown)
   postal: '',
   notes: '',
 };
 
 const generateUUID = () => crypto.randomUUID();
-const isPhoneValid = (p) => /^0?8\d{8,12}$/.test((p || '').replace(/\D/g, ''));
+
+// ===== Email validation =====
 const isEmailValid = (e) => !e || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
+
+// ===== Phone validation (E.164, first digit after +62 MUST be 8) =====
+// Accepts:   +62 812 3456 7890 → valid (HP)
+// Rejects:   +62 0812...       → "Jangan pakai 0 di depan"
+// Rejects:   +62 21...         → "Harus diawali angka 8" (landline)
+// Rejects:   too short/long    → "Nomor terlalu pendek/panjang"
+const isPhoneValidE164 = (p) => {
+  if (!p) return false;
+  const digits = p.replace(/\D/g, '');
+  // 62 (country) + 8 (mobile prefix) + 7-13 digits
+  return /^628\d{7,13}$/.test(digits);
+};
+
+const getPhoneErrorMessage = (p) => {
+  if (!p || !p.trim()) return 'Nomor WhatsApp wajib diisi';
+  const digits = p.replace(/\D/g, '');
+  if (!digits.startsWith('62')) {
+    return 'Format nomor tidak valid (gunakan +62 8xx)';
+  }
+  const afterCountry = digits.slice(2);
+  if (afterCountry.startsWith('0')) {
+    return 'Jangan pakai 0 di depan. Langsung ketik 8xxx (contoh: 812 3456 7890)';
+  }
+  if (!afterCountry.startsWith('8')) {
+    return 'Nomor HP Indonesia harus diawali angka 8 (contoh: +62 812 xxx)';
+  }
+  if (afterCountry.length < 8) return 'Nomor terlalu pendek';
+  if (afterCountry.length > 14) return 'Nomor terlalu panjang';
+  return '';
+};
+
+// ===== react-select custom styles (match eglux design) =====
+const selectStyles = {
+  control: (base, state) => ({
+    ...base,
+    minHeight: '48px',
+    height: '48px',
+    border: state.isFocused
+      ? '1.5px solid #c9a96e'
+      : state.selectProps.error
+      ? '1.5px solid #ef4444'
+      : '1.5px solid #ddd',
+    borderRadius: '10px',
+    fontSize: '0.88rem',
+    fontFamily: 'inherit',
+    boxShadow: 'none',
+    '&:hover': {
+      borderColor: state.selectProps.error ? '#ef4444' : '#c9a96e',
+    },
+    background: state.isDisabled ? '#f5f5f5' : '#fff',
+    cursor: 'pointer',
+  }),
+  option: (base, state) => ({
+    ...base,
+    fontSize: '0.85rem',
+    background: state.isSelected
+      ? '#c9a96e'
+      : state.isFocused
+      ? '#faf6ef'
+      : '#fff',
+    color: state.isSelected ? '#fff' : '#1a1a1a',
+    cursor: 'pointer',
+    '&:active': { background: state.isSelected ? '#c9a96e' : '#f0e8d6' },
+  }),
+  placeholder: (base) => ({
+    ...base,
+    color: '#999',
+    fontSize: '0.85rem',
+  }),
+  singleValue: (base) => ({
+    ...base,
+    color: '#1a1a1a',
+    fontSize: '0.88rem',
+  }),
+  menu: (base) => ({
+    ...base,
+    zIndex: 9999,
+    borderRadius: '10px',
+    overflow: 'hidden',
+  }),
+  menuList: (base) => ({
+    ...base,
+    maxHeight: '220px',
+  }),
+  indicatorSeparator: (base) => ({
+    ...base,
+    backgroundColor: '#ddd',
+  }),
+  dropdownIndicator: (base) => ({
+    ...base,
+    color: '#999',
+    '&:hover': { color: '#c9a96e' },
+  }),
+};
+
+// ===== react-phone-input-2 custom styles (override default) =====
+const PHONE_INPUT_STYLES = `
+.phone-input-container .react-tel-input .form-control {
+  width: 100% !important;
+  height: 48px;
+  border: 1.5px solid #ddd;
+  border-radius: 10px;
+  font-size: 0.88rem;
+  color: #1a1a1a;
+  padding-left: 58px;
+  outline: none;
+  background: #fff;
+  transition: border-color 0.2s;
+  font-family: inherit;
+}
+.phone-input-container .react-tel-input .form-control:focus {
+  border-color: #c9a96e;
+}
+.phone-input-container .react-tel-input .form-control:disabled {
+  background: #f5f5f5;
+  color: #999;
+}
+.phone-input-container .react-tel-input .flag-dropdown {
+  border: 1.5px solid #ddd;
+  border-right: none;
+  border-radius: 10px 0 0 10px;
+  background: #faf6ef;
+  height: 48px;
+}
+.phone-input-container .react-tel-input .selected-flag {
+  padding: 0 12px;
+  height: 100%;
+}
+.phone-input-container .react-tel-input .selected-flag:hover,
+.phone-input-container .react-tel-input .selected-flag:focus {
+  background-color: #f0e8d6;
+}
+.phone-input-container .react-tel-input .country-list {
+  width: 280px;
+  font-size: 0.85rem;
+  border-radius: 8px;
+  z-index: 9999;
+}
+.phone-input-container.has-error .react-tel-input .form-control {
+  border-color: #ef4444;
+}
+.phone-input-container.has-error .react-tel-input .flag-dropdown {
+  border-color: #ef4444;
+}
+`;
 
 const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
   const { cart, totalPrice, clearCart } = useCart();
   const { snapReady, loadError } = useMidtransSnap();
 
   const [form, setForm] = useState(INITIAL_FORM);
+  const [formErrors, setFormErrors] = useState({});
   const [submitting, setSubmitting] = useState(false);
   const [orderId, setOrderId] = useState(null);
 
@@ -56,6 +222,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
   useEffect(() => {
     if (!isOpen) {
       setForm(INITIAL_FORM);
+      setFormErrors({});
       setOrderId(null);
       setSubmitting(false);
       setAreas([]);
@@ -65,15 +232,60 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
     }
   }, [isOpen]);
 
+  // Inject custom styles for react-phone-input-2 (sekali saja)
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const styleId = 'eglux-phone-input-styles';
+    if (!document.getElementById(styleId)) {
+      const style = document.createElement('style');
+      style.id = styleId;
+      style.textContent = PHONE_INPUT_STYLES;
+      document.head.appendChild(style);
+    }
+  }, []);
+
   const change = (e) => {
     const { name, value } = e.target;
     setForm((f) => ({ ...f, [name]: value }));
+    // Clear error untuk field ini saat user mulai edit
+    setFormErrors((prev) => ({ ...prev, [name]: '' }));
     // Reset downstream kalau user ubah kode pos
     if (name === 'postal') {
       setAreas([]);
       setSelectedAreaId('');
       setShippingOptions([]);
       setSelectedShipping(null);
+    }
+  };
+
+  // ===== Phone handlers =====
+  const onPhoneChange = (phone) => {
+    // react-phone-input-2 returns digits tanpa leading "+", e.g., "6281234567890"
+    const normalized = phone ? `+${phone}` : '';
+    setForm((f) => ({ ...f, phone: normalized }));
+    setFormErrors((prev) => ({ ...prev, phone: '' }));
+  };
+
+  const onPhoneBlur = () => {
+    const err = getPhoneErrorMessage(form.phone);
+    setFormErrors((prev) => ({ ...prev, phone: err }));
+  };
+
+  // ===== City handler =====
+  const onCityChange = (opt) => {
+    setForm((f) => ({ ...f, city: opt?.value || '' }));
+    setFormErrors((prev) => ({ ...prev, city: '' }));
+  };
+
+  // ===== Email handler =====
+  const onEmailBlur = () => {
+    if (form.email && !isEmailValid(form.email)) {
+      setFormErrors((prev) => ({
+        ...prev,
+        email: 'Format email tidak valid (contoh: nama@contoh.com)',
+      }));
+    } else {
+      setFormErrors((prev) => ({ ...prev, email: '' }));
     }
   };
 
@@ -88,8 +300,6 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
       setSelectedShipping(null);
 
       try {
-        // supabase-js v2 functions.invoke TIDAK support method:GET + query param.
-        // Pakai fetch langsung dengan anon key di header Authorization.
         const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
         const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
@@ -113,12 +323,9 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
         }
 
         setAreas(data.areas || []);
-        // Auto-select kalau cuma 1 area match
         if (data.areas?.length === 1) {
           setSelectedAreaId(String(data.areas[0].id));
         }
-
-        // Show "tidak ditemukan" jika 0 results
         if (resp.ok && (!data.areas || data.areas.length === 0)) {
           showToast(`Kode pos ${postal} tidak ditemukan di Biteship.`);
         }
@@ -141,6 +348,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
   const onPostalChange = (e) => {
     const val = e.target.value.replace(/\D/g, '').slice(0, 5);
     setForm((f) => ({ ...f, postal: val }));
+    setFormErrors((prev) => ({ ...prev, postal: '' }));
 
     if (postalDebounceRef.current) clearTimeout(postalDebounceRef.current);
     if (val.length === 5) {
@@ -154,7 +362,6 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
   // ===== Auto-fetch rates begitu area dipilih =====
   const fetchRates = useCallback(
     async (areaId) => {
-      // Per Biteship docs: destination_area_id is STRING. Keep as string, no Number() conversion.
       const areaIdStr = areaId != null ? String(areaId).trim() : '';
       if (!areaIdStr) {
         console.error('[fetchRates] Empty areaId:', areaId);
@@ -168,12 +375,11 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
       setSelectedShipping(null);
 
       try {
-        // Pakai fetch native (konsisten dengan search-biteship-areas Task 1-f)
         const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
         const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
         const payload = {
-          destination_area_id: areaIdStr,  // ← STRING per Biteship docs
+          destination_area_id: areaIdStr,
           items: cart.map((item) => ({
             product_id: item.productId,
             name: item.name,
@@ -182,12 +388,6 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
             weight_in_gram: item.weight_gram || 500,
           })),
         };
-
-        console.log('[fetchRates] Sending to check-biteship-rates:', {
-          destination_area_id: payload.destination_area_id,
-          type: typeof payload.destination_area_id,
-          items_count: payload.items.length,
-        });
 
         const resp = await fetch(`${supabaseUrl}/functions/v1/check-biteship-rates`, {
           method: 'POST',
@@ -230,17 +430,34 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
 
   // ===== Validation =====
   const validate = () => {
-    if (cart.length === 0) return showToast('Keranjang masih kosong'), false;
-    if (!form.name.trim()) return showToast('Nama lengkap wajib diisi'), false;
-    if (!form.phone.trim() || !isPhoneValid(form.phone))
-      return showToast('Format WhatsApp tidak valid (contoh: 08123456789)'), false;
-    if (!isEmailValid(form.email)) return showToast('Format email tidak valid'), false;
-    if (!form.address.trim()) return showToast('Alamat lengkap wajib diisi'), false;
-    if (!form.city.trim()) return showToast('Kota wajib diisi'), false;
-    if (!/^\d{5}$/.test(form.postal)) return showToast('Kode pos harus 5 digit'), false;
-    if (!selectedAreaId) return showToast('Pilih area tujuan dari hasil pencarian kode pos'), false;
-    if (!selectedShipping) return showToast('Pilih kurir terlebih dahulu'), false;
-    if (!snapReady) return showToast('Sistem pembayaran belum siap, coba sesaat lagi'), false;
+    const errors = {};
+
+    if (cart.length === 0) errors.cart = 'Keranjang masih kosong';
+    if (!form.name.trim()) errors.name = 'Nama lengkap wajib diisi';
+
+    const phoneErr = getPhoneErrorMessage(form.phone);
+    if (phoneErr) errors.phone = phoneErr;
+
+    if (form.email && !isEmailValid(form.email)) {
+      errors.email = 'Format email tidak valid (contoh: nama@contoh.com)';
+    }
+    if (!form.address.trim()) errors.address = 'Alamat lengkap wajib diisi';
+    if (!form.city.trim()) errors.city = 'Kota wajib dipilih';
+    if (!/^\d{5}$/.test(form.postal)) errors.postal = 'Kode pos harus 5 digit';
+    if (!selectedAreaId) errors.area = 'Pilih area tujuan dari hasil pencarian kode pos';
+    if (!selectedShipping) errors.shipping = 'Pilih kurir terlebih dahulu';
+    if (!snapReady) errors.system = 'Sistem pembayaran belum siap, coba sesaat lagi';
+
+    setFormErrors(errors);
+
+    if (Object.keys(errors).length > 0) {
+      // Show first error as toast (skip system error → handled by button state)
+      const firstError = Object.values(errors).find(
+        (e) => e !== errors.system
+      );
+      if (firstError) showToast(firstError);
+      return false;
+    }
     return true;
   };
 
@@ -250,7 +467,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
     const { error: customerError } = await supabase.from('customers').insert({
       id: customerId,
       name: form.name.trim(),
-      phone: form.phone.trim(),
+      phone: form.phone.trim(), // E.164: +628xxxxxxxxxx
       email: form.email.trim() || null,
       address: form.address.trim(),
     });
@@ -271,10 +488,8 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
       shipping_cost: shippingCost,
       total_amount: grandTotal,
       shipping_address: form.address.trim(),
-      shipping_city: form.city.trim(),
+      shipping_city: form.city.trim(), // dari dropdown kota
       shipping_postal_code: form.postal,
-      // FIX Task 1-t: Biteship area_id adalah STRING alphanumerik (format "IDNP6...IDZ12250"),
-      // bukan integer. parseInt() return NaN → DB store null → create-biteship-order reject.
       shipping_area_id: String(selectedAreaId || '').trim() || null,
       shipping_area_name: selectedArea?.name || null,
       courier_code: (selectedShipping?.courier || '').toLowerCase(),
@@ -332,7 +547,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
           onClose();
           showToast('Pembayaran berhasil! Terima kasih ✓');
         },
-        onPending: (result) => {
+        onPending: () => {
           showToast('Menunggu pembayaran. Cek WA/email untuk instruksi.');
         },
         onError: (result) => {
@@ -357,6 +572,14 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
   const showAreaDropdown = !areasLoading && areas.length > 1;
   const showAreaAutoSelected = !areasLoading && areas.length === 1 && selectedAreaId;
   const showAreaNotFound = !areasLoading && form.postal.length === 5 && areas.length === 0;
+
+  // Reusable inline error component
+  const InlineError = ({ msg }) =>
+    msg ? (
+      <p className="text-[0.72rem] text-red-500 mt-1 flex items-center gap-1">
+        <AlertCircle className="w-3 h-3 flex-shrink-0" /> {msg}
+      </p>
+    ) : null;
 
   return (
     <div
@@ -431,6 +654,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
               <User className="w-3.5 h-3.5" />Data Pembeli
             </h4>
 
+            {/* Name */}
             <div>
               <label className="block text-[0.8rem] font-semibold text-eglux-primary uppercase tracking-[0.5px] mb-1.5">
                 Nama Lengkap *
@@ -442,44 +666,71 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
                 onChange={change}
                 placeholder="Masukkan nama lengkap"
                 disabled={isLocked}
-                className="w-full py-3 px-4 border-[1.5px] border-[#ddd] rounded-[10px] text-[0.88rem] text-eglux-primary bg-white outline-none focus:border-eglux-secondary transition-colors disabled:bg-[#f5f5f5] disabled:text-[#999]"
+                className={`w-full py-3 px-4 border-[1.5px] rounded-[10px] text-[0.88rem] text-eglux-primary bg-white outline-none focus:border-eglux-secondary transition-colors disabled:bg-[#f5f5f5] disabled:text-[#999] ${
+                  formErrors.name ? 'border-red-500' : 'border-[#ddd]'
+                }`}
               />
+              <InlineError msg={formErrors.name} />
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-[0.8rem] font-semibold text-eglux-primary uppercase tracking-[0.5px] mb-1.5">
-                  WhatsApp *
-                </label>
-                <input
-                  type="tel"
-                  name="phone"
+            {/* Phone — react-phone-input-2 (full width) */}
+            <div>
+              <label className="block text-[0.8rem] font-semibold text-eglux-primary uppercase tracking-[0.5px] mb-1.5">
+                WhatsApp *
+              </label>
+              <div
+                className={`phone-input-container ${formErrors.phone ? 'has-error' : ''}`}
+              >
+                <PhoneInput
+                  country={'id'}
+                  onlyCountries={['id']}
+                  preferredCountries={['id']}
+                  disableDropdown={true}
+                  disableSearchIcon={true}
+                  enableSearch={false}
                   value={form.phone}
-                  onChange={change}
-                  placeholder="08xxxxxxxxxx"
-                  inputMode="numeric"
+                  onChange={onPhoneChange}
+                  onBlur={onPhoneBlur}
                   disabled={isLocked}
-                  className="w-full py-3 px-4 border-[1.5px] border-[#ddd] rounded-[10px] text-[0.88rem] text-eglux-primary bg-white outline-none focus:border-eglux-secondary transition-colors disabled:bg-[#f5f5f5] disabled:text-[#999]"
+                  inputProps={{
+                    name: 'phone',
+                    required: true,
+                    placeholder: '812 3456 7890',
+                    autoComplete: 'tel',
+                  }}
+                  containerClass="w-full"
+                  inputClass="w-full"
                 />
               </div>
-              <div>
-                <label className="block text-[0.8rem] font-semibold text-eglux-primary uppercase tracking-[0.5px] mb-1.5">
-                  Email
-                </label>
-                <input
-                  type="email"
-                  name="email"
-                  value={form.email}
-                  onChange={change}
-                  placeholder="email@contoh.com"
-                  disabled={isLocked}
-                  className="w-full py-3 px-4 border-[1.5px] border-[#ddd] rounded-[10px] text-[0.88rem] text-eglux-primary bg-white outline-none focus:border-eglux-secondary transition-colors disabled:bg-[#f5f5f5] disabled:text-[#999]"
-                />
-              </div>
+              <InlineError msg={formErrors.phone} />
+              <p className="text-[0.72rem] text-gray-500 mt-1">
+                HP Indonesia only · format: +62 8xx · langsung ketik 8xxx tanpa 0 di depan
+              </p>
             </div>
-            <p className="text-[0.72rem] text-gray-500 -mt-2">
-              Email opsional — Midtrans akan kirim e-receipt jika diisi.
-            </p>
+
+            {/* Email — full width + inline error */}
+            <div>
+              <label className="block text-[0.8rem] font-semibold text-eglux-primary uppercase tracking-[0.5px] mb-1.5">
+                Email
+              </label>
+              <input
+                type="email"
+                name="email"
+                value={form.email}
+                onChange={change}
+                onBlur={onEmailBlur}
+                placeholder="email@contoh.com"
+                disabled={isLocked}
+                autoComplete="email"
+                className={`w-full py-3 px-4 border-[1.5px] rounded-[10px] text-[0.88rem] text-eglux-primary bg-white outline-none focus:border-eglux-secondary transition-colors disabled:bg-[#f5f5f5] disabled:text-[#999] ${
+                  formErrors.email ? 'border-red-500' : 'border-[#ddd]'
+                }`}
+              />
+              <InlineError msg={formErrors.email} />
+              <p className="text-[0.72rem] text-gray-500 mt-1">
+                Email opsional — Midtrans akan kirim e-receipt jika diisi.
+              </p>
+            </div>
           </section>
 
           {/* === Alamat Pengiriman === */}
@@ -488,6 +739,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
               <MapPin className="w-3.5 h-3.5" />Alamat Pengiriman
             </h4>
 
+            {/* Address */}
             <div>
               <label className="block text-[0.8rem] font-semibold text-eglux-primary uppercase tracking-[0.5px] mb-1.5">
                 Alamat Lengkap *
@@ -498,41 +750,56 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
                 onChange={change}
                 placeholder="Jalan, nomor rumah, RT/RW, kelurahan, kecamatan..."
                 disabled={isLocked}
-                className="w-full py-3 px-4 border-[1.5px] border-[#ddd] rounded-[10px] text-[0.88rem] text-eglux-primary bg-white outline-none resize-y min-h-[70px] focus:border-eglux-secondary transition-colors disabled:bg-[#f5f5f5] disabled:text-[#999]"
+                className={`w-full py-3 px-4 border-[1.5px] rounded-[10px] text-[0.88rem] text-eglux-primary bg-white outline-none resize-y min-h-[70px] focus:border-eglux-secondary transition-colors disabled:bg-[#f5f5f5] disabled:text-[#999] ${
+                  formErrors.address ? 'border-red-500' : 'border-[#ddd]'
+                }`}
               />
+              <InlineError msg={formErrors.address} />
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-[0.8rem] font-semibold text-eglux-primary uppercase tracking-[0.5px] mb-1.5">
-                  Kota / Kabupaten *
-                </label>
-                <input
-                  type="text"
-                  name="city"
-                  value={form.city}
-                  onChange={change}
-                  placeholder="Kota"
-                  disabled={isLocked}
-                  className="w-full py-3 px-4 border-[1.5px] border-[#ddd] rounded-[10px] text-[0.88rem] text-eglux-primary outline-none focus:border-eglux-secondary transition-colors disabled:bg-[#f5f5f5] disabled:text-[#999]"
-                />
-              </div>
-              <div>
-                <label className="block text-[0.8rem] font-semibold text-eglux-primary uppercase tracking-[0.5px] mb-1.5">
-                  Kode Pos *
-                </label>
-                <input
-                  type="text"
-                  name="postal"
-                  value={form.postal}
-                  onChange={onPostalChange}
-                  placeholder="12345"
-                  inputMode="numeric"
-                  maxLength={5}
-                  disabled={isLocked}
-                  className="w-full py-3 px-4 border-[1.5px] border-[#ddd] rounded-[10px] text-[0.88rem] text-eglux-primary outline-none focus:border-eglux-secondary transition-colors disabled:bg-[#f5f5f5] disabled:text-[#999]"
-                />
-              </div>
+            {/* City — react-select searchable dropdown */}
+            <div>
+              <label className="block text-[0.8rem] font-semibold text-eglux-primary uppercase tracking-[0.5px] mb-1.5">
+                Kota *
+              </label>
+              <Select
+                options={INDONESIAN_CITIES}
+                value={INDONESIAN_CITIES.find((c) => c.value === form.city) || null}
+                onChange={onCityChange}
+                isDisabled={isLocked}
+                isSearchable
+                placeholder="Cari kota... (ketik nama kota atau provinsi)"
+                styles={selectStyles}
+                error={formErrors.city}
+                noOptionsMessage={() => 'Kota tidak ditemukan'}
+                className="text-[0.88rem]"
+                classNamePrefix="react-select"
+              />
+              <InlineError msg={formErrors.city} />
+              <p className="text-[0.72rem] text-gray-500 mt-1">
+                97 kota di Indonesia · ketik untuk cari (misal: "bandung", "jakarta", "surabaya")
+              </p>
+            </div>
+
+            {/* Postal code */}
+            <div>
+              <label className="block text-[0.8rem] font-semibold text-eglux-primary uppercase tracking-[0.5px] mb-1.5">
+                Kode Pos *
+              </label>
+              <input
+                type="text"
+                name="postal"
+                value={form.postal}
+                onChange={onPostalChange}
+                placeholder="12345"
+                inputMode="numeric"
+                maxLength={5}
+                disabled={isLocked}
+                className={`w-full py-3 px-4 border-[1.5px] rounded-[10px] text-[0.88rem] text-eglux-primary outline-none focus:border-eglux-secondary transition-colors disabled:bg-[#f5f5f5] disabled:text-[#999] ${
+                  formErrors.postal ? 'border-red-500' : 'border-[#ddd]'
+                }`}
+              />
+              <InlineError msg={formErrors.postal} />
             </div>
 
             {/* Loading area lookup */}
@@ -552,7 +819,9 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
                   value={selectedAreaId}
                   onChange={(e) => setSelectedAreaId(e.target.value)}
                   disabled={isLocked}
-                  className="w-full py-3 px-4 border-[1.5px] border-[#ddd] rounded-[10px] text-[0.88rem] text-eglux-primary bg-white outline-none focus:border-eglux-secondary disabled:bg-[#f5f5f5] disabled:text-[#999]"
+                  className={`w-full py-3 px-4 border-[1.5px] rounded-[10px] text-[0.88rem] text-eglux-primary bg-white outline-none focus:border-eglux-secondary disabled:bg-[#f5f5f5] disabled:text-[#999] ${
+                    formErrors.area ? 'border-red-500' : 'border-[#ddd]'
+                  }`}
                 >
                   <option value="">— Pilih area —</option>
                   {areas.map((a) => (
@@ -563,6 +832,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
                     </option>
                   ))}
                 </select>
+                <InlineError msg={formErrors.area} />
               </div>
             )}
 
@@ -644,6 +914,10 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
                   );
                 })}
               </div>
+            )}
+
+            {!shippingLoading && !selectedShipping && selectedAreaId && shippingOptions.length === 0 && (
+              <InlineError msg={formErrors.shipping} />
             )}
           </section>
 
