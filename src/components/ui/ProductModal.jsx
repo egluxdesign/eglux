@@ -6,7 +6,6 @@ const ProductModal = ({ product, onClose, onAddToCart, onCheckoutNow, onCheckout
   const [selectedVariant, setSelectedVariant] = useState(null);
   const [qty, setQty] = useState(1);
   const [activeImage, setActiveImage] = useState('');
-  const [cart, setCart] = useCart(() => []);
 
   // 1. PISAHKAN GAMBAR UMUM (DIFILTER KETAT BUKAN MILIK VARIAN)
   const generalImages = useMemo(() => {
@@ -190,8 +189,8 @@ const ProductModal = ({ product, onClose, onAddToCart, onCheckoutNow, onCheckout
               + Keranjang
             </button>
             <button
-              onClick={onCheckoutMidtrans}
-              disabled={cart.length === 0}
+              onClick={() => { onCheckoutMidtrans(product, selectedVariant, qty); onClose(); }}
+              disabled={variants.length > 0 && !selectedVariant}
               className="flex-1 py-3.5 border-none bg-eglux-secondary text-white rounded-xl text-[0.9rem] font-semibold cursor-pointer transition-all hover:bg-eglux-primary disabled:opacity-40 disabled:cursor-not-allowed"
             >
               Beli Sekarang
