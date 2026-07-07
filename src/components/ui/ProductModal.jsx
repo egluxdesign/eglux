@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { rupiah } from '../../context/CartContext';
 
-const ProductModal = ({ product, onClose, onAddToCart, onCheckoutNow }) => {
+const ProductModal = ({ product, onClose, onAddToCart, onCheckoutNow, onCheckoutMidtrans }) => {
   const [variants, setVariants] = useState([]);
   const [selectedVariant, setSelectedVariant] = useState(null);
   const [qty, setQty] = useState(1);
@@ -188,13 +188,13 @@ const ProductModal = ({ product, onClose, onAddToCart, onCheckoutNow }) => {
             >
               + Keranjang
             </button>
-            {/* <button
-              onClick={() => { onCheckoutNow(product, selectedVariant, qty); onClose(); }}
+            <button
+              onClick={onCheckoutMidtrans}
               disabled={variants.length > 0 && !selectedVariant}
               className="flex-1 py-3.5 border-none bg-eglux-secondary text-white rounded-xl text-[0.9rem] font-semibold cursor-pointer transition-all hover:bg-eglux-primary disabled:opacity-40 disabled:cursor-not-allowed"
             >
               Beli Sekarang
-            </button> */}
+            </button>
           </div>
         </div>
       </div>
