@@ -2,17 +2,20 @@
 // ============================================================================
 // EGLUX Checkout — Midtrans Snap (payment) + Biteship (shipping aggregator)
 //
-// [v2] Perubahan:
-//   1. Phone input → react-phone-input-2 (lock Indonesia, bendera + +62 prefix)
+// [v2.1] Perubahan:
+//   1. Phone input → CUSTOM input dengan locked +62 prefix (non-deletable)
+//      - Prefix 🇮🇩 +62 dirender sebagai overlay div (pointer-events-none)
+//      - User hanya input nomor lokalnya (8xxx), +62 tidak bisa dihapus
 //      - Format storage: E.164 (+628xxx) ke DB & Midtrans
-//      - Validasi: digit pertama setelah +62 WAJIB 8 (HP only, reject landline)
-//      - Jika user input "+62 08xxx" → error "Jangan pakai 0 di depan"
-//      - Jika user input "+62 21xxx" (landline) → error "Harus diawali angka 8"
+//      - Validasi: digit pertama WAJIB 8 (HP only, reject landline & 0 prefix)
+//      - Jika user ketik "08xxx" → error "Jangan pakai 0 di depan"
+//      - Jika user ketik "21xxx" (landline) → error "Harus diawali angka 8"
 //   2. Email input → inline error message di bawah field (bukan cuma toast)
 //   3. City input → react-select searchable dropdown (97 kota Indonesia)
 //
 // Dependencies baru:
-//   npm install react-phone-input-2 react-select
+//   npm install react-select
+//   (Phone input custom — NO react-phone-input-2 needed, hemat ~50KB bundle)
 //
 // Catatan DB:
 //   - customers.phone: VARCHAR(20) minimum (untuk accommodate +628xxxxxxxxxx)
@@ -32,8 +35,6 @@ import {
   ShieldCheck,
   AlertCircle,
 } from 'lucide-react';
-import PhoneInput from 'react-phone-input-2';
-import 'react-phone-input-2/lib/style.css';
 import Select from 'react-select';
 import { INDONESIAN_CITIES } from '../../data/indonesianCities';
 
@@ -146,56 +147,7 @@ const selectStyles = {
   }),
 };
 
-// ===== react-phone-input-2 custom styles (override default) =====
-const PHONE_INPUT_STYLES = `
-.phone-input-container .react-tel-input .form-control {
-  width: 100% !important;
-  height: 48px;
-  border: 1.5px solid #ddd;
-  border-radius: 10px;
-  font-size: 0.88rem;
-  color: #1a1a1a;
-  padding-left: 58px;
-  outline: none;
-  background: #fff;
-  transition: border-color 0.2s;
-  font-family: inherit;
-}
-.phone-input-container .react-tel-input .form-control:focus {
-  border-color: #c9a96e;
-}
-.phone-input-container .react-tel-input .form-control:disabled {
-  background: #f5f5f5;
-  color: #999;
-}
-.phone-input-container .react-tel-input .flag-dropdown {
-  border: 1.5px solid #ddd;
-  border-right: none;
-  border-radius: 10px 0 0 10px;
-  background: #faf6ef;
-  height: 48px;
-}
-.phone-input-container .react-tel-input .selected-flag {
-  padding: 0 12px;
-  height: 100%;
-}
-.phone-input-container .react-tel-input .selected-flag:hover,
-.phone-input-container .react-tel-input .selected-flag:focus {
-  background-color: #f0e8d6;
-}
-.phone-input-container .react-tel-input .country-list {
-  width: 280px;
-  font-size: 0.85rem;
-  border-radius: 8px;
-  z-index: 9999;
-}
-.phone-input-container.has-error .react-tel-input .form-control {
-  border-color: #ef4444;
-}
-.phone-input-container.has-error .react-tel-input .flag-dropdown {
-  border-color: #ef4444;
-}
-`;
+// (Phone input styling sekarang inline via Tailwind classes — see JSX below)
 
 const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
   const { cart, totalPrice, clearCart } = useCart();
@@ -232,18 +184,6 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
     }
   }, [isOpen]);
 
-  // Inject custom styles for react-phone-input-2 (sekali saja)
-  useEffect(() => {
-    if (typeof document === 'undefined') return;
-    const styleId = 'eglux-phone-input-styles';
-    if (!document.getElementById(styleId)) {
-      const style = document.createElement('style');
-      style.id = styleId;
-      style.textContent = PHONE_INPUT_STYLES;
-      document.head.appendChild(style);
-    }
-  }, []);
-
   const change = (e) => {
     const { name, value } = e.target;
     setForm((f) => ({ ...f, [name]: value }));
@@ -259,10 +199,14 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
   };
 
   // ===== Phone handlers =====
-  const onPhoneChange = (phone) => {
-    // react-phone-input-2 returns digits tanpa leading "+", e.g., "6281234567890"
-    const normalized = phone ? `+${phone}` : '';
-    setForm((f) => ({ ...f, phone: normalized }));
+  // Custom phone input: user input hanya digit lokal (8xxx), +62 di-prepend otomatis
+  // Prefix +62 dirender sebagai overlay div (pointer-events-none) sehingga tidak bisa dihapus
+  const onPhoneChange = (e) => {
+    // Strip non-digits, max 13 digit (8 + 12 digit maksimum HP Indonesia)
+    const digits = e.target.value.replace(/\D/g, '').slice(0, 13);
+    // Selalu prepend +62 — biarkan validation yang nentukan valid atau nggak
+    const e164 = digits ? `+62${digits}` : '';
+    setForm((f) => ({ ...f, phone: e164 }));
     setFormErrors((prev) => ({ ...prev, phone: '' }));
   };
 
@@ -270,6 +214,9 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
     const err = getPhoneErrorMessage(form.phone);
     setFormErrors((prev) => ({ ...prev, phone: err }));
   };
+
+  // Display value: strip +62 prefix untuk ditampilkan di input field
+  const phoneDisplayValue = form.phone.replace(/^\+62/, '');
 
   // ===== City handler =====
   const onCityChange = (opt) => {
@@ -673,38 +620,43 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
               <InlineError msg={formErrors.name} />
             </div>
 
-            {/* Phone — react-phone-input-2 (full width) */}
+            {/* Phone — custom input dengan locked +62 prefix */}
             <div>
               <label className="block text-[0.8rem] font-semibold text-eglux-primary uppercase tracking-[0.5px] mb-1.5">
                 WhatsApp *
               </label>
-              <div
-                className={`phone-input-container ${formErrors.phone ? 'has-error' : ''}`}
-              >
-                <PhoneInput
-                  country={'id'}
-                  onlyCountries={['id']}
-                  preferredCountries={['id']}
-                  disableDropdown={true}
-                  disableSearchIcon={true}
-                  enableSearch={false}
-                  value={form.phone}
+              <div className="relative">
+                {/* Locked +62 prefix — dirender sebagai overlay, TIDAK bisa diedit */}
+                <div
+                  className={`absolute left-0 top-0 bottom-0 flex items-center gap-1.5 px-3 pointer-events-none bg-[#faf6ef] border-r-[1.5px] rounded-l-[10px] ${
+                    formErrors.phone ? 'border-red-500' : 'border-[#ddd]'
+                  }`}
+                >
+                  <span className="text-base leading-none" role="img" aria-label="Indonesia">
+                    🇮🇩
+                  </span>
+                  <span className="text-[0.88rem] font-semibold text-eglux-primary whitespace-nowrap">
+                    +62
+                  </span>
+                </div>
+                <input
+                  type="tel"
+                  name="phone"
+                  value={phoneDisplayValue}
                   onChange={onPhoneChange}
                   onBlur={onPhoneBlur}
+                  placeholder="812 3456 7890"
+                  inputMode="numeric"
+                  autoComplete="tel"
                   disabled={isLocked}
-                  inputProps={{
-                    name: 'phone',
-                    required: true,
-                    placeholder: '812 3456 7890',
-                    autoComplete: 'tel',
-                  }}
-                  containerClass="w-full"
-                  inputClass="w-full"
+                  className={`w-full py-3 pl-[84px] pr-4 border-[1.5px] rounded-[10px] text-[0.88rem] text-eglux-primary bg-white outline-none focus:border-eglux-secondary transition-colors disabled:bg-[#f5f5f5] disabled:text-[#999] ${
+                    formErrors.phone ? 'border-red-500' : 'border-[#ddd]'
+                  }`}
                 />
               </div>
               <InlineError msg={formErrors.phone} />
               <p className="text-[0.72rem] text-gray-500 mt-1">
-                HP Indonesia only · format: +62 8xx · langsung ketik 8xxx tanpa 0 di depan
+                HP Indonesia only · ketik langsung 8xxx tanpa 0 di depan (contoh: 812 3456 7890)
               </p>
             </div>
 
