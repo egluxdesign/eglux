@@ -111,7 +111,7 @@ const CartPanel = ({ isOpen, onClose, onCheckout, onCheckoutMidtrans }) => {
           </button>
 
           {/* Checkout manual, lanjut konfirmasi via WhatsApp */}
-          <button
+          {/* <button
             onClick={onCheckout}
             disabled={cart.length === 0}
             className="w-full py-3.5 bg-white text-eglux-primary border-[1.5px] border-eglux-primary
@@ -119,7 +119,7 @@ const CartPanel = ({ isOpen, onClose, onCheckout, onCheckoutMidtrans }) => {
                        hover:bg-eglux-accent disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Checkout via WhatsApp
-          </button>
+          </button> */}
         </div>
       </div>
     </>
