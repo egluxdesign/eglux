@@ -109,17 +109,6 @@ const CartPanel = ({ isOpen, onClose, onCheckout, onCheckoutMidtrans }) => {
           >
             Bayar Sekarang
           </button>
-
-          {/* Checkout manual, lanjut konfirmasi via WhatsApp */}
-          {/* <button
-            onClick={onCheckout}
-            disabled={cart.length === 0}
-            className="w-full py-3.5 bg-white text-eglux-primary border-[1.5px] border-eglux-primary
-                       rounded-xl text-[0.88rem] font-semibold cursor-pointer transition-all duration-300
-                       hover:bg-eglux-accent disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            Checkout via WhatsApp
-          </button> */}
         </div>
       </div>
     </>

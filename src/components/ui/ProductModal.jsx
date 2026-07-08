@@ -188,13 +188,6 @@ const ProductModal = ({ product, onClose, onAddToCart, onCheckoutNow }) => {
             >
               + Keranjang
             </button>
-            {/* <button
-              onClick={() => { onCheckoutNow(product, selectedVariant, qty); onClose(); }}
-              disabled={variants.length > 0 && !selectedVariant}
-              className="flex-1 py-3.5 border-none bg-eglux-secondary text-white rounded-xl text-[0.9rem] font-semibold cursor-pointer transition-all hover:bg-eglux-primary disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              Beli Sekarang
-            </button> */}
           </div>
         </div>
       </div>
