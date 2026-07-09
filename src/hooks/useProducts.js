@@ -34,12 +34,13 @@ const useProducts = () => {
     const load = async () => {
       // Fetch produk + foto + varian sekaligus
       // Sort by updated_at DESC (produk baru di-update muncul atas)
+      // [Bug fix] Include products.weight_in_gram untuk fallback kalau variant weight NULL
       const { data, error: productsError } = await supabase
         .from('products')
         .select(`
           id, name, slug, description, category, base_price, badge, is_active,
-          created_at, updated_at,
-          product_images ( url, position, is_primary, variant_id ),
+          created_at, updated_at, weight_in_gram,
+          product_images ( id, url, position, is_primary, variant_id ),
           product_variants (
             id, name, attributes, price, stock, sku, is_active,
             weight_in_gram, length_cm, width_cm, height_cm
@@ -90,6 +91,8 @@ const useProducts = () => {
             image:    primaryImage?.url || '',
             images:   p.product_images || [],
             variants: sortedVariants,
+            // [Bug fix] Include product weight untuk fallback di CartContext
+            weight_in_gram: p.weight_in_gram,   // fallback kalau variant weight NULL
             // New fields for display logic
             minVariantPrice,                    // harga termurah variant (null kalau tidak ada active variant)
             hasActiveVariant: activeVariants.length > 0,
