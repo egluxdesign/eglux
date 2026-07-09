@@ -1,7 +1,13 @@
 // src/components/sections/ProductPage/ProductsSection.jsx
-// Berisi: filter bar (dinamis dari Supabase), product grid (4-col → 2-col → 1-col), pagination.
-// Props:
-//  - onOpenModal: (product) => void
+// ============================================================================
+// [v2] Updated: inline ProductCardFull sekarang pakai Shopee/Tokopedia pattern
+//   - Strike through base price
+//   - Show minVariantPrice (harga termurah variant)
+//   - Discount % badge di image
+//   - "Mulai dari" label
+//   - Defensive: compute minVariantPrice dari product.variants kalau field undefined
+// ============================================================================
+
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { KEYWORD_FILTERS, ITEMS_PER_PAGE } from '../../../data/products';
 import useProducts from '../../../hooks/useProducts';
@@ -14,7 +20,7 @@ const formatPrice = (value) =>
     minimumFractionDigits: 0,
   }).format(value ?? 0);
 
-  const toWIB = (isoString) =>
+const toWIB = (isoString) =>
   new Date(isoString).toLocaleString('id-ID', {
     timeZone: 'Asia/Jakarta',
     day: '2-digit', month: 'short', year: 'numeric',
@@ -32,46 +38,111 @@ const filterProducts = (products, filterValue) => {
   return products.filter((p) => p.category === filterValue);
 };
 
-// ── Product Card ──────────────────────────────────────────────
-const ProductCardFull = ({ product, onOpenModal }) => (
-  <article
-    className="group bg-white rounded-[20px] overflow-hidden cursor-pointer border border-[#eee]
-               transition-all duration-300 hover:-translate-y-2 hover:shadow-card-hover hover:border-transparent"
-    onClick={() => onOpenModal(product)}
-    role="button"
-    tabIndex={0}
-    onKeyDown={(e) => e.key === 'Enter' && onOpenModal(product)}
-    aria-label={product.name}
-  >
-    <div className="relative overflow-hidden h-[250px]">
-      <img
-        src={product.image}
-        alt={product.name}
-        className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
-        loading="lazy"
-      />
-      {product.badge && (
-        <span className="absolute top-4 left-4 bg-eglux-secondary text-white text-[0.75rem]
-                         font-semibold py-1 px-3 rounded-full">
-          {product.badge}
-        </span>
-      )}
-    </div>
-    <div className="p-6">
-      <h4 className="text-base font-semibold text-eglux-primary mb-1 leading-snug line-clamp-2">
-        {product.name}
-      </h4>
-      <p className="text-[0.85rem] text-[#666] mb-3 capitalize">{product.category}</p>
-      <p className="flex items-center gap-1.5 text-[1.1rem] font-bold text-eglux-secondary mb-2">
-        <CartIcon />
-        {formatPrice(product.price)}
-      </p>
-      {product.desc && (
-        <p className="text-[0.9rem] text-[#666] leading-relaxed line-clamp-2">{product.desc}</p>
-      )}
-    </div>
-  </article>
-);
+// ── Product Card (Shopee/Tokopedia pattern) ───────────────────
+const ProductCardFull = ({ product, onOpenModal }) => {
+  // Defensive: compute minVariantPrice dari variants kalau field undefined
+  const variants = product?.variants || [];
+  const activeVariants = variants.filter((v) => v.is_active);
+  const variantPrices = activeVariants
+    .map((v) => Number(v.price))
+    .filter((p) => p > 0);
+
+  const minVariantPrice = product?.minVariantPrice ??
+    (variantPrices.length > 0 ? Math.min(...variantPrices) : null);
+  const hasActiveVariant = product?.hasActiveVariant ?? activeVariants.length > 0;
+
+  const basePrice = Number(product?.price) || Number(product?.base_price) || 0;
+
+  // Compute discount
+  const hasDiscount = hasActiveVariant && minVariantPrice && basePrice > minVariantPrice;
+  const discountPercent = hasDiscount
+    ? Math.round(((basePrice - minVariantPrice) / basePrice) * 100)
+    : 0;
+
+  return (
+    <article
+      className="group bg-white rounded-[20px] overflow-hidden cursor-pointer border border-[#eee]
+                 transition-all duration-300 hover:-translate-y-2 hover:shadow-card-hover hover:border-transparent"
+      onClick={() => onOpenModal(product)}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => e.key === 'Enter' && onOpenModal(product)}
+      aria-label={product.name}
+    >
+      {/* === IMAGE === */}
+      <div className="relative overflow-hidden h-[250px]">
+        <img
+          src={product.image}
+          alt={product.name}
+          className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+          loading="lazy"
+        />
+
+        {/* Badge (Best Seller / Baru) — top left */}
+        {product.badge && (
+          <span className="absolute top-4 left-4 bg-eglux-secondary text-white text-[0.75rem]
+                           font-semibold py-1 px-3 rounded-full">
+            {product.badge}
+          </span>
+        )}
+
+        {/* Discount % badge — top right (only if ada diskon) */}
+        {hasDiscount && (
+          <span className="absolute top-4 right-4 bg-red-500 text-white
+                           text-[0.72rem] font-bold py-1 px-2 rounded-full shadow-sm">
+            -{discountPercent}%
+          </span>
+        )}
+      </div>
+
+      {/* === INFO === */}
+      <div className="p-6">
+        <h4 className="text-base font-semibold text-eglux-primary mb-1 leading-snug line-clamp-2">
+          {product.name}
+        </h4>
+        <p className="text-[0.85rem] text-[#666] mb-3 capitalize">{product.category}</p>
+
+        {/* === PRICE BLOCK (Shopee/Tokopedia pattern) === */}
+        <div className="mb-2">
+          {hasActiveVariant && minVariantPrice ? (
+            <>
+              {/* "Mulai dari" label */}
+              <p className="text-[0.65rem] text-[#999] uppercase tracking-[0.5px] mb-1">
+                Mulai dari
+              </p>
+
+              {/* Strike base + min variant price inline */}
+              <div className="flex items-baseline gap-2 flex-wrap">
+                {hasDiscount && (
+                  <span className="text-[0.78rem] text-[#999] line-through">
+                    {formatPrice(basePrice)}
+                  </span>
+                )}
+                <span className="text-[1.15rem] font-bold text-eglux-secondary">
+                  {formatPrice(minVariantPrice)}
+                </span>
+              </div>
+            </>
+          ) : basePrice > 0 ? (
+            /* Fallback: tampilkan base price kalau no active variant */
+            <p className="flex items-center gap-1.5 text-[1.1rem] font-bold text-eglux-secondary">
+              <CartIcon />
+              {formatPrice(basePrice)}
+            </p>
+          ) : (
+            <p className="text-[0.95rem] font-semibold text-[#999]">
+              Hubungi CS
+            </p>
+          )}
+        </div>
+
+        {product.desc && (
+          <p className="text-[0.9rem] text-[#666] leading-relaxed line-clamp-2">{product.desc}</p>
+        )}
+      </div>
+    </article>
+  );
+};
 
 // ── Pagination ────────────────────────────────────────────────
 const Pagination = ({ currentPage, totalPages, totalCount, onPrev, onNext, onGoTo }) => {
