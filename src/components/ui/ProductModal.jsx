@@ -103,12 +103,16 @@ const ProductModal = ({ product, onClose, onAddToCart }) => {
   const effectivePrice = Number(selectedVariant?.price) || 0;
   const basePrice = Number(product.price) || 0;
   const subtotal = effectivePrice * qty;
-  const isOutOfStock = selectedVariant && Number(selectedVariant.stock) === 0;
-  const maxStock = selectedVariant ? Number(selectedVariant.stock) : 0;
+  const selectedStock = selectedVariant ? parseInt(selectedVariant.stock, 10) || 0 : 0;
+  // Hanya anggap out of stock kalau stock PASTI 0 (bukan null/undefined)
+  const isOutOfStock = selectedVariant && selectedStock === 0 && selectedVariant.stock !== null && selectedVariant.stock !== undefined;
+  const maxStock = selectedStock;
 
   // 9. Handler: klik variant → switch variant + auto-switch image
   const handleVariantClick = (variant) => {
-    if (Number(variant.stock) === 0) return; // skip out-of-stock
+    const stock = parseInt(variant.stock, 10) || 0;
+    // Hanya skip kalau stock PASTI 0. Kalau null/undefined, biarkan tetap bisa dipilih.
+    if (stock === 0 && variant.stock !== null && variant.stock !== undefined) return;
     setSelectedVariant(variant);
     setQty(1); // reset qty kalau ganti variant
   };
@@ -119,7 +123,7 @@ const ProductModal = ({ product, onClose, onAddToCart }) => {
     // Kalau thumbnail adalah variant image, switch selected variant juga
     if (img.type === 'variant' && img.variantId) {
       const variant = sortedVariants.find((v) => v.id === img.variantId);
-      if (variant && Number(variant.stock) > 0) {
+      if (variant) {
         setSelectedVariant(variant);
         setQty(1);
       }
@@ -238,8 +242,10 @@ const ProductModal = ({ product, onClose, onAddToCart }) => {
               <div className="flex flex-wrap gap-2">
                 {sortedVariants.map((v) => {
                   const isSelected = selectedVariant?.id === v.id;
-                  const vOutOfStock = Number(v.stock) === 0;
-                  const showStock = Number(v.stock) > 0 && Number(v.stock) < 20;
+                  const vStock = parseInt(v.stock, 10) || 0;
+                  // Hanya out of stock kalau stock PASTI 0 (bukan null/undefined)
+                  const vOutOfStock = vStock === 0 && v.stock !== null && v.stock !== undefined;
+                  const showStock = vStock > 0 && vStock < 20;
                   const vPrice = Number(v.price) || 0;
 
                   return (
@@ -259,7 +265,7 @@ const ProductModal = ({ product, onClose, onAddToCart }) => {
                       </span>
                       {showStock && (
                         <span className="block text-[0.65rem] text-[#bbb] mt-0.5">
-                          Sisa {v.stock}
+                          Sisa {vStock}
                         </span>
                       )}
                       {vOutOfStock && (

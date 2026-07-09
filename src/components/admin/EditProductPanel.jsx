@@ -38,16 +38,52 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
   const [saving, setSaving] = useState(false);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [toast, setToast] = useState(null);
+  const [initialized, setInitialized] = useState(false); // prevent form reset on parent refresh
   const showToast = (msg, type = 'info') => {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 3000);
   };
 
   // ============================================================================
-  // INIT: populate form saat product berubah
+  // LOCAL REFRESH: fetch fresh images + variants untuk produk ini (tanpa reset form)
+  // ============================================================================
+  const refreshLocalData = useCallback(async () => {
+    if (!product) return;
+    try {
+      const { data } = await supabase
+        .from('products')
+        .select(`
+          product_variants (id, name, attributes, price, stock, sku, is_active, weight_in_gram, length_cm, width_cm, height_cm),
+          product_images (id, url, position, is_primary, variant_id)
+        `)
+        .eq('id', product.id)
+        .single();
+
+      if (data) {
+        setVariants(
+          (data.product_variants || []).map((v) => ({
+            ...v,
+            price: v.price || 0,
+            stock: v.stock || 0,
+            weight_in_gram: v.weight_in_gram || 0,
+            length_cm: v.length_cm || '',
+            width_cm: v.width_cm || '',
+            height_cm: v.height_cm || '',
+            _changed: false,
+          }))
+        );
+        setProductImages(data.product_images || []);
+      }
+    } catch (e) {
+      console.error('refreshLocalData error:', e);
+    }
+  }, [product]);
+
+  // ============================================================================
+  // INIT: populate form saat panel pertama kali buka (only once)
   // ============================================================================
   useEffect(() => {
-    if (!product) return;
+    if (!product || initialized) return;
     setFormData({
       name: product.name || '',
       slug: product.slug || '',
@@ -71,7 +107,8 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
       }))
     );
     setProductImages(product.product_images || []);
-  }, [product]);
+    setInitialized(true);
+  }, [product, initialized]);
 
   // ============================================================================
   // FORM HANDLERS
@@ -89,43 +126,32 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
   };
 
   // ============================================================================
-  // PHOTO UPLOAD (product-level)
+  // PHOTO UPLOAD (product + variant, via edge function to bypass RLS)
   // ============================================================================
   const uploadPhoto = async (file, variantId = null) => {
     if (!file) return;
     setUploadingPhoto(true);
     try {
-      const ext = file.name.split('.').pop();
-      const folder = variantId ? `variants/${variantId}` : product.id;
-      const filename = `${folder}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
-      const filePath = `products/${filename}`;
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('product_id', product.id);
+      if (variantId) formData.append('variant_id', variantId);
 
-      const { error: uploadError } = await supabase.storage
-        .from('product-images')
-        .upload(filePath, file, { cacheControl: '3600', upsert: false });
-      if (uploadError) throw uploadError;
+      const resp = await fetch(`${SUPABASE_URL}/functions/v1/upload-product-image`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${ANON_KEY}`,
+        },
+        body: formData,
+      });
 
-      const { data: urlData } = supabase.storage
-        .from('product-images')
-        .getPublicUrl(filePath);
-
-      const existingImages = variantId
-        ? productImages.filter((img) => img.variant_id === variantId)
-        : productImages.filter((img) => !img.variant_id);
-
-      const { error: dbError } = await supabase
-        .from('product_images')
-        .insert({
-          product_id: product.id,
-          url: urlData.publicUrl,
-          position: 0,
-          is_primary: existingImages.length === 0,
-          variant_id: variantId,
-        });
-      if (dbError) throw dbError;
+      const result = await resp.json();
+      if (!resp.ok || !result.success) {
+        throw new Error(result.error || 'Upload gagal');
+      }
 
       showToast('✓ Foto diupload', 'success');
-      onSaved(); // refresh parent
+      refreshLocalData(); onSaved(); // refresh local + parent background
     } catch (e) {
       showToast(`✗ Upload gagal: ${e.message}`, 'error');
     } finally {
@@ -135,10 +161,22 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
 
   const setPrimaryPhoto = async (imageId) => {
     try {
-      await supabase.from('product_images').update({ is_primary: false }).eq('product_id', product.id);
-      await supabase.from('product_images').update({ is_primary: true }).eq('id', imageId);
+      const resp = await fetch(`${SUPABASE_URL}/functions/v1/manage-product-asset`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${ANON_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'set_primary',
+          image_id: imageId,
+          product_id: product.id,
+        }),
+      });
+      const result = await resp.json();
+      if (!resp.ok) throw new Error(result.error);
       showToast('✓ Primary diubah', 'success');
-      onSaved();
+      refreshLocalData(); onSaved(); // refresh local + parent background
     } catch (e) {
       showToast(`✗ Gagal: ${e.message}`, 'error');
     }
@@ -147,19 +185,29 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
   const deletePhoto = async (imageId, imageUrl) => {
     if (!confirm('Hapus foto ini?')) return;
     try {
-      const urlObj = new URL(imageUrl);
-      const pathMatch = urlObj.pathname.match(/\/product-images\/(.+)/);
-      if (pathMatch) await supabase.storage.from('product-images').remove([pathMatch[1]]);
-      await supabase.from('product_images').delete().eq('id', imageId);
+      const resp = await fetch(`${SUPABASE_URL}/functions/v1/manage-product-asset`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${ANON_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'delete_photo',
+          image_id: imageId,
+          image_url: imageUrl,
+        }),
+      });
+      const result = await resp.json();
+      if (!resp.ok) throw new Error(result.error);
       showToast('✓ Foto dihapus', 'success');
-      onSaved();
+      refreshLocalData(); onSaved(); // refresh local + parent background
     } catch (e) {
       showToast(`✗ Gagal: ${e.message}`, 'error');
     }
   };
 
   // ============================================================================
-  // ADD VARIANT
+  // ADD VARIANT (via edge function untuk bypass RLS)
   // ============================================================================
   const addVariant = async () => {
     const name = prompt('Nama variant baru:');
@@ -168,24 +216,23 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
     if (price === null) return;
 
     try {
-      const { data, error } = await supabase
-        .from('product_variants')
-        .insert({
+      const resp = await fetch(`${SUPABASE_URL}/functions/v1/manage-product-asset`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${ANON_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'add_variant',
           product_id: product.id,
-          name,
-          attributes: {},
+          name: name,
           price: Number(price),
-          stock: 0,
-          sku: `EGL-NEW-${Date.now().toString().slice(-6)}`,
-          is_active: false,
-          weight_in_gram: null,
-        })
-        .select()
-        .single();
-
-      if (error) throw error;
+        }),
+      });
+      const result = await resp.json();
+      if (!resp.ok) throw new Error(result.error);
       showToast(`✓ Variant "${name}" ditambahkan`, 'success');
-      onSaved();
+      refreshLocalData(); onSaved(); // refresh local + parent background
     } catch (e) {
       showToast(`✗ Gagal: ${e.message}`, 'error');
     }
@@ -197,9 +244,21 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
   const deleteVariant = async (variantId, variantName) => {
     if (!confirm(`Hapus variant "${variantName}"? Stok dan data variant akan hilang.`)) return;
     try {
-      await supabase.from('product_variants').delete().eq('id', variantId);
+      const resp = await fetch(`${SUPABASE_URL}/functions/v1/manage-product-asset`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${ANON_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'delete_variant',
+          variant_id: variantId,
+        }),
+      });
+      const result = await resp.json();
+      if (!resp.ok) throw new Error(result.error);
       showToast(`✓ Variant dihapus`, 'success');
-      onSaved();
+      refreshLocalData(); onSaved(); // refresh local + parent background
     } catch (e) {
       showToast(`✗ Gagal: ${e.message}`, 'error');
     }
@@ -260,7 +319,7 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
 
       if (result.success) {
         showToast(`✓ ${result.success_count} perubahan tersimpan`, 'success');
-        onSaved();
+        refreshLocalData(); onSaved(); // refresh local + parent background
         setTimeout(() => onClose(), 800);
       } else {
         showToast(`✗ ${result.error_count} error. Cek console.`, 'error');
@@ -550,35 +609,33 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
                               className="w-full px-2 py-1.5 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
                             />
                           </div>
-                                                    <div className="grid grid-cols-3 gap-2 col-span-2">
-                            <div>
-                              <label className="block text-[0.65rem] font-medium text-gray-500 mb-0.5">Harga (Rp)</label>
-                              <input
-                                type="number"
-                                value={v.price}
-                                onChange={(e) => updateVariant(v.id, 'price', e.target.value)}
-                                className="w-full px-2 py-1.5 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-[0.65rem] font-medium text-gray-500 mb-0.5">Stok</label>
-                              <input
-                                type="number"
-                                value={v.stock}
-                                onChange={(e) => updateVariant(v.id, 'stock', e.target.value)}
-                                className="w-full px-2 py-1.5 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-[0.65rem] font-medium text-gray-500 mb-0.5">Berat (gram)</label>
-                              <input
-                                type="number"
-                                value={v.weight_in_gram || ''}
-                                onChange={(e) => updateVariant(v.id, 'weight_in_gram', e.target.value)}
-                                placeholder="wajib"
-                                className="w-full px-2 py-1.5 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
-                              />
-                            </div>
+                          <div>
+                            <label className="block text-[0.65rem] font-medium text-gray-500 mb-0.5">Harga (Rp)</label>
+                            <input
+                              type="number"
+                              value={v.price}
+                              onChange={(e) => updateVariant(v.id, 'price', e.target.value)}
+                              className="w-full px-2 py-1.5 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[0.65rem] font-medium text-gray-500 mb-0.5">Stok</label>
+                            <input
+                              type="number"
+                              value={v.stock}
+                              onChange={(e) => updateVariant(v.id, 'stock', e.target.value)}
+                              className="w-full px-2 py-1.5 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[0.65rem] font-medium text-gray-500 mb-0.5">Berat (gram)</label>
+                            <input
+                              type="number"
+                              value={v.weight_in_gram || ''}
+                              onChange={(e) => updateVariant(v.id, 'weight_in_gram', e.target.value)}
+                              placeholder="wajib untuk active"
+                              className="w-full px-2 py-1.5 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            />
                           </div>
                           <div>
                             <label className="block text-[0.65rem] font-medium text-gray-500 mb-0.5">SKU</label>
