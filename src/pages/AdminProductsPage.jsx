@@ -20,6 +20,7 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { supabase } from '../lib/supabaseClient';
+import EditProductPanel from '../components/admin/EditProductPanel';
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -289,6 +290,9 @@ const AdminProductsPage = () => {
 
   // Expandable rows (Set of product IDs yang di-expand)
   const [expandedRows, setExpandedRows] = useState(new Set());
+
+  // Edit panel (Shopee-style slide-in)
+  const [editingProduct, setEditingProduct] = useState(null);
 
   // Bulk select
   const [selectedProducts, setSelectedProducts] = useState(new Set());
@@ -946,10 +950,11 @@ const AdminProductsPage = () => {
                       <tr key={p.id} className="border-b border-gray-100 hover:bg-gray-50">
                         <td className="px-3 py-2 text-center">
                           <button
-                            onClick={() => toggleExpand(p.id)}
-                            className="text-gray-400 hover:text-gray-700 text-xs"
+                            onClick={() => setEditingProduct(p)}
+                            className="text-gray-400 hover:text-blue-600 text-xs px-1"
+                            title="Edit produk (Shopee-style panel)"
                           >
-                            {expandedRows.has(p.id) ? '▼' : '▶'}
+                            ✏
                           </button>
                         </td>
                         <td className="px-3 py-2">
@@ -1020,130 +1025,6 @@ const AdminProductsPage = () => {
                           }) : '—'}
                         </td>
                       </tr>
-
-                      {/* === EXPANDED VARIANT ROW === */}
-                      {expandedRows.has(p.id) && (
-                        <tr key={`${p.id}-expanded`} className="bg-gray-50">
-                          <td colSpan={10} className="px-6 py-4">
-                            {/* Photo uploader */}
-                            <PhotoUploader
-                              productId={p.id}
-                              images={(p.product_images || []).filter(img => !img.variant_id)}
-                              onRefresh={fetchProducts}
-                            />
-
-                            {/* Variants table */}
-                            <div className="mt-4">
-                              <div className="flex items-center justify-between mb-2">
-                                <h4 className="text-xs font-semibold text-gray-700 uppercase tracking-wider">
-                                  Varian ({p.product_variants?.length || 0})
-                                </h4>
-                                <button
-                                  onClick={() => handleAddVariant(p.id)}
-                                  className="px-2 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700"
-                                >
-                                  + Tambah Varian
-                                </button>
-                              </div>
-
-                              {p.product_variants?.length > 0 ? (
-                                <table className="w-full text-xs border border-gray-200 rounded">
-                                  <thead className="bg-gray-100">
-                                    <tr>
-                                      <th className="px-2 py-1 text-left">Name</th>
-                                      <th className="px-2 py-1 text-right">Price</th>
-                                      <th className="px-2 py-1 text-right">Stock</th>
-                                      <th className="px-2 py-1 text-right">Weight (g)</th>
-                                      <th className="px-2 py-1 text-left">SKU</th>
-                                      <th className="px-2 py-1 text-center">Active</th>
-                                      <th className="px-2 py-1 text-right">L×W×H (cm)</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {p.product_variants.map((v) => (
-                                      <>
-                                        <tr key={v.id} className="border-t border-gray-200">
-                                        <td className="px-2 py-1">
-                                          <EditableCell
-                                            type="variant"
-                                            id={v.id}
-                                            field="name"
-                                            value={v.name || ''}
-                                            onSave={handleCellSave}
-                                          />
-                                        </td>
-                                        <td className="px-2 py-1 text-right">
-                                          <EditableCell
-                                            type="variant"
-                                            id={v.id}
-                                            field="price"
-                                            value={v.price}
-                                            onSave={handleCellSave}
-                                            displayValue={formatPrice(v.price)}
-                                            inputType="number"
-                                          />
-                                        </td>
-                                        <td className="px-2 py-1 text-right">
-                                          <EditableCell
-                                            type="variant"
-                                            id={v.id}
-                                            field="stock"
-                                            value={v.stock}
-                                            onSave={handleCellSave}
-                                            inputType="number"
-                                          />
-                                        </td>
-                                        <td className="px-2 py-1 text-right">
-                                          <EditableCell
-                                            type="variant"
-                                            id={v.id}
-                                            field="weight_in_gram"
-                                            value={v.weight_in_gram || ''}
-                                            onSave={handleCellSave}
-                                            displayValue={v.weight_in_gram || '—'}
-                                            inputType="number"
-                                          />
-                                        </td>
-                                        <td className="px-2 py-1">
-                                          <EditableCell
-                                            type="variant"
-                                            id={v.id}
-                                            field="sku"
-                                            value={v.sku || ''}
-                                            onSave={handleCellSave}
-                                          />
-                                        </td>
-                                        <td className="px-2 py-1 text-center">
-                                          <span className={`inline-block w-2 h-2 rounded-full ${v.is_active ? 'bg-green-500' : 'bg-gray-300'}`} />
-                                        </td>
-                                        <td className="px-2 py-1 text-right text-gray-500">
-                                          {v.length_cm && v.width_cm && v.height_cm
-                                            ? `${v.length_cm}×${v.width_cm}×${v.height_cm}`
-                                            : '—'}
-                                        </td>
-                                      </tr>
-                                      {/* Variant photo uploader */}
-                                      <tr key={`${v.id}-photo`} className="border-t border-gray-100 bg-white">
-                                        <td colSpan={7} className="px-2 py-2">
-                                          <PhotoUploader
-                                            productId={p.id}
-                                            variantId={v.id}
-                                            images={(p.product_images || []).filter(img => img.variant_id === v.id)}
-                                            onRefresh={fetchProducts}
-                                          />
-                                        </td>
-                                      </tr>
-                                      </>
-                                    ))}
-                                  </tbody>
-                                </table>
-                              ) : (
-                                <p className="text-xs text-gray-400 italic">Belum ada varian. Klik "+ Tambah Varian" untuk menambah.</p>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      )}
                     </>
                   ))}
                 </tbody>
@@ -1156,6 +1037,15 @@ const AdminProductsPage = () => {
           EGLUX Admin — hidden page. All operations via edge functions (service_role). Auto-save per cell.
         </p>
       </div>
+
+      {/* Edit Product Panel (Shopee-style slide-in) */}
+      {editingProduct && (
+        <EditProductPanel
+          product={editingProduct}
+          onClose={() => setEditingProduct(null)}
+          onSaved={fetchProducts}
+        />
+      )}
 
       {/* Toast */}
       {toast && (
