@@ -8,6 +8,7 @@ import BlogPage from './pages/BlogPage';
 import AboutPage from './pages/AboutPage';
 import ContactPage from './pages/ContactPage';
 import AffiliatePage from './pages/AffiliatePage';
+import AdminProductsPage from './pages/admin/AdminProductsPage';
 
 // ── Lazy-load AdminPage agar Supabase + Recharts + seluruh komponen admin
 //    tidak ikut dimuat di bundle utama. Visitor storefront (99% traffic)
