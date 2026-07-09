@@ -947,8 +947,12 @@ const AdminProductsPage = () => {
                   {filteredProducts.map((p) => (
                     <>
                       {/* === PRODUCT ROW === */}
-                      <tr key={p.id} className="border-b border-gray-100 hover:bg-gray-50">
-                        <td className="px-3 py-2 text-center">
+                      <tr
+                        key={p.id}
+                        className="border-b border-gray-100 hover:bg-blue-50 cursor-pointer transition-colors"
+                        onClick={() => setEditingProduct(p)}
+                      >
+                        <td className="px-3 py-2 text-center" onClick={(e) => e.stopPropagation()}>
                           <button
                             onClick={() => setEditingProduct(p)}
                             className="text-gray-400 hover:text-blue-600 text-xs px-1"
@@ -957,7 +961,7 @@ const AdminProductsPage = () => {
                             ✏
                           </button>
                         </td>
-                        <td className="px-3 py-2">
+                        <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
                           <input
                             type="checkbox"
                             checked={selectedProducts.has(p.id)}
@@ -970,36 +974,13 @@ const AdminProductsPage = () => {
                           <div className="text-xs text-gray-500">{p.slug}</div>
                         </td>
                         <td className="px-3 py-2 text-gray-600">
-                          <EditableCell
-                            type="product"
-                            id={p.slug}
-                            field="category"
-                            value={p.category || ''}
-                            onSave={handleCellSave}
-                            displayValue={p.category || '—'}
-                          />
+                          {p.category || '—'}
                         </td>
-                        <td className="px-3 py-2 text-right">
-                          <EditableCell
-                            type="product"
-                            id={p.slug}
-                            field="base_price"
-                            value={p.base_price}
-                            onSave={handleCellSave}
-                            displayValue={formatPrice(p.base_price)}
-                            inputType="number"
-                          />
+                        <td className="px-3 py-2 text-right text-gray-700">
+                          {formatPrice(p.base_price)}
                         </td>
-                        <td className="px-3 py-2 text-right">
-                          <EditableCell
-                            type="product"
-                            id={p.slug}
-                            field="weight_in_gram"
-                            value={p.weight_in_gram || ''}
-                            onSave={handleCellSave}
-                            displayValue={p.weight_in_gram || '—'}
-                            inputType="number"
-                          />
+                        <td className="px-3 py-2 text-right text-gray-700">
+                          {p.weight_in_gram || '—'}
                         </td>
                         <td className="px-3 py-2">
                           {p.badge ? (
