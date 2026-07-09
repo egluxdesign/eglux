@@ -2,14 +2,14 @@
 // ============================================================================
 // EGLUX Checkout — Midtrans Snap (payment) + Biteship (shipping aggregator)
 //
-// [v2.1] Perubahan:
-//   1. Phone input → CUSTOM input dengan locked +62 prefix (non-deletable)
-//      - Prefix 🇮🇩 +62 dirender sebagai overlay div (pointer-events-none)
-//      - User hanya input nomor lokalnya (8xxx), +62 tidak bisa dihapus
-//      - Format storage: E.164 (+628xxx) ke DB & Midtrans
-//      - Validasi: digit pertama WAJIB 8 (HP only, reject landline & 0 prefix)
-//      - Jika user ketik "08xxx" → error "Jangan pakai 0 di depan"
-//      - Jika user ketik "21xxx" (landline) → error "Harus diawali angka 8"
+// [v2.2] Perubahan:
+//   1. Phone input → CUSTOM input dengan country selector (default +62, bisa ganti)
+//      - 51 negara tersedia (ASEAN + Asia + Middle East + Eropa + Americas + Africa)
+//      - Click bendera → buka dropdown searchable (cari by nama negara atau dial code)
+//      - Prefix dial code (contoh: +62) dirender sebagai button, TIDAK bisa di-backspace
+//      - User hanya input nomor lokalnya di input field terpisah
+//      - Format storage: E.164 (+628xxx / +14155551234 / dst.) ke DB & Midtrans
+//      - Validasi longga: 7-15 digit setelah country code
 //   2. Email input → inline error message di bawah field (bukan cuma toast)
 //   3. City input → react-select searchable dropdown (97 kota Indonesia)
 //
@@ -34,9 +34,11 @@ import {
   Package,
   ShieldCheck,
   AlertCircle,
+  ChevronDown,
 } from 'lucide-react';
 import Select from 'react-select';
 import { INDONESIAN_CITIES } from '../../data/indonesianCities';
+import { COUNTRIES, DEFAULT_COUNTRY } from '../../data/countries';
 
 const INITIAL_FORM = {
   name: '',
@@ -53,33 +55,28 @@ const generateUUID = () => crypto.randomUUID();
 // ===== Email validation =====
 const isEmailValid = (e) => !e || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
 
-// ===== Phone validation (E.164, first digit after +62 MUST be 8) =====
-// Accepts:   +62 812 3456 7890 → valid (HP)
-// Rejects:   +62 0812...       → "Jangan pakai 0 di depan"
-// Rejects:   +62 21...         → "Harus diawali angka 8" (landline)
-// Rejects:   too short/long    → "Nomor terlalu pendek/panjang"
+// ===== Phone validation (longga E.164) =====
+// Valid:   +6281234567890  (12 digits total)
+// Valid:   +14155551234    (11 digits total)
+// Valid:   +6581234567     (9 digits total)
+// Invalid: < 8 digit total (terlalu pendek)
+// Invalid: > 15 digit total (terlalu panjang, melebihi E.164 max)
 const isPhoneValidE164 = (p) => {
   if (!p) return false;
   const digits = p.replace(/\D/g, '');
-  // 62 (country) + 8 (mobile prefix) + 7-13 digits
-  return /^628\d{7,13}$/.test(digits);
+  return /^\d{8,15}$/.test(digits);
 };
 
-const getPhoneErrorMessage = (p) => {
+const getPhoneErrorMessage = (p, country) => {
   if (!p || !p.trim()) return 'Nomor WhatsApp wajib diisi';
   const digits = p.replace(/\D/g, '');
-  if (!digits.startsWith('62')) {
-    return 'Format nomor tidak valid (gunakan +62 8xx)';
+  if (!digits.startsWith(country.dial)) {
+    return `Format nomor tidak valid untuk +${country.dial} (${country.name})`;
   }
-  const afterCountry = digits.slice(2);
-  if (afterCountry.startsWith('0')) {
-    return 'Jangan pakai 0 di depan. Langsung ketik 8xxx (contoh: 812 3456 7890)';
-  }
-  if (!afterCountry.startsWith('8')) {
-    return 'Nomor HP Indonesia harus diawali angka 8 (contoh: +62 812 xxx)';
-  }
-  if (afterCountry.length < 8) return 'Nomor terlalu pendek';
-  if (afterCountry.length > 14) return 'Nomor terlalu panjang';
+  const afterCountry = digits.slice(country.dial.length);
+  if (afterCountry.length === 0) return 'Masukkan nomor telepon setelah kode negara';
+  if (afterCountry.length < 7) return 'Nomor terlalu pendek (minimal 7 digit)';
+  if (afterCountry.length > 14) return 'Nomor terlalu panjang (maksimal 14 digit)';
   return '';
 };
 
@@ -158,6 +155,12 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
   const [submitting, setSubmitting] = useState(false);
   const [orderId, setOrderId] = useState(null);
 
+  // Phone country selector state
+  const [selectedCountry, setSelectedCountry] = useState(DEFAULT_COUNTRY);
+  const [countryDropdownOpen, setCountryDropdownOpen] = useState(false);
+  const [countrySearch, setCountrySearch] = useState('');
+  const countryDropdownRef = useRef(null);
+
   // Biteship: area lookup (by postal code)
   const [areas, setAreas] = useState([]);
   const [areasLoading, setAreasLoading] = useState(false);
@@ -181,8 +184,28 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
       setSelectedAreaId('');
       setShippingOptions([]);
       setSelectedShipping(null);
+      // Reset phone country selector ke default Indonesia
+      setSelectedCountry(DEFAULT_COUNTRY);
+      setCountryDropdownOpen(false);
+      setCountrySearch('');
     }
   }, [isOpen]);
+
+  // Click-outside handler: tutup country dropdown kalau user klik di luar
+  useEffect(() => {
+    if (!countryDropdownOpen) return;
+    const handler = (e) => {
+      if (
+        countryDropdownRef.current &&
+        !countryDropdownRef.current.contains(e.target)
+      ) {
+        setCountryDropdownOpen(false);
+        setCountrySearch('');
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [countryDropdownOpen]);
 
   const change = (e) => {
     const { name, value } = e.target;
@@ -199,24 +222,50 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
   };
 
   // ===== Phone handlers =====
-  // Custom phone input: user input hanya digit lokal (8xxx), +62 di-prepend otomatis
-  // Prefix +62 dirender sebagai overlay div (pointer-events-none) sehingga tidak bisa dihapus
+  // Custom phone input: user input hanya digit lokal (tanpa dial code),
+  // dial code (contoh: +62) di-prepend otomatis berdasarkan selectedCountry.
+  // Prefix dirender sebagai button (TIDAK bisa di-backspace).
   const onPhoneChange = (e) => {
-    // Strip non-digits, max 13 digit (8 + 12 digit maksimum HP Indonesia)
-    const digits = e.target.value.replace(/\D/g, '').slice(0, 13);
-    // Selalu prepend +62 — biarkan validation yang nentukan valid atau nggak
-    const e164 = digits ? `+62${digits}` : '';
+    const digits = e.target.value.replace(/\D/g, '').slice(0, 14);
+    const e164 = digits ? `+${selectedCountry.dial}${digits}` : '';
     setForm((f) => ({ ...f, phone: e164 }));
     setFormErrors((prev) => ({ ...prev, phone: '' }));
   };
 
   const onPhoneBlur = () => {
-    const err = getPhoneErrorMessage(form.phone);
+    const err = getPhoneErrorMessage(form.phone, selectedCountry);
     setFormErrors((prev) => ({ ...prev, phone: err }));
   };
 
-  // Display value: strip +62 prefix untuk ditampilkan di input field
-  const phoneDisplayValue = form.phone.replace(/^\+62/, '');
+  // ===== Country selector handlers =====
+  const onSelectCountry = (country) => {
+    // Migrate phone value: extract digits lokal, prepend dial code baru
+    const currentDigits = form.phone
+      .replace(/\D/g, '')
+      .slice(selectedCountry.dial.length);
+    const newE164 = currentDigits ? `+${country.dial}${currentDigits}` : '';
+    setForm((f) => ({ ...f, phone: newE164 }));
+    setSelectedCountry(country);
+    setCountryDropdownOpen(false);
+    setCountrySearch('');
+    setFormErrors((prev) => ({ ...prev, phone: '' }));
+  };
+
+  // Display value: strip current dial code prefix untuk ditampilkan di input
+  const phoneDisplayValue = (() => {
+    if (!form.phone) return '';
+    const stripped = form.phone.replace(/^\+/, '');
+    return stripped.startsWith(selectedCountry.dial)
+      ? stripped.slice(selectedCountry.dial.length)
+      : stripped;
+  })();
+
+  // Filtered country list untuk dropdown
+  const filteredCountries = COUNTRIES.filter((c) => {
+    if (!countrySearch.trim()) return true;
+    const q = countrySearch.toLowerCase().trim().replace(/^\+/, '');
+    return c.name.toLowerCase().includes(countrySearch.toLowerCase().trim()) || c.dial.includes(q);
+  });
 
   // ===== City handler =====
   const onCityChange = (opt) => {
@@ -332,7 +381,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
             name: item.name,
             price: item.price || 0,
             qty: item.qty,
-            weight_in_gram: item.weight_gram || 500,
+            weight_in_gram: item.weight_in_gram || 500,
           })),
         };
 
@@ -382,7 +431,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
     if (cart.length === 0) errors.cart = 'Keranjang masih kosong';
     if (!form.name.trim()) errors.name = 'Nama lengkap wajib diisi';
 
-    const phoneErr = getPhoneErrorMessage(form.phone);
+    const phoneErr = getPhoneErrorMessage(form.phone, selectedCountry);
     if (phoneErr) errors.phone = phoneErr;
 
     if (form.email && !isEmailValid(form.email)) {
@@ -456,7 +505,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
       unit_price_snapshot: item.price || 0,
       quantity: item.qty,
       subtotal: (item.price || 0) * item.qty,
-      weight_gram: item.weight_gram || 500,
+      weight_gram: item.weight_in_gram || 500,
     }));
     const { error: itemsError } = await supabase.from('order_items').insert(itemsPayload);
     if (itemsError) throw itemsError;
@@ -488,11 +537,27 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
       setSubmitting(false);
 
       window.snap.pay(data.token, {
-        onSuccess: (result) => {
+        onSuccess: async (result) => {
           console.log('[Midtrans] Payment success:', result.transaction_id);
           clearCart();
           onClose();
           showToast('Pembayaran berhasil! Terima kasih ✓');
+
+          // Fire WABA notification (TEST mode for now — switch to 'send-waba-live' after Meta approval)
+          // Fire-and-forget: jangan block UI, jangan throw error kalau gagal
+          try {
+            const { error: wabaError } = await supabase.functions.invoke(
+              'send-waba-test',
+              { body: { order_id: currentOrderId, event: 'payment_success' } }
+            );
+            if (wabaError) {
+              console.warn('[WABA] Test notification failed:', wabaError.message);
+            } else {
+              console.log('[WABA] Test notification queued (mock mode)');
+            }
+          } catch (e) {
+            console.warn('[WABA] Network error:', e);
+          }
         },
         onPending: () => {
           showToast('Menunggu pembayaran. Cek WA/email untuk instruksi.');
@@ -569,7 +634,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
                   <br />
                   <small className="text-[#666] font-normal">
                     {item.variantName ?? '-'} × {item.qty}
-                    {item.weight_gram ? ` · ${item.weight_gram}g` : ''}
+                    {item.weight_in_gram ? ` · ${item.weight_in_gram}g` : ''}
                   </small>
                 </span>
                 <span className="whitespace-nowrap">
@@ -620,25 +685,32 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
               <InlineError msg={formErrors.name} />
             </div>
 
-            {/* Phone — custom input dengan locked +62 prefix */}
+            {/* Phone — custom input dengan country selector (default +62, bisa ganti) */}
             <div>
               <label className="block text-[0.8rem] font-semibold text-eglux-primary uppercase tracking-[0.5px] mb-1.5">
                 WhatsApp *
               </label>
-              <div className="relative">
-                {/* Locked +62 prefix — dirender sebagai overlay, TIDAK bisa diedit */}
-                <div
-                  className={`absolute left-0 top-0 bottom-0 flex items-center gap-1.5 px-3 pointer-events-none bg-[#faf6ef] border-r-[1.5px] rounded-l-[10px] ${
-                    formErrors.phone ? 'border-red-500' : 'border-[#ddd]'
-                  }`}
+              <div className="relative" ref={countryDropdownRef}>
+                {/* Country selector button — klik buka dropdown, TIDAK bisa di-backspace */}
+                <button
+                  type="button"
+                  onClick={() => !isLocked && setCountryDropdownOpen((o) => !o)}
+                  disabled={isLocked}
+                  aria-label="Pilih kode negara"
+                  className={`absolute left-0 top-0 bottom-0 flex items-center gap-1.5 px-3 bg-[#faf6ef] border-r-[1.5px] rounded-l-[10px] transition-colors ${
+                    isLocked ? 'cursor-not-allowed opacity-60' : 'cursor-pointer hover:bg-[#f0e8d6]'
+                  } ${formErrors.phone ? 'border-red-500' : 'border-[#ddd]'}`}
                 >
-                  <span className="text-base leading-none" role="img" aria-label="Indonesia">
-                    🇮🇩
+                  <span className="text-base leading-none" role="img" aria-label={selectedCountry.name}>
+                    {selectedCountry.flag}
                   </span>
                   <span className="text-[0.88rem] font-semibold text-eglux-primary whitespace-nowrap">
-                    +62
+                    +{selectedCountry.dial}
                   </span>
-                </div>
+                  <ChevronDown className="w-3 h-3 text-gray-500" />
+                </button>
+
+                {/* Input for local digits */}
                 <input
                   type="tel"
                   name="phone"
@@ -649,14 +721,58 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
                   inputMode="numeric"
                   autoComplete="tel"
                   disabled={isLocked}
-                  className={`w-full py-3 pl-[84px] pr-4 border-[1.5px] rounded-[10px] text-[0.88rem] text-eglux-primary bg-white outline-none focus:border-eglux-secondary transition-colors disabled:bg-[#f5f5f5] disabled:text-[#999] ${
+                  className={`w-full py-3 pl-[100px] pr-4 border-[1.5px] rounded-[10px] text-[0.88rem] text-eglux-primary bg-white outline-none focus:border-eglux-secondary transition-colors disabled:bg-[#f5f5f5] disabled:text-[#999] ${
                     formErrors.phone ? 'border-red-500' : 'border-[#ddd]'
                   }`}
                 />
+
+                {/* Dropdown: searchable country list */}
+                {countryDropdownOpen && (
+                  <div className="absolute top-full left-0 mt-1 w-[300px] bg-white rounded-[10px] shadow-2xl border border-[#eee] z-[100] max-h-[280px] flex flex-col overflow-hidden">
+                    {/* Search */}
+                    <div className="p-2 border-b border-[#eee]">
+                      <input
+                        type="text"
+                        value={countrySearch}
+                        onChange={(e) => setCountrySearch(e.target.value)}
+                        placeholder="Cari negara atau kode..."
+                        autoFocus
+                        className="w-full px-3 py-2 text-[0.85rem] border border-[#ddd] rounded-md outline-none focus:border-eglux-secondary transition-colors"
+                      />
+                    </div>
+                    {/* List */}
+                    <div className="overflow-y-auto flex-1">
+                      {filteredCountries.length === 0 ? (
+                        <p className="text-center text-[0.8rem] text-gray-400 py-4">
+                          Negara tidak ditemukan
+                        </p>
+                      ) : (
+                        filteredCountries.map((c) => (
+                          <button
+                            key={c.code}
+                            type="button"
+                            onClick={() => onSelectCountry(c)}
+                            className={`w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-[#faf6ef] transition-colors ${
+                              selectedCountry.code === c.code ? 'bg-[#faf6ef]' : ''
+                            }`}
+                          >
+                            <span className="text-base leading-none">{c.flag}</span>
+                            <span className="text-[0.85rem] text-eglux-primary flex-1 truncate">
+                              {c.name}
+                            </span>
+                            <span className="text-[0.78rem] text-gray-500 whitespace-nowrap">
+                              +{c.dial}
+                            </span>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
               <InlineError msg={formErrors.phone} />
               <p className="text-[0.72rem] text-gray-500 mt-1">
-                HP Indonesia only · ketik langsung 8xxx tanpa 0 di depan (contoh: 812 3456 7890)
+                Klik bendera untuk ganti negara (default Indonesia +62). Ketik nomor tanpa kode negara.
               </p>
             </div>
 

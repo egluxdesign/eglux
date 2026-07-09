@@ -1,3 +1,15 @@
+// src/context/CartContext.jsx
+// ============================================================================
+// [v2] Updated for variant-as-source-of-truth model
+// ============================================================================
+// Changes:
+//   - Cart item now stores `weight_in_gram` (was: no weight field)
+//   - Weight source: variant.weight_in_gram (fallback to product.weight_in_gram for safety)
+//   - Price: always variant.price, NO fallback to product.price
+//   - Optional: store length/width/height for Biteship volumetric calc
+//   - Removed debug console.log
+// ============================================================================
+
 import { createContext, useContext, useState, useCallback, useEffect } from 'react';
 
 const CartContext = createContext(null);
@@ -31,13 +43,32 @@ export const CartProvider = ({ children }) => {
   const totalQty   = cart.reduce((s, i) => s + i.qty, 0);
   const totalPrice = cart.reduce((s, i) => s + (i.price || 0) * i.qty, 0);
 
+  // ⚠️ Total weight untuk Biteship rate calc (sum of variant weight × qty)
+  const totalWeightInGram = cart.reduce(
+    (s, i) => s + (Number(i.weight_in_gram) || 0) * i.qty,
+    0
+  );
+
   const addItem = useCallback((product, variant, qty) => {
-    console.log('VALUE product.price:', product.price, typeof product.price);
-    
     setCart((prev) => {
       const variantId   = variant?.id ?? null;
       const variantName = variant?.name ?? null;
-      const unitPrice   = variant?.price ?? product.price ?? 0;
+
+      // ⚠️ PRICE: always from variant, NO fallback to product.price
+      // (variant = source of truth per Boss's redesign)
+      const unitPrice = Number(variant?.price) || 0;
+
+      // ⚠️ WEIGHT: from variant, fallback to product.weight_in_gram (defense in depth)
+      // Boss decision: A (keep product weight as fallback)
+      const weightInGram =
+        Number(variant?.weight_in_gram) ||
+        Number(product?.weight_in_gram) ||
+        0;
+
+      // ⚠️ DIMENSIONS: from variant (optional, for Biteship volumetric calc)
+      const lengthCm = Number(variant?.length_cm) || null;
+      const widthCm  = Number(variant?.width_cm)  || null;
+      const heightCm = Number(variant?.height_cm) || null;
 
       const existing = prev.find(
         (i) => i.productId === product.id && i.variantId === variantId
@@ -58,6 +89,11 @@ export const CartProvider = ({ children }) => {
           variantName,
           price: unitPrice,
           qty,
+          // ⚠️ NEW fields for shipping calc
+          weight_in_gram: weightInGram,
+          length_cm: lengthCm,
+          width_cm: widthCm,
+          height_cm: heightCm,
         },
       ];
     });
@@ -83,6 +119,7 @@ export const CartProvider = ({ children }) => {
         cart,
         totalQty,
         totalPrice,
+        totalWeightInGram,  // ← NEW export
         addItem,
         updateQty,
         removeItem,

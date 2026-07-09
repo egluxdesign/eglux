@@ -1,13 +1,24 @@
 // src/components/ui/ProductCardFull.jsx
-// Versi ProductCard untuk halaman /products.
-// Berbeda dari ProductCard di index (tanpa desc, tanpa modal).
-// Props:
-//  - product: { id, name, category, badge, desc, image }
-//  - onOpenModal: (product) => void
+// ============================================================================
+// [v2] Updated for variant-as-source-of-truth model
+// ============================================================================
+// Changes:
+//   - Display "Mulai dari Rp {minVariantPrice}" instead of just "Buy Now"
+//   - Strike through base_price if minVariantPrice < base_price (diskon model)
+//   - Show "Hubungi CS" if no active variant (product not ready for sale)
+//   - Props now include: minVariantPrice, hasActiveVariant (from useProducts v2)
+// ============================================================================
+
 import CartIcon from './CartIcon';
 
+// Format rupiah — fallback kalau rupiah dari CartContext belum di-import
+const formatRupiah = (amount) => {
+  if (!amount && amount !== 0) return '—';
+  return 'Rp ' + Math.round(amount).toLocaleString('id-ID');
+};
+
 const ProductCardFull = ({ product, onOpenModal }) => {
-  const { name, category, badge, desc, image } = product;
+  const { name, category, badge, desc, image, price, minVariantPrice, hasActiveVariant } = product;
 
   return (
     <article
@@ -20,8 +31,7 @@ const ProductCardFull = ({ product, onOpenModal }) => {
       onKeyDown={(e) => e.key === 'Enter' && onOpenModal(product)}
       aria-label={`Lihat detail: ${name}`}
     >
-      {/* Image
-          TODO: `image` → supabase.storage.from('products').getPublicUrl(p.image_path) */}
+      {/* Image */}
       <div className="relative overflow-hidden h-[250px]">
         <img
           src={image}
@@ -43,9 +53,37 @@ const ProductCardFull = ({ product, onOpenModal }) => {
           {name}
         </h4>
         <p className="text-[0.85rem] text-[#666] mb-3">{category}</p>
-        <p className="flex items-center gap-1.5 text-[1.1rem] font-bold text-eglux-secondary mb-2">
-          <CartIcon /> Buy Now
-        </p>
+
+        {/* Price display — variant-as-source-of-truth model */}
+        <div className="mb-2">
+          {hasActiveVariant && minVariantPrice ? (
+            <>
+              {/* "Mulai dari" label + strike through base if min < base */}
+              <p className="text-[0.7rem] text-[#999] uppercase tracking-[0.5px] mb-0.5">
+                Mulai dari
+              </p>
+              {minVariantPrice < price ? (
+                <>
+                  <span className="block text-[0.78rem] text-[#999] line-through mb-0.5">
+                    {formatRupiah(price)}
+                  </span>
+                  <span className="text-[1.1rem] font-bold text-eglux-secondary">
+                    {formatRupiah(minVariantPrice)}
+                  </span>
+                </>
+              ) : (
+                <span className="text-[1.1rem] font-bold text-eglux-secondary">
+                  {formatRupiah(minVariantPrice)}
+                </span>
+              )}
+            </>
+          ) : (
+            <p className="text-[0.95rem] font-semibold text-[#999]">
+              Hubungi CS
+            </p>
+          )}
+        </div>
+
         {desc && (
           <p className="text-[0.9rem] text-[#666] leading-relaxed line-clamp-2">{desc}</p>
         )}
