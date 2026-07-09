@@ -1,27 +1,31 @@
 // src/pages/AdminProductsPage.jsx
 // ============================================================================
-// EGLUX Admin Products Page — bulk update via CSV/Google Sheets + inline edit
+// [v2] Comprehensive Admin Products Page
 // ============================================================================
-// Access: hidden storefront page at /products-admin (direct URL only)
-// Auth: edge functions pakai service_role (page cuma UI trigger)
-//
 // Features:
-//   1. Product list with search + filter (category, badge, active)
-//   2. Inline edit (click cell → edit → save)
-//   3. Bulk actions (select + set price/weight/stock/active)
-//   4. CSV upload (file + Google Sheets URL) with validate/execute mode
-//   5. Export current data (download pre-filled CSV template)
+//   1. Products table (DB schema: id, name, slug, category, base_price, weight_in_gram, badge, is_active, description)
+//   2. Expandable variant rows (DB schema: id, name, attributes, price, stock, sku, is_active, weight_in_gram, length_cm, width_cm, height_cm)
+//   3. Photo upload (Supabase Storage → product_images table)
+//   4. Add new variant per product
+//   5. Inline edit (auto-save per cell via bulk-update-products edge function)
+//   6. Bulk actions (select + set price/weight/badge/active)
+//   7. CSV + XLSX upload (SheetJS for xlsx → convert to CSV → import-products-csv)
+//   8. Export current data (CSV)
+//   9. Search + filter (name/slug, category, active status)
+//
+// Dependencies: SheetJS loaded from CDN (no npm install needed)
+//
+// Access: /products-admin (hidden storefront page)
 // ============================================================================
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { supabase } from '../lib/supabaseClient';
-import { rupiah } from '../context/CartContext';
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 // ============================================================================
-// HELPER
+// HELPER FUNCTIONS
 // ============================================================================
 const formatPrice = (v) => {
   if (v === null || v === undefined || v === '') return '—';
@@ -46,47 +50,265 @@ const downloadBase64Csv = (base64Content, filename) => {
   URL.revokeObjectURL(url);
 };
 
+// Parse XLSX file menggunakan SheetJS (load dinamis supaya nggak perlu install kalau nggak dipakai)
+async function parseXlsxFile(file) {
+  // Load SheetJS dynamically dari CDN (nggak perlu npm install)
+  // SheetJS official CDN: https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js
+  if (!window.XLSX) {
+    await new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = 'https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js';
+      script.onload = resolve;
+      script.onerror = () => reject(new Error('Gagal load SheetJS dari CDN. Cek koneksi internet.'));
+      document.head.appendChild(script);
+    });
+  }
+
+  const XLSX = window.XLSX;
+  const arrayBuffer = await file.arrayBuffer();
+  const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+
+  // Ambil sheet pertama
+  const firstSheetName = workbook.SheetNames[0];
+  const worksheet = workbook.Sheets[firstSheetName];
+
+  // Convert ke CSV
+  const csv = XLSX.utils.sheet_to_csv(worksheet);
+  return csv;
+}
+
+// ============================================================================
+// PHOTO UPLOAD COMPONENT (supports product + variant photos)
+// ============================================================================
+const PhotoUploader = ({ productId, images, onRefresh, variantId = null }) => {
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef(null);
+
+  const label = variantId ? '📷 Foto Varian' : '📷 Foto Produk';
+
+  const handleUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    setUploading(true);
+    try {
+      const ext = file.name.split('.').pop();
+      const folder = variantId ? `variants/${variantId}` : productId;
+      const filename = `${folder}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+      const filePath = `products/${filename}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('product-images')
+        .upload(filePath, file, { cacheControl: '3600', upsert: false });
+
+      if (uploadError) throw uploadError;
+
+      const { data: urlData } = supabase.storage
+        .from('product-images')
+        .getPublicUrl(filePath);
+
+      const { error: dbError } = await supabase
+        .from('product_images')
+        .insert({
+          product_id: productId,
+          url: urlData.publicUrl,
+          position: 0,
+          is_primary: images.length === 0,
+          variant_id: variantId,
+        });
+
+      if (dbError) throw dbError;
+      onRefresh();
+    } catch (e) {
+      alert(`Upload gagal: ${e.message}`);
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const setPrimary = async (imageId) => {
+    try {
+      // Unset all primary untuk product ini
+      await supabase
+        .from('product_images')
+        .update({ is_primary: false })
+        .eq('product_id', productId);
+
+      // Set yang dipilih jadi primary
+      await supabase
+        .from('product_images')
+        .update({ is_primary: true })
+        .eq('id', imageId);
+
+      onRefresh();
+    } catch (e) {
+      alert(`Set primary gagal: ${e.message}`);
+    }
+  };
+
+  const deleteImage = async (imageId, imageUrl) => {
+    if (!confirm('Hapus foto ini?')) return;
+
+    try {
+      // Delete dari Storage (extract path dari URL)
+      const urlObj = new URL(imageUrl);
+      const pathMatch = urlObj.pathname.match(/\/product-images\/(.+)/);
+      if (pathMatch) {
+        const storagePath = pathMatch[1];
+        await supabase.storage.from('product-images').remove([storagePath]);
+      }
+
+      // Delete dari DB
+      await supabase.from('product_images').delete().eq('id', imageId);
+
+      onRefresh();
+    } catch (e) {
+      alert(`Hapus gagal: ${e.message}`);
+    }
+  };
+
+  return (
+    <div className="bg-gray-50 p-3 rounded-md">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-xs font-semibold text-gray-700">{label} ({images.length})</span>
+        <label className="cursor-pointer px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700">
+          {uploading ? '⏳ Uploading...' : '+ Upload Foto'}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            onChange={handleUpload}
+            disabled={uploading}
+            className="hidden"
+          />
+        </label>
+      </div>
+
+      {images.length === 0 ? (
+        <p className="text-xs text-gray-400 italic">Belum ada foto. Upload foto produk.</p>
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          {images.map((img) => (
+            <div key={img.id} className="relative group w-20 h-20 rounded-md overflow-hidden border-2 border-gray-200">
+              <img src={img.url} alt="" className="w-full h-full object-cover" />
+              {img.is_primary && (
+                <span className="absolute top-0 left-0 bg-amber-500 text-white text-[0.55rem] px-1 py-0.5 rounded-br">
+                  PRIMARY
+                </span>
+              )}
+              {/* Hover actions */}
+              <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex flex-col items-center justify-center gap-1 transition-opacity">
+                {!img.is_primary && (
+                  <button
+                    onClick={() => setPrimary(img.id)}
+                    className="text-[0.6rem] text-white bg-amber-600 px-1.5 py-0.5 rounded hover:bg-amber-700"
+                  >
+                    Set Primary
+                  </button>
+                )}
+                <button
+                  onClick={() => deleteImage(img.id, img.url)}
+                  className="text-[0.6rem] text-white bg-red-600 px-1.5 py-0.5 rounded hover:bg-red-700"
+                >
+                  Hapus
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ============================================================================
+// INLINE EDIT CELL COMPONENT
+// ============================================================================
+const EditableCell = ({ type, id, field, value, onSave, displayValue, inputType = 'text' }) => {
+  const [editing, setEditing] = useState(false);
+  const [editVal, setEditVal] = useState(value ?? '');
+
+  const handleStart = () => {
+    setEditVal(value ?? '');
+    setEditing(true);
+  };
+
+  const handleSave = () => {
+    onSave(type, id, field, editVal);
+    setEditing(false);
+  };
+
+  const handleCancel = () => {
+    setEditing(false);
+    setEditVal(value ?? '');
+  };
+
+  if (editing) {
+    return (
+      <div className="flex items-center gap-1">
+        <input
+          type={inputType}
+          value={editVal}
+          onChange={(e) => setEditVal(e.target.value)}
+          autoFocus
+          className="w-full px-1 py-0.5 text-xs border border-blue-500 rounded"
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') handleSave();
+            if (e.key === 'Escape') handleCancel();
+          }}
+          onBlur={handleSave}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <span
+      onClick={handleStart}
+      className="cursor-pointer hover:bg-yellow-50 px-1 py-0.5 rounded inline-block min-w-[40px]"
+      title="Click to edit"
+    >
+      {displayValue || value || '—'}
+    </span>
+  );
+};
+
 // ============================================================================
 // MAIN COMPONENT
 // ============================================================================
 const AdminProductsPage = () => {
-  // State: products + variants
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // State: search + filter
+  // Search + filter
   const [searchQuery, setSearchQuery] = useState('');
   const [filterCategory, setFilterCategory] = useState('all');
   const [filterActive, setFilterActive] = useState('all');
 
-  // State: inline edit
-  const [editingCell, setEditingCell] = useState(null); // { type, id, field }
-  const [editValue, setEditValue] = useState('');
+  // Expandable rows (Set of product IDs yang di-expand)
+  const [expandedRows, setExpandedRows] = useState(new Set());
 
-  // State: bulk select
+  // Bulk select
   const [selectedProducts, setSelectedProducts] = useState(new Set());
   const [bulkEditMode, setBulkEditMode] = useState(false);
   const [bulkValues, setBulkValues] = useState({
-    base_price: '',
-    weight_in_gram: '',
-    badge: '',
-    is_active: '',
+    base_price: '', weight_in_gram: '', badge: '', is_active: '',
   });
 
-  // State: CSV upload
-  const [uploadMode, setUploadMode] = useState('file'); // 'file' | 'sheets'
+  // CSV/XLSX upload
+  const [uploadFormat, setUploadFormat] = useState('csv'); // 'csv' | 'xlsx'
   const [productsFile, setProductsFile] = useState(null);
   const [variantsFile, setVariantsFile] = useState(null);
-  const [sheetsUrl, setSheetsUrl] = useState('');
-  const [csvMode, setCsvMode] = useState('validate'); // 'validate' | 'execute'
+  const [csvMode, setCsvMode] = useState('validate');
   const [uploading, setUploading] = useState(false);
   const [uploadResult, setUploadResult] = useState(null);
 
-  // State: export
+  // Export
   const [exporting, setExporting] = useState(false);
 
-  // State: toast/notification
+  // Toast
   const [toast, setToast] = useState(null);
   const showToast = (msg, type = 'info') => {
     setToast({ msg, type });
@@ -106,9 +328,10 @@ const AdminProductsPage = () => {
           id, name, slug, description, category, base_price, is_active, badge,
           weight_in_gram, updated_at,
           product_variants (
-            id, name, price, stock, sku, is_active,
+            id, name, attributes, price, stock, sku, is_active,
             weight_in_gram, length_cm, width_cm, height_cm
-          )
+          ),
+          product_images ( id, url, position, is_primary, variant_id )
         `)
         .order('updated_at', { ascending: false });
 
@@ -130,16 +353,11 @@ const AdminProductsPage = () => {
   // ============================================================================
   const filteredProducts = useMemo(() => {
     return products.filter((p) => {
-      // Search
       if (searchQuery) {
         const q = searchQuery.toLowerCase();
-        if (!p.name?.toLowerCase().includes(q) && !p.slug?.toLowerCase().includes(q)) {
-          return false;
-        }
+        if (!p.name?.toLowerCase().includes(q) && !p.slug?.toLowerCase().includes(q)) return false;
       }
-      // Filter category
       if (filterCategory !== 'all' && p.category !== filterCategory) return false;
-      // Filter active
       if (filterActive === 'active' && !p.is_active) return false;
       if (filterActive === 'inactive' && p.is_active) return false;
       return true;
@@ -152,24 +370,22 @@ const AdminProductsPage = () => {
   }, [products]);
 
   // ============================================================================
-  // INLINE EDIT
+  // INLINE EDIT SAVE (auto-save per cell)
   // ============================================================================
-  const startEdit = (type, id, field, currentValue) => {
-    setEditingCell({ type, id, field });
-    setEditValue(currentValue ?? '');
-  };
+  const handleCellSave = async (type, id, field, value) => {
+    // Convert value kalau perlu
+    let processedValue = value;
+    if (field === 'is_active') processedValue = value === 'true' || value === true;
+    if (field === 'base_price' || field === 'price') processedValue = Number(value);
+    if (field === 'weight_in_gram' || field === 'stock') processedValue = parseInt(value, 10);
+    if (field === 'length_cm' || field === 'width_cm' || field === 'height_cm') {
+      processedValue = value === '' ? null : parseFloat(value);
+    }
+    if (field === 'attributes') {
+      try { processedValue = JSON.parse(value); } catch { processedValue = {}; }
+    }
 
-  const cancelEdit = () => {
-    setEditingCell(null);
-    setEditValue('');
-  };
-
-  const saveEdit = async () => {
-    if (!editingCell) return;
-    const { type, id, field } = editingCell;
-
-    // Build update payload
-    const fields = { [field]: field === 'is_active' ? editValue === 'true' : editValue };
+    const fields = { [field]: processedValue };
 
     try {
       const resp = await fetch(`${SUPABASE_URL}/functions/v1/bulk-update-products`, {
@@ -190,14 +406,46 @@ const AdminProductsPage = () => {
 
       if (result.success_count > 0) {
         showToast(`✓ ${type} updated: ${field}`, 'success');
-        await fetchProducts(); // refresh
+        await fetchProducts();
       } else {
-        showToast(`✗ Update failed: ${result.results?.[0]?.error || 'unknown error'}`, 'error');
+        showToast(`✗ Update failed: ${result.results?.[0]?.error || 'unknown'}`, 'error');
       }
     } catch (e) {
       showToast(`✗ Network error: ${e.message}`, 'error');
     }
-    cancelEdit();
+  };
+
+  // ============================================================================
+  // ADD NEW VARIANT
+  // ============================================================================
+  const handleAddVariant = async (productId) => {
+    const name = prompt('Nama variant baru (e.g., "Ukuran L"):');
+    if (!name) return;
+
+    const price = prompt('Harga variant (MUST < base_price, diskon model):');
+    if (!price) return;
+
+    try {
+      const { error } = await supabase
+        .from('product_variants')
+        .insert({
+          product_id: productId,
+          name: name,
+          attributes: {},
+          price: Number(price),
+          stock: 0,
+          sku: `EGL-NEW-${Date.now().toString().slice(-6)}`,
+          is_active: false, // inactive sampai Boss isi weight
+          weight_in_gram: null,
+        });
+
+      if (error) throw error;
+
+      showToast(`✓ Variant "${name}" ditambahkan (inactive, isi weight untuk activate)`, 'success');
+      await fetchProducts();
+    } catch (e) {
+      showToast(`✗ Add variant gagal: ${e.message}`, 'error');
+    }
   };
 
   // ============================================================================
@@ -226,7 +474,6 @@ const AdminProductsPage = () => {
       return;
     }
 
-    // Build updates array
     const updates = [];
     for (const productId of selectedProducts) {
       const product = products.find((p) => p.id === productId);
@@ -239,7 +486,6 @@ const AdminProductsPage = () => {
       if (bulkValues.is_active !== '') fields.is_active = bulkValues.is_active === 'true';
 
       if (Object.keys(fields).length === 0) continue;
-
       updates.push({ type: 'product', slug: product.slug, fields });
     }
 
@@ -276,15 +522,11 @@ const AdminProductsPage = () => {
   };
 
   // ============================================================================
-  // CSV UPLOAD
+  // CSV/XLSX UPLOAD
   // ============================================================================
   const handleFileUpload = async () => {
-    if (!productsFile && uploadMode === 'file') {
-      showToast('Pilih file products CSV dulu', 'error');
-      return;
-    }
-    if (uploadMode === 'sheets' && !sheetsUrl) {
-      showToast('Masukkan Google Sheets URL', 'error');
+    if (!productsFile) {
+      showToast('Pilih file dulu', 'error');
       return;
     }
 
@@ -295,26 +537,26 @@ const AdminProductsPage = () => {
       const formData = new FormData();
       formData.append('mode', csvMode);
 
-      if (uploadMode === 'file') {
+      // Convert XLSX to CSV kalau perlu
+      if (uploadFormat === 'xlsx') {
+        const csvText = await parseXlsxFile(productsFile);
+        const csvBlob = new Blob([csvText], { type: 'text/csv' });
+        formData.append('products_csv', csvBlob, 'products.csv');
+
+        if (variantsFile) {
+          const variantsCsvText = await parseXlsxFile(variantsFile);
+          const variantsBlob = new Blob([variantsCsvText], { type: 'text/csv' });
+          formData.append('variants_csv', variantsBlob, 'variants.csv');
+        }
+      } else {
+        // CSV langsung
         formData.append('products_csv', productsFile);
         if (variantsFile) formData.append('variants_csv', variantsFile);
-      } else {
-        // Google Sheets: fetch CSV content from URL, then attach as file
-        // Google Sheets publish-to-web CSV URL format:
-        // https://docs.google.com/spreadsheets/d/{ID}/export?format=csv
-        // or https://docs.google.com/spreadsheets/d/e/{ID}/pub?output=csv
-
-        // Fetch both sheets URLs (products + variants) — for now, assume single URL for products
-        const csvText = await (await fetch(sheetsUrl)).text();
-        const csvBlob = new Blob([csvText], { type: 'text/csv' });
-        formData.append('products_csv', csvBlob, 'products_from_sheets.csv');
       }
 
       const resp = await fetch(`${SUPABASE_URL}/functions/v1/import-products-csv`, {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${ANON_KEY}`,
-        },
+        headers: { 'Authorization': `Bearer ${ANON_KEY}` },
         body: formData,
       });
 
@@ -328,17 +570,17 @@ const AdminProductsPage = () => {
             : `✓ Validation pass! ${result.parsed.products_valid} products + ${result.parsed.variants_valid} variants ready.`,
           'success'
         );
-        if (csvMode === 'execute') {
-          await fetchProducts(); // refresh list
-        }
+        if (csvMode === 'execute') await fetchProducts();
       } else {
-        showToast(
-          `Validation failed: ${result.errors?.length || 0} error(s). Lihat detail di bawah.`,
-          'error'
-        );
+        showToast(`Validation failed: ${result.errors?.length || 0} error(s)`, 'error');
       }
     } catch (e) {
-      showToast(`✗ Upload error: ${e.message}`, 'error');
+      // Handle SheetJS not installed
+      if (e.message?.includes('xlsx') || e.message?.includes('Module')) {
+        showToast('❌ SheetJS belum di-install. Run: npm install xlsx', 'error');
+      } else {
+        showToast(`✗ Upload error: ${e.message}`, 'error');
+      }
     } finally {
       setUploading(false);
     }
@@ -361,12 +603,11 @@ const AdminProductsPage = () => {
       const result = await resp.json();
 
       if (result.success) {
-        // Download both CSVs
         downloadBase64Csv(result.files.products_csv.content_base64, result.files.products_csv.filename);
         setTimeout(() => {
           downloadBase64Csv(result.files.variants_csv.content_base64, result.files.variants_csv.filename);
         }, 500);
-        showToast(`✓ Export berhasil: ${result.counts.products} products + ${result.counts.variants} variants`, 'success');
+        showToast(`✓ Export: ${result.counts.products} products + ${result.counts.variants} variants`, 'success');
       } else {
         showToast(`✗ Export failed: ${result.error}`, 'error');
       }
@@ -375,6 +616,18 @@ const AdminProductsPage = () => {
     } finally {
       setExporting(false);
     }
+  };
+
+  // ============================================================================
+  // EXPANDABLE ROWS
+  // ============================================================================
+  const toggleExpand = (productId) => {
+    setExpandedRows((prev) => {
+      const next = new Set(prev);
+      if (next.has(productId)) next.delete(productId);
+      else next.add(productId);
+      return next;
+    });
   };
 
   // ============================================================================
@@ -410,99 +663,77 @@ const AdminProductsPage = () => {
       </div>
 
       <div className="max-w-7xl mx-auto px-6 py-6">
-        {/* === CSV UPLOAD SECTION === */}
+        {/* === UPLOAD SECTION === */}
         <section className="bg-white border border-gray-200 rounded-lg p-6 mb-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">📦 Bulk Upload via CSV</h2>
+          <h2 className="text-lg font-semibold text-gray-900 mb-4">📦 Bulk Upload (CSV / XLSX)</h2>
 
-          {/* Mode tabs */}
-          <div className="flex gap-2 mb-4">
-            <button
-              onClick={() => setUploadMode('file')}
-              className={`px-4 py-2 text-sm font-medium rounded-md ${
-                uploadMode === 'file' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-              }`}
-            >
-              📁 File Upload
-            </button>
-            <button
-              onClick={() => setUploadMode('sheets')}
-              className={`px-4 py-2 text-sm font-medium rounded-md ${
-                uploadMode === 'sheets' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-              }`}
-            >
-              📊 Google Sheets URL
-            </button>
+          {/* Format selector */}
+          <div className="flex gap-4 mb-4">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="radio"
+                checked={uploadFormat === 'csv'}
+                onChange={() => setUploadFormat('csv')}
+              />
+              <span className="text-sm font-medium">📄 CSV (.csv)</span>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="radio"
+                checked={uploadFormat === 'xlsx'}
+                onChange={() => setUploadFormat('xlsx')}
+              />
+              <span className="text-sm font-medium">📊 Excel (.xlsx)</span>
+              <span className="text-xs text-gray-400">(auto-load dari CDN)</span>
+            </label>
           </div>
 
-          {/* File upload mode */}
-          {uploadMode === 'file' && (
-            <div className="grid grid-cols-2 gap-4 mb-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Products CSV <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="file"
-                  accept=".csv"
-                  onChange={(e) => setProductsFile(e.target.files[0])}
-                  className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
-                />
-                {productsFile && <p className="text-xs text-green-600 mt-1">✓ {productsFile.name} ({(productsFile.size / 1024).toFixed(1)} KB)</p>}
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Variants CSV <span className="text-gray-400">(optional)</span>
-                </label>
-                <input
-                  type="file"
-                  accept=".csv"
-                  onChange={(e) => setVariantsFile(e.target.files[0])}
-                  className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
-                />
-                {variantsFile && <p className="text-xs text-green-600 mt-1">✓ {variantsFile.name}</p>}
-              </div>
-            </div>
-          )}
-
-          {/* Google Sheets mode */}
-          {uploadMode === 'sheets' && (
-            <div className="mb-4">
+          {/* File inputs */}
+          <div className="grid grid-cols-2 gap-4 mb-4">
+            <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Google Sheets CSV URL <span className="text-red-500">*</span>
+                Products File <span className="text-red-500">*</span>
               </label>
               <input
-                type="url"
-                value={sheetsUrl}
-                onChange={(e) => setSheetsUrl(e.target.value)}
-                placeholder="https://docs.google.com/spreadsheets/d/e/{ID}/pub?output=csv"
-                className="block w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                type="file"
+                accept={uploadFormat === 'csv' ? '.csv' : '.xlsx,.xls'}
+                onChange={(e) => setProductsFile(e.target.files[0])}
+                className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
               />
-              <p className="text-xs text-gray-500 mt-1">
-                💡 Di Google Sheets: File → Share → Publish to web → pilih CSV → copy URL
-              </p>
+              {productsFile && <p className="text-xs text-green-600 mt-1">✓ {productsFile.name} ({(productsFile.size / 1024).toFixed(1)} KB)</p>}
             </div>
-          )}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Variants File <span className="text-gray-400">(optional)</span>
+              </label>
+              <input
+                type="file"
+                accept={uploadFormat === 'csv' ? '.csv' : '.xlsx,.xls'}
+                onChange={(e) => setVariantsFile(e.target.files[0])}
+                className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+              />
+              {variantsFile && <p className="text-xs text-green-600 mt-1">✓ {variantsFile.name}</p>}
+            </div>
+          </div>
 
-          {/* Mode + Upload button */}
+          {/* Mode + Upload */}
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2">
               <label className="text-sm font-medium text-gray-700">Mode:</label>
               <select
                 value={csvMode}
                 onChange={(e) => setCsvMode(e.target.value)}
-                className="px-3 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="px-3 py-1.5 text-sm border border-gray-300 rounded-md"
               >
-                <option value="validate">Validate (dry run — cek error dulu)</option>
-                <option value="execute">Execute (langsung update DB)</option>
+                <option value="validate">Validate (dry run)</option>
+                <option value="execute">Execute (update DB)</option>
               </select>
             </div>
             <button
               onClick={handleFileUpload}
               disabled={uploading}
               className={`px-6 py-2 text-sm font-medium rounded-md text-white ${
-                csvMode === 'execute'
-                  ? 'bg-red-600 hover:bg-red-700'
-                  : 'bg-blue-600 hover:bg-blue-700'
+                csvMode === 'execute' ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'
               } disabled:opacity-50`}
             >
               {uploading ? '⏳ Processing...' : csvMode === 'execute' ? '⚠ Execute Import' : '🔍 Validate Only'}
@@ -512,18 +743,14 @@ const AdminProductsPage = () => {
           {/* Upload result */}
           {uploadResult && (
             <div className="mt-4 p-4 bg-gray-50 rounded-md border border-gray-200">
-              <h3 className="text-sm font-semibold text-gray-900 mb-2">
+              <h3 className="text-sm font-semibold mb-2">
                 {uploadResult.errors?.length === 0 ? '✅ Validation Report' : '❌ Validation Errors'}
               </h3>
               <div className="text-xs text-gray-600 mb-2">
-                <span className="font-medium">Parsed:</span> {uploadResult.parsed?.products_valid || 0} products valid,
-                {' '}{uploadResult.parsed?.products_invalid || 0} invalid ·
-                {' '}{uploadResult.parsed?.variants_valid || 0} variants valid,
-                {' '}{uploadResult.parsed?.variants_invalid || 0} invalid
+                Parsed: {uploadResult.parsed?.products_valid || 0} products valid,
+                {' '}{uploadResult.parsed?.variants_valid || 0} variants valid
               </div>
-              {uploadResult.message && (
-                <p className="text-xs text-gray-700 mb-2">{uploadResult.message}</p>
-              )}
+              {uploadResult.message && <p className="text-xs mb-2">{uploadResult.message}</p>}
               {uploadResult.errors?.length > 0 && (
                 <div className="mt-2 max-h-48 overflow-y-auto">
                   <table className="w-full text-xs">
@@ -531,7 +758,7 @@ const AdminProductsPage = () => {
                       <tr>
                         <th className="px-2 py-1 text-left">Row</th>
                         <th className="px-2 py-1 text-left">Table</th>
-                        <th className="px-2 py-1 text-left">Slug/ID</th>
+                        <th className="px-2 py-1 text-left">Slug</th>
                         <th className="px-2 py-1 text-left">Field</th>
                         <th className="px-2 py-1 text-left">Error</th>
                       </tr>
@@ -555,9 +782,8 @@ const AdminProductsPage = () => {
               )}
               {uploadResult.db_changes && (
                 <div className="mt-2 text-xs text-green-700">
-                  <span className="font-medium">DB Changes:</span>
-                  {' '}Products: {uploadResult.db_changes.products?.inserted || 0} new + {uploadResult.db_changes.products?.updated || 0} updated ·
-                  {' '}Variants: {uploadResult.db_changes.variants?.inserted || 0} new + {uploadResult.db_changes.variants?.updated || 0} updated
+                  DB: Products {uploadResult.db_changes.products?.inserted || 0} new + {uploadResult.db_changes.products?.updated || 0} updated ·
+                  Variants {uploadResult.db_changes.variants?.inserted || 0} new + {uploadResult.db_changes.variants?.updated || 0} updated
                 </div>
               )}
             </div>
@@ -572,12 +798,12 @@ const AdminProductsPage = () => {
               placeholder="🔍 Search by name or slug..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="flex-1 min-w-[200px] px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="flex-1 min-w-[200px] px-3 py-2 text-sm border border-gray-300 rounded-md"
             />
             <select
               value={filterCategory}
               onChange={(e) => setFilterCategory(e.target.value)}
-              className="px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="px-3 py-2 text-sm border border-gray-300 rounded-md"
             >
               {categories.map((c) => (
                 <option key={c} value={c}>{c === 'all' ? 'All Categories' : c}</option>
@@ -586,19 +812,19 @@ const AdminProductsPage = () => {
             <select
               value={filterActive}
               onChange={(e) => setFilterActive(e.target.value)}
-              className="px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="px-3 py-2 text-sm border border-gray-300 rounded-md"
             >
               <option value="all">All Status</option>
               <option value="active">Active Only</option>
               <option value="inactive">Inactive Only</option>
             </select>
             <span className="text-sm text-gray-500">
-              {filteredProducts.length} of {products.length} products
+              {filteredProducts.length} of {products.length}
             </span>
           </div>
         </section>
 
-        {/* === BULK ACTIONS BAR === */}
+        {/* === BULK ACTIONS === */}
         {selectedProducts.size > 0 && (
           <section className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
             <div className="flex items-center justify-between mb-3">
@@ -616,7 +842,7 @@ const AdminProductsPage = () => {
                   onClick={() => setSelectedProducts(new Set())}
                   className="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-800"
                 >
-                  Clear selection
+                  Clear
                 </button>
               </div>
             </div>
@@ -634,7 +860,7 @@ const AdminProductsPage = () => {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Weight (gram)</label>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Weight (g)</label>
                   <input
                     type="number"
                     value={bulkValues.weight_in_gram}
@@ -653,11 +879,11 @@ const AdminProductsPage = () => {
                     <option value="">— No change —</option>
                     <option value="Best Seller">Best Seller</option>
                     <option value="Baru">Baru</option>
-                    <option value="(clear)">Clear badge</option>
+                    <option value="(clear)">Clear</option>
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Active Status</label>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Active</label>
                   <select
                     value={bulkValues.is_active}
                     onChange={(e) => setBulkValues({ ...bulkValues, is_active: e.target.value })}
@@ -673,7 +899,7 @@ const AdminProductsPage = () => {
                     onClick={applyBulkUpdate}
                     className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700"
                   >
-                    Apply to {selectedProducts.size} selected products
+                    Apply to {selectedProducts.size} selected
                   </button>
                 </div>
               </div>
@@ -681,7 +907,7 @@ const AdminProductsPage = () => {
           </section>
         )}
 
-        {/* === PRODUCTS TABLE === */}
+        {/* === PRODUCTS TABLE (dengan expandable variant rows) === */}
         <section className="bg-white border border-gray-200 rounded-lg overflow-hidden">
           {loading ? (
             <p className="text-center text-gray-500 py-12">Memuat produk...</p>
@@ -694,7 +920,8 @@ const AdminProductsPage = () => {
               <table className="w-full text-sm">
                 <thead className="bg-gray-50 border-b border-gray-200">
                   <tr>
-                    <th className="px-3 py-2 text-left">
+                    <th className="px-3 py-2 w-8"></th> {/* expand toggle */}
+                    <th className="px-3 py-2 w-8 text-left">
                       <input
                         type="checkbox"
                         checked={selectedProducts.size === filteredProducts.length && filteredProducts.length > 0}
@@ -714,98 +941,210 @@ const AdminProductsPage = () => {
                 </thead>
                 <tbody>
                   {filteredProducts.map((p) => (
-                    <tr key={p.id} className="border-b border-gray-100 hover:bg-gray-50">
-                      <td className="px-3 py-2">
-                        <input
-                          type="checkbox"
-                          checked={selectedProducts.has(p.id)}
-                          onChange={() => toggleSelect(p.id)}
-                          className="cursor-pointer"
-                        />
-                      </td>
-                      <td className="px-3 py-2">
-                        <div className="font-medium text-gray-900 truncate max-w-[200px]">{p.name}</div>
-                        <div className="text-xs text-gray-500">{p.slug}</div>
-                      </td>
-                      <td className="px-3 py-2 text-gray-600">{p.category || '—'}</td>
-                      <td className="px-3 py-2 text-right">
-                        {editingCell?.type === 'product' && editingCell?.id === p.slug && editingCell?.field === 'base_price' ? (
-                          <div className="flex items-center gap-1 justify-end">
-                            <input
-                              type="number"
-                              value={editValue}
-                              onChange={(e) => setEditValue(e.target.value)}
-                              autoFocus
-                              className="w-24 px-1 py-0.5 text-xs border border-blue-500 rounded"
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') saveEdit();
-                                if (e.key === 'Escape') cancelEdit();
-                              }}
-                            />
-                            <button onClick={saveEdit} className="text-xs text-green-600">✓</button>
-                            <button onClick={cancelEdit} className="text-xs text-red-600">✗</button>
-                          </div>
-                        ) : (
-                          <span
-                            onClick={() => startEdit('product', p.slug, 'base_price', p.base_price)}
-                            className="cursor-pointer hover:bg-yellow-50 px-1 rounded"
-                            title="Click to edit"
+                    <>
+                      {/* === PRODUCT ROW === */}
+                      <tr key={p.id} className="border-b border-gray-100 hover:bg-gray-50">
+                        <td className="px-3 py-2 text-center">
+                          <button
+                            onClick={() => toggleExpand(p.id)}
+                            className="text-gray-400 hover:text-gray-700 text-xs"
                           >
-                            {formatPrice(p.base_price)}
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-3 py-2 text-right">
-                        {editingCell?.type === 'product' && editingCell?.id === p.slug && editingCell?.field === 'weight_in_gram' ? (
-                          <div className="flex items-center gap-1 justify-end">
-                            <input
-                              type="number"
-                              value={editValue}
-                              onChange={(e) => setEditValue(e.target.value)}
-                              autoFocus
-                              className="w-20 px-1 py-0.5 text-xs border border-blue-500 rounded"
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') saveEdit();
-                                if (e.key === 'Escape') cancelEdit();
-                              }}
+                            {expandedRows.has(p.id) ? '▼' : '▶'}
+                          </button>
+                        </td>
+                        <td className="px-3 py-2">
+                          <input
+                            type="checkbox"
+                            checked={selectedProducts.has(p.id)}
+                            onChange={() => toggleSelect(p.id)}
+                            className="cursor-pointer"
+                          />
+                        </td>
+                        <td className="px-3 py-2">
+                          <div className="font-medium text-gray-900 truncate max-w-[200px]">{p.name}</div>
+                          <div className="text-xs text-gray-500">{p.slug}</div>
+                        </td>
+                        <td className="px-3 py-2 text-gray-600">
+                          <EditableCell
+                            type="product"
+                            id={p.slug}
+                            field="category"
+                            value={p.category || ''}
+                            onSave={handleCellSave}
+                            displayValue={p.category || '—'}
+                          />
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          <EditableCell
+                            type="product"
+                            id={p.slug}
+                            field="base_price"
+                            value={p.base_price}
+                            onSave={handleCellSave}
+                            displayValue={formatPrice(p.base_price)}
+                            inputType="number"
+                          />
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          <EditableCell
+                            type="product"
+                            id={p.slug}
+                            field="weight_in_gram"
+                            value={p.weight_in_gram || ''}
+                            onSave={handleCellSave}
+                            displayValue={p.weight_in_gram || '—'}
+                            inputType="number"
+                          />
+                        </td>
+                        <td className="px-3 py-2">
+                          {p.badge ? (
+                            <span className="inline-block px-2 py-0.5 text-xs font-medium bg-amber-100 text-amber-800 rounded-full">
+                              {p.badge}
+                            </span>
+                          ) : '—'}
+                        </td>
+                        <td className="px-3 py-2 text-center">
+                          <span className={`inline-block w-2 h-2 rounded-full ${p.is_active ? 'bg-green-500' : 'bg-gray-300'}`} />
+                        </td>
+                        <td className="px-3 py-2 text-center text-gray-600">
+                          {p.product_variants?.length || 0}
+                          {(p.product_variants || []).filter(v => v.is_active).length > 0 && (
+                            <span className="text-xs text-green-600 ml-1">
+                              ({(p.product_variants || []).filter(v => v.is_active).length})
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2 text-xs text-gray-500">
+                          {p.updated_at ? new Date(p.updated_at).toLocaleDateString('id-ID', {
+                            day: '2-digit', month: 'short', year: 'numeric'
+                          }) : '—'}
+                        </td>
+                      </tr>
+
+                      {/* === EXPANDED VARIANT ROW === */}
+                      {expandedRows.has(p.id) && (
+                        <tr key={`${p.id}-expanded`} className="bg-gray-50">
+                          <td colSpan={10} className="px-6 py-4">
+                            {/* Photo uploader */}
+                            <PhotoUploader
+                              productId={p.id}
+                              images={(p.product_images || []).filter(img => !img.variant_id)}
+                              onRefresh={fetchProducts}
                             />
-                            <button onClick={saveEdit} className="text-xs text-green-600">✓</button>
-                            <button onClick={cancelEdit} className="text-xs text-red-600">✗</button>
-                          </div>
-                        ) : (
-                          <span
-                            onClick={() => startEdit('product', p.slug, 'weight_in_gram', p.weight_in_gram)}
-                            className="cursor-pointer hover:bg-yellow-50 px-1 rounded"
-                            title="Click to edit"
-                          >
-                            {p.weight_in_gram || '—'}
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-3 py-2">
-                        {p.badge ? (
-                          <span className="inline-block px-2 py-0.5 text-xs font-medium bg-amber-100 text-amber-800 rounded-full">
-                            {p.badge}
-                          </span>
-                        ) : '—'}
-                      </td>
-                      <td className="px-3 py-2 text-center">
-                        <span className={`inline-block w-2 h-2 rounded-full ${p.is_active ? 'bg-green-500' : 'bg-gray-300'}`} />
-                      </td>
-                      <td className="px-3 py-2 text-center text-gray-600">
-                        {p.product_variants?.length || 0}
-                        {(p.product_variants || []).filter(v => v.is_active).length > 0 && (
-                          <span className="text-xs text-green-600 ml-1">
-                            ({(p.product_variants || []).filter(v => v.is_active).length} active)
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-3 py-2 text-xs text-gray-500">
-                        {p.updated_at ? new Date(p.updated_at).toLocaleDateString('id-ID', {
-                          day: '2-digit', month: 'short', year: 'numeric'
-                        }) : '—'}
-                      </td>
-                    </tr>
+
+                            {/* Variants table */}
+                            <div className="mt-4">
+                              <div className="flex items-center justify-between mb-2">
+                                <h4 className="text-xs font-semibold text-gray-700 uppercase tracking-wider">
+                                  Varian ({p.product_variants?.length || 0})
+                                </h4>
+                                <button
+                                  onClick={() => handleAddVariant(p.id)}
+                                  className="px-2 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700"
+                                >
+                                  + Tambah Varian
+                                </button>
+                              </div>
+
+                              {p.product_variants?.length > 0 ? (
+                                <table className="w-full text-xs border border-gray-200 rounded">
+                                  <thead className="bg-gray-100">
+                                    <tr>
+                                      <th className="px-2 py-1 text-left">Name</th>
+                                      <th className="px-2 py-1 text-right">Price</th>
+                                      <th className="px-2 py-1 text-right">Stock</th>
+                                      <th className="px-2 py-1 text-right">Weight (g)</th>
+                                      <th className="px-2 py-1 text-left">SKU</th>
+                                      <th className="px-2 py-1 text-center">Active</th>
+                                      <th className="px-2 py-1 text-right">L×W×H (cm)</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {p.product_variants.map((v) => (
+                                      <>
+                                        <tr key={v.id} className="border-t border-gray-200">
+                                        <td className="px-2 py-1">
+                                          <EditableCell
+                                            type="variant"
+                                            id={v.id}
+                                            field="name"
+                                            value={v.name || ''}
+                                            onSave={handleCellSave}
+                                          />
+                                        </td>
+                                        <td className="px-2 py-1 text-right">
+                                          <EditableCell
+                                            type="variant"
+                                            id={v.id}
+                                            field="price"
+                                            value={v.price}
+                                            onSave={handleCellSave}
+                                            displayValue={formatPrice(v.price)}
+                                            inputType="number"
+                                          />
+                                        </td>
+                                        <td className="px-2 py-1 text-right">
+                                          <EditableCell
+                                            type="variant"
+                                            id={v.id}
+                                            field="stock"
+                                            value={v.stock}
+                                            onSave={handleCellSave}
+                                            inputType="number"
+                                          />
+                                        </td>
+                                        <td className="px-2 py-1 text-right">
+                                          <EditableCell
+                                            type="variant"
+                                            id={v.id}
+                                            field="weight_in_gram"
+                                            value={v.weight_in_gram || ''}
+                                            onSave={handleCellSave}
+                                            displayValue={v.weight_in_gram || '—'}
+                                            inputType="number"
+                                          />
+                                        </td>
+                                        <td className="px-2 py-1">
+                                          <EditableCell
+                                            type="variant"
+                                            id={v.id}
+                                            field="sku"
+                                            value={v.sku || ''}
+                                            onSave={handleCellSave}
+                                          />
+                                        </td>
+                                        <td className="px-2 py-1 text-center">
+                                          <span className={`inline-block w-2 h-2 rounded-full ${v.is_active ? 'bg-green-500' : 'bg-gray-300'}`} />
+                                        </td>
+                                        <td className="px-2 py-1 text-right text-gray-500">
+                                          {v.length_cm && v.width_cm && v.height_cm
+                                            ? `${v.length_cm}×${v.width_cm}×${v.height_cm}`
+                                            : '—'}
+                                        </td>
+                                      </tr>
+                                      {/* Variant photo uploader */}
+                                      <tr key={`${v.id}-photo`} className="border-t border-gray-100 bg-white">
+                                        <td colSpan={7} className="px-2 py-2">
+                                          <PhotoUploader
+                                            productId={p.id}
+                                            variantId={v.id}
+                                            images={(p.product_images || []).filter(img => img.variant_id === v.id)}
+                                            onRefresh={fetchProducts}
+                                          />
+                                        </td>
+                                      </tr>
+                                      </>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              ) : (
+                                <p className="text-xs text-gray-400 italic">Belum ada varian. Klik "+ Tambah Varian" untuk menambah.</p>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </>
                   ))}
                 </tbody>
               </table>
@@ -813,9 +1152,8 @@ const AdminProductsPage = () => {
           )}
         </section>
 
-        {/* Footer note */}
         <p className="text-xs text-gray-400 mt-4 text-center">
-          EGLUX Admin — hidden page. All operations via edge functions (service_role). No direct DB access from browser.
+          EGLUX Admin — hidden page. All operations via edge functions (service_role). Auto-save per cell.
         </p>
       </div>
 
