@@ -550,33 +550,35 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
                               className="w-full px-2 py-1.5 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
                             />
                           </div>
-                          <div>
-                            <label className="block text-[0.65rem] font-medium text-gray-500 mb-0.5">Harga (Rp)</label>
-                            <input
-                              type="number"
-                              value={v.price}
-                              onChange={(e) => updateVariant(v.id, 'price', e.target.value)}
-                              className="w-full px-2 py-1.5 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-[0.65rem] font-medium text-gray-500 mb-0.5">Stok</label>
-                            <input
-                              type="number"
-                              value={v.stock}
-                              onChange={(e) => updateVariant(v.id, 'stock', e.target.value)}
-                              className="w-full px-2 py-1.5 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-[0.65rem] font-medium text-gray-500 mb-0.5">Berat (gram)</label>
-                            <input
-                              type="number"
-                              value={v.weight_in_gram || ''}
-                              onChange={(e) => updateVariant(v.id, 'weight_in_gram', e.target.value)}
-                              placeholder="wajib untuk active"
-                              className="w-full px-2 py-1.5 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
-                            />
+                                                    <div className="grid grid-cols-3 gap-2 col-span-2">
+                            <div>
+                              <label className="block text-[0.65rem] font-medium text-gray-500 mb-0.5">Harga (Rp)</label>
+                              <input
+                                type="number"
+                                value={v.price}
+                                onChange={(e) => updateVariant(v.id, 'price', e.target.value)}
+                                className="w-full px-2 py-1.5 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[0.65rem] font-medium text-gray-500 mb-0.5">Stok</label>
+                              <input
+                                type="number"
+                                value={v.stock}
+                                onChange={(e) => updateVariant(v.id, 'stock', e.target.value)}
+                                className="w-full px-2 py-1.5 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[0.65rem] font-medium text-gray-500 mb-0.5">Berat (gram)</label>
+                              <input
+                                type="number"
+                                value={v.weight_in_gram || ''}
+                                onChange={(e) => updateVariant(v.id, 'weight_in_gram', e.target.value)}
+                                placeholder="wajib"
+                                className="w-full px-2 py-1.5 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                              />
+                            </div>
                           </div>
                           <div>
                             <label className="block text-[0.65rem] font-medium text-gray-500 mb-0.5">SKU</label>
