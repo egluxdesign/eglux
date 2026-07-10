@@ -46,6 +46,7 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
 
   // ============================================================================
   // LOCAL REFRESH: fetch fresh images + variants untuk produk ini (tanpa reset form)
+  // Bug fix: pakai spread operator supaya React detect state change (new array reference)
   // ============================================================================
   const refreshLocalData = useCallback(async () => {
     if (!product) return;
@@ -60,19 +61,31 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
         .single();
 
       if (data) {
-        setVariants(
-          (data.product_variants || []).map((v) => ({
-            ...v,
-            price: v.price || 0,
-            stock: v.stock || 0,
-            weight_in_gram: v.weight_in_gram || 0,
-            length_cm: v.length_cm || '',
-            width_cm: v.width_cm || '',
-            height_cm: v.height_cm || '',
-            _changed: false,
-          }))
-        );
-        setProductImages(data.product_images || []);
+        // Preserve _changed flag untuk variants yang sedang di-edit (jangan overwrite kalau user lagi edit)
+        setVariants((prevVariants) => {
+          const newVariants = (data.product_variants || []).map((v) => {
+            // Cek apakah variant ini sudah ada di state (preserve _changed flag)
+            const existing = prevVariants.find((pv) => pv.id === v.id);
+            return {
+              ...v,
+              price: v.price || 0,
+              stock: v.stock || 0,
+              weight_in_gram: v.weight_in_gram || 0,
+              length_cm: v.length_cm || '',
+              width_cm: v.width_cm || '',
+              height_cm: v.height_cm || '',
+              // Preserve _changed flag kalau variant sudah ada di state
+              _changed: existing?._changed || false,
+            };
+          });
+          // Tambahkan variant baru yang belum ada di DB (e.g., baru di-add tapi belum di-save)
+          const dbIds = new Set((data.product_variants || []).map((v) => v.id));
+          const unsavedNewVariants = prevVariants.filter((pv) => !dbIds.has(pv.id));
+          return [...newVariants, ...unsavedNewVariants];
+        });
+
+        // Force new array reference supaya React re-render
+        setProductImages([...(data.product_images || [])]);
       }
     } catch (e) {
       console.error('refreshLocalData error:', e);
@@ -317,7 +330,8 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
       });
       const result = await resp.json();
 
-      if (result.success) {
+      // Bug fix: cek error_count, bukan result.success (edge function return success = errorCount === 0)
+      if (result.error_count === 0 && result.success_count > 0) {
         showToast(`✓ ${result.success_count} perubahan tersimpan`, 'success');
         refreshLocalData(); onSaved(); // refresh local + parent background
         setTimeout(() => onClose(), 800);
