@@ -220,35 +220,31 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
   };
 
   // ============================================================================
-  // ADD VARIANT (via edge function untuk bypass RLS)
+  // ADD VARIANT — langsung munculkan card kosong (no prompt, no API call)
+  // Variant baru disimpan ke DB saat user klik "Simpan"
   // ============================================================================
-  const addVariant = async () => {
-    const name = prompt('Nama variant baru:');
-    if (!name) return;
-    const price = prompt('Harga variant (harus < base price):', '0');
-    if (price === null) return;
-
-    try {
-      const resp = await fetch(`${SUPABASE_URL}/functions/v1/manage-product-asset`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${ANON_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          action: 'add_variant',
-          product_id: product.id,
-          name: name,
-          price: Number(price),
-        }),
-      });
-      const result = await resp.json();
-      if (!resp.ok) throw new Error(result.error);
-      showToast(`✓ Variant "${name}" ditambahkan`, 'success');
-      refreshLocalData(); onSaved(); // refresh local + parent background
-    } catch (e) {
-      showToast(`✗ Gagal: ${e.message}`, 'error');
-    }
+  const addVariant = () => {
+    const newVariant = {
+      id: `new-${Date.now()}`,  // temporary ID, akan di-replace oleh DB UUID saat save
+      name: '',
+      price: 0,
+      stock: 0,
+      sku: '',
+      is_active: false,
+      weight_in_gram: 0,
+      length_cm: '',
+      width_cm: '',
+      height_cm: '',
+      attributes: {},
+      _changed: true,
+      _isNew: true,  // flag: ini variant baru, perlu INSERT (bukan UPDATE)
+    };
+    setVariants((prev) => [...prev, newVariant]);
+    // Auto-scroll ke variant baru (optional, UX nicety)
+    setTimeout(() => {
+      const panel = document.querySelector('.fixed.top-0.right-0');
+      if (panel) panel.scrollTop = panel.scrollHeight;
+    }, 100);
   };
 
   // ============================================================================
@@ -281,9 +277,6 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
   // SAVE ALL CHANGES (batch update)
   // ============================================================================
   const handleSave = async () => {
-    // DEBUG: Alert untuk verify function terpanggil
-    // alert('DEBUG: handleSave dipanggil! base_price=' + formData.base_price + ' slug=' + formData.slug);
-    
     setSaving(true);
     const updates = [];
 
@@ -298,9 +291,6 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
       is_active: formData.is_active,
     };
 
-    console.log('[EditProductPanel] Product fields to save:', productFields);
-    console.log('[EditProductPanel] formData.base_price:', formData.base_price, typeof formData.base_price);
-    console.log('[EditProductPanel] Number(formData.base_price):', Number(formData.base_price));
 
     updates.push({
       type: 'product',
@@ -308,24 +298,42 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
       fields: productFields,
     });
 
-    // Variant updates (only changed ones)
+    // Variant updates (only changed ones) + collect new variants for INSERT
+    const newVariants = [];
     for (const v of variants) {
       if (!v._changed) continue;
-      updates.push({
-        type: 'variant',
-        id: v.id,
-        fields: {
-          name: v.name,
-          price: Number(v.price),
-          stock: parseInt(v.stock, 10),
+      if (v._isNew) {
+        // New variant → collect for INSERT via manage-product-asset
+        newVariants.push({
+          product_id: product.id,
+          name: v.name || 'Varian Baru',
+          price: Number(v.price) || 0,
+          stock: parseInt(v.stock, 10) || 0,
           weight_in_gram: v.weight_in_gram ? parseInt(v.weight_in_gram, 10) : null,
-          sku: v.sku,
+          sku: v.sku || `EGL-NEW-${Date.now().toString().slice(-6)}`,
+          is_active: v.is_active,
           length_cm: v.length_cm ? parseFloat(v.length_cm) : null,
           width_cm: v.width_cm ? parseFloat(v.width_cm) : null,
           height_cm: v.height_cm ? parseFloat(v.height_cm) : null,
-          is_active: v.is_active,
-        },
-      });
+        });
+      } else {
+        // Existing variant → UPDATE via bulk-update-products
+        updates.push({
+          type: 'variant',
+          id: v.id,
+          fields: {
+            name: v.name,
+            price: Number(v.price),
+            stock: parseInt(v.stock, 10),
+            weight_in_gram: v.weight_in_gram ? parseInt(v.weight_in_gram, 10) : null,
+            sku: v.sku,
+            length_cm: v.length_cm ? parseFloat(v.length_cm) : null,
+            width_cm: v.width_cm ? parseFloat(v.width_cm) : null,
+            height_cm: v.height_cm ? parseFloat(v.height_cm) : null,
+            is_active: v.is_active,
+          },
+        });
+      }
     }
 
     try {
@@ -339,19 +347,59 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
       });
       const result = await resp.json();
 
-      console.log('[EditProductPanel] Save response:', result);
-      console.log('[EditProductPanel] success_count:', result.success_count, 'error_count:', result.error_count);
       if (result.results) {
-        console.log('[EditProductPanel] Results detail:', result.results);
       }
 
-      // Bug fix: cek error_count, bukan result.success (edge function return success = errorCount === 0)
-      if (result.error_count === 0 && result.success_count > 0) {
-        showToast(`✓ ${result.success_count} perubahan tersimpan`, 'success');
-        refreshLocalData(); onSaved(); // refresh local + parent background
+      // INSERT new variants via manage-product-asset edge function
+      let newVariantSuccess = 0;
+      let newVariantErrors = 0;
+      for (const nv of newVariants) {
+        try {
+          const insResp = await fetch(`${SUPABASE_URL}/functions/v1/manage-product-asset`, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${ANON_KEY}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              action: 'add_variant',
+              product_id: nv.product_id,
+              name: nv.name,
+              price: nv.price,
+              stock: nv.stock,
+              weight_in_gram: nv.weight_in_gram,
+              sku: nv.sku,
+              is_active: nv.is_active,
+              length_cm: nv.length_cm,
+              width_cm: nv.width_cm,
+              height_cm: nv.height_cm,
+            }),
+          });
+          const insResult = await insResp.json();
+          if (insResp.ok && insResult.success) {
+            newVariantSuccess++;
+          } else {
+            newVariantErrors++;
+            console.error('New variant insert failed:', insResult.error);
+          }
+        } catch (e) {
+          newVariantErrors++;
+          console.error('New variant insert error:', e);
+        }
+      }
+
+      const totalSuccess = (result.success_count || 0) + newVariantSuccess;
+      const totalErrors = (result.error_count || 0) + newVariantErrors;
+
+      if (totalErrors === 0 && totalSuccess > 0) {
+        showToast(`✓ ${totalSuccess} perubahan tersimpan${newVariantSuccess > 0 ? ` (${newVariantSuccess} varian baru)` : ''}`, 'success');
+        refreshLocalData(); onSaved();
         setTimeout(() => onClose(), 800);
+      } else if (totalSuccess > 0) {
+        showToast(`⚠ ${totalSuccess} berhasil, ${totalErrors} gagal`, 'warning');
+        refreshLocalData(); onSaved();
       } else {
-        showToast(`✗ ${result.error_count} error. Cek console.`, 'error');
+        showToast(`✗ ${totalErrors} error. Cek console.`, 'error');
         console.error('Save errors:', result.results);
       }
     } catch (e) {
