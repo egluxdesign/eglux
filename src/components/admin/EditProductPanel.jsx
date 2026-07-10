@@ -285,18 +285,24 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
     const updates = [];
 
     // Product update
+    const productFields = {
+      name: formData.name,
+      category: formData.category,
+      description: formData.description,
+      base_price: Number(formData.base_price),
+      weight_in_gram: Number(formData.weight_in_gram),
+      badge: formData.badge || null,
+      is_active: formData.is_active,
+    };
+
+    console.log('[EditProductPanel] Product fields to save:', productFields);
+    console.log('[EditProductPanel] formData.base_price:', formData.base_price, typeof formData.base_price);
+    console.log('[EditProductPanel] Number(formData.base_price):', Number(formData.base_price));
+
     updates.push({
       type: 'product',
       slug: formData.slug,
-      fields: {
-        name: formData.name,
-        category: formData.category,
-        description: formData.description,
-        base_price: Number(formData.base_price),
-        weight_in_gram: Number(formData.weight_in_gram),
-        badge: formData.badge || null,
-        is_active: formData.is_active,
-      },
+      fields: productFields,
     });
 
     // Variant updates (only changed ones)
@@ -329,6 +335,12 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
         body: JSON.stringify({ updates }),
       });
       const result = await resp.json();
+
+      console.log('[EditProductPanel] Save response:', result);
+      console.log('[EditProductPanel] success_count:', result.success_count, 'error_count:', result.error_count);
+      if (result.results) {
+        console.log('[EditProductPanel] Results detail:', result.results);
+      }
 
       // Bug fix: cek error_count, bukan result.success (edge function return success = errorCount === 0)
       if (result.error_count === 0 && result.success_count > 0) {
@@ -363,27 +375,19 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
 
       {/* Panel — slide from right */}
       <div className="fixed top-0 right-0 w-full md:w-[600px] h-screen bg-white z-[3001] overflow-y-auto shadow-2xl flex flex-col">
-        {/* Header */}
+        {/* Header — tanpa tombol Simpan/Batal (hanya di bawah) */}
         <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between z-10">
           <div>
             <h2 className="text-lg font-bold text-gray-900">Edit Produk</h2>
             <p className="text-xs text-gray-500 truncate max-w-[300px]">{formData.name}</p>
           </div>
-          <div className="flex gap-2">
-            <button
-              onClick={onClose}
-              className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-900"
-            >
-              Batal
-            </button>
-            <button
-              onClick={handleSave}
-              disabled={saving}
-              className="px-6 py-2 text-sm font-bold text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
-            >
-              {saving ? '⏳ Menyimpan...' : '💾 Simpan'}
-            </button>
-          </div>
+          <button
+            onClick={onClose}
+            className="w-[34px] h-[34px] rounded-full bg-black/[0.07] flex items-center justify-center text-gray-600 text-xl cursor-pointer border-none hover:bg-black/[0.13] transition-colors"
+            aria-label="Tutup"
+          >
+            &times;
+          </button>
         </div>
 
         <div className="flex-1 px-6 py-6 space-y-8">
