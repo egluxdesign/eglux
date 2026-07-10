@@ -282,7 +282,7 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
   // ============================================================================
   const handleSave = async () => {
     // DEBUG: Alert untuk verify function terpanggil
-    alert('DEBUG: handleSave dipanggil! base_price=' + formData.base_price + ' slug=' + formData.slug);
+    // alert('DEBUG: handleSave dipanggil! base_price=' + formData.base_price + ' slug=' + formData.slug);
     
     setSaving(true);
     const updates = [];
