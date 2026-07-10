@@ -93,10 +93,11 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
   }, [product]);
 
   // ============================================================================
-  // INIT: populate form saat panel pertama kali buka (only once)
+  // INIT: populate form saat panel buka (reset initialized setiap kali product berubah)
   // ============================================================================
   useEffect(() => {
-    if (!product || initialized) return;
+    if (!product) return;
+    // Reset form setiap kali product berubah (bukan cuma first time)
     setFormData({
       name: product.name || '',
       slug: product.slug || '',
@@ -120,8 +121,7 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
       }))
     );
     setProductImages(product.product_images || []);
-    setInitialized(true);
-  }, [product, initialized]);
+  }, [product]);
 
   // ============================================================================
   // FORM HANDLERS
@@ -281,6 +281,9 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
   // SAVE ALL CHANGES (batch update)
   // ============================================================================
   const handleSave = async () => {
+    // DEBUG: Alert untuk verify function terpanggil
+    alert('DEBUG: handleSave dipanggil! base_price=' + formData.base_price + ' slug=' + formData.slug);
+    
     setSaving(true);
     const updates = [];
 
