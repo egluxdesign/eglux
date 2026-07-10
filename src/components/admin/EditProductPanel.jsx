@@ -163,8 +163,17 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
         throw new Error(result.error || 'Upload gagal');
       }
 
+      // Optimistic update: tambah foto ke local state langsung (no refresh, no form reset)
+      const newImage = {
+        id: result.image_id,
+        url: result.url,
+        is_primary: result.is_primary,
+        variant_id: variantId,
+        position: 0,
+      };
+      setProductImages((prev) => [...prev, newImage]);
       showToast('✓ Foto diupload', 'success');
-      refreshLocalData(); onSaved(); // refresh local + parent background
+      onSaved(); // refresh parent background only
     } catch (e) {
       showToast(`✗ Upload gagal: ${e.message}`, 'error');
     } finally {
@@ -188,8 +197,16 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
       });
       const result = await resp.json();
       if (!resp.ok) throw new Error(result.error);
+
+      // Optimistic update: update is_primary di local state langsung
+      setProductImages((prev) =>
+        prev.map((img) => ({
+          ...img,
+          is_primary: img.id === imageId,
+        }))
+      );
       showToast('✓ Primary diubah', 'success');
-      refreshLocalData(); onSaved(); // refresh local + parent background
+      onSaved();
     } catch (e) {
       showToast(`✗ Gagal: ${e.message}`, 'error');
     }
@@ -212,8 +229,11 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
       });
       const result = await resp.json();
       if (!resp.ok) throw new Error(result.error);
+
+      // Optimistic update: hapus foto dari local state langsung
+      setProductImages((prev) => prev.filter((img) => img.id !== imageId));
       showToast('✓ Foto dihapus', 'success');
-      refreshLocalData(); onSaved(); // refresh local + parent background
+      onSaved();
     } catch (e) {
       showToast(`✗ Gagal: ${e.message}`, 'error');
     }
@@ -251,7 +271,16 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
   // DELETE VARIANT
   // ============================================================================
   const deleteVariant = async (variantId, variantName) => {
-    if (!confirm(`Hapus variant "${variantName}"? Stok dan data variant akan hilang.`)) return;
+    if (!confirm(`Hapus variant "${variantName || 'Varian Baru'}"? Stok dan data variant akan hilang.`)) return;
+
+    // Variant baru (belum tersimpan di DB) → hapus dari local state saja, no API call
+    if (variantId.startsWith('new-')) {
+      setVariants((prev) => prev.filter((v) => v.id !== variantId));
+      showToast('✓ Varian baru dihapus', 'success');
+      return;
+    }
+
+    // Variant existing (sudah di DB) → hapus dari DB + local state
     try {
       const resp = await fetch(`${SUPABASE_URL}/functions/v1/manage-product-asset`, {
         method: 'POST',
@@ -266,8 +295,11 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
       });
       const result = await resp.json();
       if (!resp.ok) throw new Error(result.error);
-      showToast(`✓ Variant dihapus`, 'success');
-      refreshLocalData(); onSaved(); // refresh local + parent background
+
+      // Hapus dari local state langsung (optimistic update, no refresh needed)
+      setVariants((prev) => prev.filter((v) => v.id !== variantId));
+      showToast('✓ Variant dihapus', 'success');
+      onSaved(); // refresh parent background (tabel admin)
     } catch (e) {
       showToast(`✗ Gagal: ${e.message}`, 'error');
     }
