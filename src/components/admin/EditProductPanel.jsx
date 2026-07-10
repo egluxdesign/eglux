@@ -143,6 +143,14 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
   // ============================================================================
   const uploadPhoto = async (file, variantId = null) => {
     if (!file) return;
+
+    // Kalau variant baru (ID = new-xxx), belum bisa upload foto karena variant belum ada di DB.
+    // Simpan foto ke queue, akan di-upload setelah variant di-save.
+    if (variantId && variantId.startsWith('new-')) {
+      showToast('⚠ Simpan varian dulu sebelum upload foto. Klik "Simpan Perubahan".', 'warning');
+      return;
+    }
+
     setUploadingPhoto(true);
     try {
       const formData = new FormData();
