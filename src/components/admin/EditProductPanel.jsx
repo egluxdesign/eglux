@@ -692,8 +692,10 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
                                 -{Math.round(((formData.base_price - v.price) / formData.base_price) * 100)}%
                               </span>
                             </>
+                          ) : Number(v.price) === Number(formData.base_price) ? (
+                            <span className="font-bold text-eglux-secondary">{formatPrice(v.price)}</span>
                           ) : (
-                            <span className="text-gray-400">Harga varian ≥ base price (cek diskon model)</span>
+                            <span className="text-red-400">⚠ Harga varian lebih mahal dari base price!</span>
                           )}
                         </span>
                         <span className={`text-[0.65rem] px-2 py-0.5 rounded-full ${
