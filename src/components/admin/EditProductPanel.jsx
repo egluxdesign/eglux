@@ -358,7 +358,9 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
         price: Number(v.price),
         stock: parseInt(v.stock, 10),
         weight_in_gram: v.weight_in_gram ? parseInt(v.weight_in_gram, 10) : null,
-        sku: v.sku,
+        // SKU: empty string → null (PostgreSQL UNIQUE constraint allow multiple NULLs
+        // tapi reject multiple empty strings). Trim whitespace dulu juga.
+        sku: v.sku?.trim() || null,
         length_cm: v.length_cm ? parseFloat(v.length_cm) : null,
         width_cm: v.width_cm ? parseFloat(v.width_cm) : null,
         height_cm: v.height_cm ? parseFloat(v.height_cm) : null,
