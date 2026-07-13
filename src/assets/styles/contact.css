@@ -298,3 +298,21 @@
             gap: -0.4rem;
             }
         }
+
+        @media (max-width: 768px) {
+    /* FIX: section padding — kurangi di mobile */
+    .contact-section {
+        padding: 2rem 1.5rem;
+    }
+    .map-section {
+        padding: 2rem 1.5rem;
+    }
+    .faq-section {
+        padding: 2.5rem 0;
+    }
+
+    /* FIX: map iframe height di mobile */
+    .map-container iframe {
+        height: 250px;
+    }
+}

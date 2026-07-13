@@ -5,13 +5,20 @@
 // ============================================================
 
 // ── Navigation ───────────────────────────────────────────────
+// `key` dipakai untuk matching dengan prop `activePage` di DuplicateNav.
+// Misalnya <DuplicateNav activePage="blog" /> akan highlight link dengan
+// key="blog". Kalau `activePage` tidak di-pass, fallback ke useLocation
+// pathname (link.href === pathname).
+//
+// Jangan hardcode `active: true` — active state harus dynamic, di-detect
+// dari URL/activePage prop.
 export const NAV_LINKS = [
-  { label: 'Beranda',     href: '/',              active: true  },
-  { label: 'Produk',      href: '/products'               },
-  { label: 'Blog',        href: '/blog'                   },
-  { label: 'Tentang Kami',href: '/about'                  },
-  { label: 'Kontak',      href: '/contact'                },
-  { label: 'Affiliate',   href: '/affiliate'              },
+  { label: 'Beranda',      href: '/',          key: 'home'      },
+  { label: 'Produk',       href: '/products',  key: 'products'  },
+  { label: 'Blog',         href: '/blog',      key: 'blog'      },
+  { label: 'Tentang Kami', href: '/about',     key: 'about'     },
+  { label: 'Kontak',       href: '/contact',   key: 'contact'   },
+  { label: 'Affiliate',    href: '/affiliate', key: 'affiliate' },
 ];
 
 export const SOCIAL_LINKS = [

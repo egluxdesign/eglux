@@ -24,19 +24,6 @@ const ProductPage = () => {
   return (
     <>
       <HeaderProducts onCartOpen={openCart} />
-      <div
-        className="pt-[120px] pb-12 text-center"
-        style={{ background: 'linear-gradient(135deg, #faf8f5 0%, #f5f0e8 100%)' }}
-      >
-        <div className="max-w-container mx-auto px-8">
-          <h1 className="text-[3rem] md:text-[2rem] font-bold text-eglux-primary mb-2">
-            Koleksi Produk
-          </h1>
-          <p className="text-[#666] text-[1.1rem]">
-            Temukan produk rumah tangga berkualitas untuk kehidupan yang lebih baik
-          </p>
-        </div>
-      </div>
       <main>
         <DuplicateNav />
         <ProductsSection onOpenModal={openModal} />

@@ -4,7 +4,7 @@ import HeaderProducts from "../components/layout/HeaderProducts";
 import Footer from "../components/layout/Footer";
 import DuplicateNav from "../components/layout/DuplicateNav";
 
-import AffiliateHero from "../components/sections/AffiliatePage/AffiliateHero";
+// import AffiliateHero from "../components/sections/AffiliatePage/AffiliateHero";
 import HowItWorks from "../components/sections/AffiliatePage/HowItWorks";
 import BenefitsSection from "../components/sections/AffiliatePage/BenefitsSection";
 import CommissionSection from "../components/sections/AffiliatePage/CommissionSection";
@@ -24,7 +24,7 @@ export default function AffiliatePage() {
       {/* <PrimaryNav activeLink="affiliate" /> */}
 
       <main>
-        <AffiliateHero />
+        {/* <AffiliateHero /> */}
         
         {/* Countries Footer (tagline bar) */}
         <div

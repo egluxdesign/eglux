@@ -4,7 +4,7 @@ import { useCartActions }  from './CartPage';
 import HeaderProducts      from '../components/layout/HeaderProducts';
 import DuplicateNav        from '../components/layout/DuplicateNav';
 import Footer              from '../components/layout/Footer';
-import Hero                from '../components/sections/HomePage/Hero';
+// import Hero                from '../components/sections/HomePage/Hero';
 import PromoBanners        from '../components/sections/HomePage/PromoBanners';
 import Categories          from '../components/sections/HomePage/Categories';
 import BestSellers         from '../components/sections/HomePage/BestSellers';
@@ -19,7 +19,7 @@ const HomePage = () => {
       <HeaderProducts onCartOpen={openCart} />
 
       <main>
-        <Hero />
+        {/* <Hero /> */}
         <DuplicateNav />
         <PromoBanners />
         <Categories />

@@ -237,7 +237,7 @@ const ProductsSection = ({ onOpenModal, initialFilter = 'all' }) => {
 
   return (
     <section ref={sectionRef} className="bg-white py-12 pb-20" id="products-section">
-      <div className="max-w-container mx-auto px-8">
+      <div className="max-w-container mx-auto px-4 md:px-8">
 
         {/* Filter Bar — dinamis dari Supabase */}
         {!loading && !error && (
@@ -246,7 +246,7 @@ const ProductsSection = ({ onOpenModal, initialFilter = 'all' }) => {
               <button
                 key={btn.value}
                 onClick={() => handleFilter(btn.value)}
-                className={`py-2.5 px-6 rounded-full border-2 cursor-pointer font-medium
+                className={`py-3 px-5 rounded-full border-2 cursor-pointer font-medium
                             transition-all duration-300 text-sm
                             ${activeFilter === btn.value
                               ? 'bg-eglux-primary text-white border-eglux-primary'
@@ -272,7 +272,7 @@ const ProductsSection = ({ onOpenModal, initialFilter = 'all' }) => {
         {!loading && !error && (
           paginated.length > 0
             ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-8">
                 {paginated.map((product) => (
                   <ProductCardFull key={product.id} product={product} onOpenModal={onOpenModal} />
                 ))}

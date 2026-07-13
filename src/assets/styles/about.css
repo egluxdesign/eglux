@@ -405,41 +405,85 @@
             }
         }
 
-        @media (max-width: 768px) {
-            .about-grid {
-            display: grid;
-            grid-template-columns: 1fr;
-            gap: 4rem;
-            align-items: center;
-            }
+        /* ============================================================================
+ * FIX: AboutPage stats section mobile — tambahkan blok ini ke about.css
+ * ============================================================================
+ * Letakkan di dalam @media (max-width: 768px) { ... } yang sudah ada di
+ * about.css, atau tambahkan sebagai block terpisah di akhir file.
+ * ========================================================================== */
 
-            .leadership-card {
-                border-radius: 16px;
-            }
+@media (max-width: 768px) {
+    /* === STATS SECTION: 2 kiri 2 kanan (grid 2x2) di mobile === */
+    .stats-grid {
+        grid-template-columns: repeat(2, 1fr) !important;
+        gap: 1.5rem !important;
+        padding: 0 0.5rem;
+    }
 
-            .leadership-left {
-                padding: 2rem 1.5rem;
-            }
+    /* Kecilkan angka stat dari 3rem → 1.8rem biar muat 2 kolom */
+    .stat-item h3 {
+        font-size: 1.8rem !important;
+        margin-bottom: 0.25rem !important;
+    }
 
-            .leadership-photo {
-                width: 130px;
-                height: 130px;
-            }
+    /* Label stat lebih kecil di mobile */
+    .stat-item p {
+        font-size: 0.8rem !important;
+    }
 
-            .leadership-name {
-                font-size: 1.3rem;
-            }
+    /* Section padding lebih ramping di mobile */
+    .stats-section {
+        padding: 2.5rem 1rem !important;
+    }
 
-            .leadership-right {
-                padding: 2rem 1.5rem;
-            }
+    /* === TIMELINE: jadi single column kiri di mobile === */
+    .timeline::before {
+        left: 20px !important;
+        transform: none !important;
+    }
 
-            .leadership-right h3 {
-                font-size: 1.1rem;
-            }
+    .timeline-item,
+    .timeline-item:nth-child(even) {
+        justify-content: flex-start !important;
+        padding-right: 0 !important;
+        padding-left: 50px !important;
+    }
 
-            .leadership-instagram {
-                width: 100%;
-                justify-content: center;
-            }
-        }
+    .timeline-dot {
+        left: 20px !important;
+        transform: none !important;
+    }
+
+    .timeline-item:nth-child(odd) .timeline-content::after,
+    .timeline-item:nth-child(even) .timeline-content::after {
+        left: -10px !important;
+        right: auto !important;
+        border-left: none !important;
+        border-right: 10px solid var(--white) !important;
+    }
+
+    .timeline-content {
+        max-width: 100% !important;
+    }
+
+    /* === SECTION HEADER P: hapus padding 20rem di mobile === */
+    .section-header p {
+        padding: 0 1rem !important;
+    }
+
+    /* === TIMELINE SECTION padding kurangi di mobile === */
+    .timeline-section {
+        padding: 3rem 0 !important;
+        margin: 2rem 0 !important;
+    }
+
+    /* === ABOUT CONTENT padding === */
+    .about-content {
+        padding: 2rem 1.5rem !important;
+    }
+
+    /* === TEAM SECTION padding === */
+    .team-section {
+        padding: 2.5rem 1.5rem !important;
+    }
+}

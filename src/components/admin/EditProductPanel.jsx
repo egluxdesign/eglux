@@ -328,6 +328,7 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
   const handleSave = async () => {
     setSaving(true);
     const updates = [];
+    const newVariants = []; // Variants yang belum punya ID (perlu INSERT, bukan UPDATE)
 
     // Product update
     const productFields = {
@@ -350,21 +351,71 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
     // Variant updates (only changed ones)
     for (const v of variants) {
       if (!v._changed) continue;
-      updates.push({
-        type: 'variant',
-        id: v.id,
-        fields: {
-          name: v.name,
-          price: Number(v.price),
-          stock: parseInt(v.stock, 10),
-          weight_in_gram: v.weight_in_gram ? parseInt(v.weight_in_gram, 10) : null,
-          sku: v.sku,
-          length_cm: v.length_cm ? parseFloat(v.length_cm) : null,
-          width_cm: v.width_cm ? parseFloat(v.width_cm) : null,
-          height_cm: v.height_cm ? parseFloat(v.height_cm) : null,
-          is_active: v.is_active,
-        },
-      });
+
+      const isNew = !v.id || v.id.startsWith('new-') || v.id === '';
+      const variantFields = {
+        name: v.name,
+        price: Number(v.price),
+        stock: parseInt(v.stock, 10),
+        weight_in_gram: v.weight_in_gram ? parseInt(v.weight_in_gram, 10) : null,
+        sku: v.sku,
+        length_cm: v.length_cm ? parseFloat(v.length_cm) : null,
+        width_cm: v.width_cm ? parseFloat(v.width_cm) : null,
+        height_cm: v.height_cm ? parseFloat(v.height_cm) : null,
+        is_active: v.is_active,
+      };
+
+      if (isNew) {
+        // Variant baru → INSERT (perlu product_id). Kumpulkan dulu, insert setelah product update sukses.
+        newVariants.push({ ...variantFields, _tempId: v.id, _originalIndex: variants.indexOf(v) });
+      } else {
+        // Variant existing → UPDATE
+        updates.push({
+          type: 'variant',
+          id: v.id,
+          fields: variantFields,
+        });
+      }
+    }
+
+    // ⚠️ Validasi: kalau ada variant baru, kita perlu INSERT via supabase client langsung
+    // (edge function bulk-update-products hanya support UPDATE, bukan INSERT).
+    // Untuk simplicity, insert dulu variant baru, baru bulk-update sisanya.
+    let newVariantIds = {}; // map _tempId → real UUID
+    if (newVariants.length > 0) {
+      try {
+        // Ambil product_id dari slug
+        const { data: prodData, error: prodErr } = await supabase
+          .from('products')
+          .select('id')
+          .eq('slug', formData.slug)
+          .single();
+        if (prodErr || !prodData) {
+          showToast(`✗ Gagal ambil product_id untuk insert variant baru: ${prodErr?.message || 'not found'}`, 'error');
+          setSaving(false);
+          return;
+        }
+
+        // Insert semua variant baru
+        for (const nv of newVariants) {
+          const { _tempId, _originalIndex, ...insertFields } = nv;
+          const { data: inserted, error: insertErr } = await supabase
+            .from('product_variants')
+            .insert({ ...insertFields, product_id: prodData.id })
+            .select('id')
+            .single();
+          if (insertErr) {
+            showToast(`✗ Gagal insert variant "${insertFields.name}": ${insertErr.message}`, 'error');
+            console.error('Insert variant error:', insertErr);
+          } else if (inserted) {
+            newVariantIds[_tempId] = inserted.id;
+          }
+        }
+      } catch (e) {
+        showToast(`✗ Error insert variant baru: ${e.message}`, 'error');
+        setSaving(false);
+        return;
+      }
     }
 
     try {
@@ -378,17 +429,37 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
       });
       const result = await resp.json();
 
+      // Filter hasil: hanya yang error
+      const failedResults = result.results?.filter(r => !r.success) || [];
+
       if (result.error_count === 0 && result.success_count > 0) {
-        showToast(`✓ ${result.success_count} perubahan tersimpan`, 'success');
+        let msg = `✓ ${result.success_count} perubahan tersimpan`;
+        if (Object.keys(newVariantIds).length > 0) {
+          msg += ` + ${Object.keys(newVariantIds).length} variant baru`;
+        }
+        showToast(msg, 'success');
         refreshLocalData(); onSaved();
         setTimeout(() => onClose(), 800);
       } else if (result.error_count > 0) {
-        showToast(`✗ ${result.error_count} error. Cek console.`, 'error');
-        console.error('Save errors:', result.results);
+        // Tampilkan error spesifik per item, bukan cuma count
+        const errorMsgs = failedResults.map(r => `${r.type} "${r.identifier}": ${r.error}`).join('\n');
+        showToast(`✗ ${result.error_count} error. Lihat detail di console.`, 'error');
+        console.error('Save errors (detailed):', failedResults);
+        console.error('Error messages:\n' + errorMsgs);
+        // Juga alert user biar gampang copy
+        if (typeof window !== 'undefined') {
+          console.table(failedResults.map(r => ({ type: r.type, identifier: r.identifier, error: r.error })));
+        }
       } else {
-        // No changes to save (success_count = 0, error_count = 0)
-        showToast('Tidak ada perubahan untuk disimpan', 'info');
-        onClose();
+        // No changes to save via bulk-update, but mungkin ada new variants yang sukses insert
+        if (Object.keys(newVariantIds).length > 0) {
+          showToast(`✓ ${Object.keys(newVariantIds).length} variant baru tersimpan`, 'success');
+          refreshLocalData(); onSaved();
+          setTimeout(() => onClose(), 800);
+        } else {
+          showToast('Tidak ada perubahan untuk disimpan', 'info');
+          onClose();
+        }
       }
     } catch (e) {
       showToast(`✗ Network error: ${e.message}`, 'error');

@@ -1,0 +1,177 @@
+/* src/index.css (atau file CSS global yang di-import di main.jsx)
+ * Tambahkan blok ini ke file CSS yang sudah ada.
+ * ========================================================================== */
+
+/* ============================================================================
+ * Global reset — hilangkan margin/padding default yang bikin gap
+ * ========================================================================== */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  line-height: 1.5;
+}
+
+/* Pastikan section header, nav, swiper nempel tanpa gap */
+header,
+nav,
+section,
+main,
+footer {
+  margin: 0;
+  padding: 0;
+}
+
+/* Hilangkan border-bottom primary nav biar gak ada garis abu tipis */
+.header-products-primary-nav,
+nav.eglux-primary-nav {
+  border-bottom: none !important;
+}
+
+/* Swiper section — pastikan full bleed tanpa margin */
+.eglux-swiper-section {
+  margin: 0;
+  padding: 0;
+  display: block;
+}
+
+/* ============================================================================
+ * DuplicateNav — sticky behavior saat scroll (Pomelo Fashion style)
+ * ==========================================================================
+ * Saat class 'stuck' ditambahkan (dipicu oleh HeaderProducts saat dup nav top
+ * mencapai bottom header), nav jadi position:fixed dan menempel tepat di bawah
+ * header (top: 60px = tinggi header).
+ *
+ * Tinggi header = 60px (h-[60px] di HeaderProducts top bar).
+ * Kalau tinggi header berubah, update top di sini juga.
+ * ========================================================================== */
+
+.duplicate-nav {
+  background: #ffffff;
+  border-bottom: 1px solid #eee;
+  transition: box-shadow 0.3s ease;
+  z-index: 999; /* di bawah header (z-1000) supaya dropdown user menu tetap di atas */
+}
+
+.duplicate-nav.stuck {
+  position: fixed;
+  top: 60px; /* === tinggi header (h-[60px]) — update jika header height berubah === */
+  left: 0;
+  right: 0;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  animation: dup-nav-slide-in 0.3s ease-out;
+}
+
+@keyframes dup-nav-slide-in {
+  from {
+    transform: translateY(-100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+/* ============================================================================
+ * Nav links — shared styling (primary nav & duplicate nav)
+ * ========================================================================== */
+.nav-link {
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: #1a1d2b; /* eglux-primary */
+  padding: 0.5rem 1rem;
+  white-space: nowrap;
+  transition: color 0.2s ease;
+  text-decoration: none;
+  position: relative;
+}
+
+.nav-link:hover {
+  color: #c9a96e; /* eglux-secondary */
+}
+
+.nav-link.active {
+  color: #c9a96e;
+  font-weight: 600;
+}
+
+.nav-link.active::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  left: 1rem;
+  right: 1rem;
+  height: 2px;
+  background: #c9a96e;
+  border-radius: 1px;
+}
+
+/* ============================================================================
+ * No scrollbar utility (untuk horizontal scroll nav di mobile)
+ * ========================================================================== */
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* ============================================================================
+ * Swiper container — custom styling (kalau pakai swiper.js)
+ * Kalau pakai library Swiper (npm install swiper), styles di bawah menyesuaikan
+ * theme eglux. Kalau pakai custom carousel, hapus blok ini.
+ * ========================================================================== */
+.eglux-swiper {
+  width: 100%;
+  height: 100%;
+}
+
+.eglux-swiper .swiper-slide {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.eglux-swiper .swiper-pagination-bullet {
+  background: #ffffff;
+  opacity: 0.5;
+  width: 8px;
+  height: 8px;
+  transition: all 0.2s ease;
+}
+
+.eglux-swiper .swiper-pagination-bullet-active {
+  background: #c9a96e;
+  opacity: 1;
+  width: 24px;
+  border-radius: 4px;
+}
+
+.eglux-swiper .swiper-button-prev,
+.eglux-swiper .swiper-button-next {
+  color: #ffffff;
+  background: rgba(0, 0, 0, 0.3);
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  backdrop-filter: blur(4px);
+  transition: background 0.2s ease;
+}
+
+.eglux-swiper .swiper-button-prev:hover,
+.eglux-swiper .swiper-button-next:hover {
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.eglux-swiper .swiper-button-prev::after,
+.eglux-swiper .swiper-button-next::after {
+  font-size: 16px;
+  font-weight: bold;
+}

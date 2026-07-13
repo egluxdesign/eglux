@@ -5,7 +5,7 @@ import DuplicateNav   from '../components/layout/DuplicateNav';
 import Footer         from '../components/layout/Footer';
 import { useCartActions } from './CartPage';
 
-import BlogHero   from '../components/sections/BlogPage/BlogHero';
+// import BlogHero   from '../components/sections/BlogPage/BlogHero';
 import BlogList   from '../components/sections/BlogPage/BlogList';
 import BlogDetail from '../components/sections/BlogPage/BlogDetail';
 
@@ -54,7 +54,7 @@ export default function BlogPage() {
     <>
       <HeaderProducts onCartOpen={openCart} />
 
-      {!selectedPost && <BlogHero />}
+      {/* {!selectedPost && <BlogHero />} */}
 
       <DuplicateNav activePage="blog" />
 

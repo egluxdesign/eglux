@@ -1,9 +1,38 @@
 // src/components/layout/HeaderProducts.jsx
+// ============================================================================
+// HeaderProducts — Pomelo Fashion style scroll-stick behavior.
+//
+// Struktur (3 lapis):
+//   ┌─────────────────────────────────────────────────────────┐
+//   │ Header (top bar): [☰]  [LOGO]  [User] [Cart]           │  ← STICKY top:0
+//   ├─────────────────────────────────────────────────────────┤
+//   │ Primary nav (top bubble): Beranda | Produk | Blog | ... │  ← NOT sticky, scroll away
+//   ├─────────────────────────────────────────────────────────┤
+//   │ [Swiper container placeholder — user akan tambah]       │  ← scroll away
+//   ├─────────────────────────────────────────────────────────┤
+//   │ Duplicate nav (content sticky): Beranda | Produk | ...  │  ← STICKY saat ditemui header
+//   └─────────────────────────────────────────────────────────┘
+//
+// Scroll behavior (Pomelo style):
+//   1. Awal (belum scroll): header sticky di top, primary nav di bawah header
+//      (natural flow), duplicate nav jauh di bawah (belum kelihatan).
+//   2. User scroll ke bawah: header tetap sticky di top. Primary nav & swiper
+//      scroll ke atas (lewati header, hilang dari viewport).
+//   3. Saat duplicate nav naik & top-nya mencapai bottom header (dupTop <=
+//      headerHeight), navStuck = true → class 'stuck' ditambahkan ke dup nav.
+//      CSS user akan set position:fixed; top:<headerHeight> → dup nav menempel
+//      tepat di bawah header. Keduanya sticky bersama-sama.
+//   4. User scroll balik ke atas: dupTop > headerHeight → navStuck = false →
+//      dup nav kembali ke normal flow.
+// ============================================================================
+
 import { useState, useEffect, useRef } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import Sidebar from './Sidebar';
+import SwiperContainer from './SwiperContainer';
 import { NAV_LINKS } from '../../data';
 import { useCart } from '../../context/CartContext';
+import { useAuth } from '../../context/AuthContext';
 
 const CartIcon = () => (
   <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-8 h-8">
@@ -11,25 +40,66 @@ const CartIcon = () => (
       d="M6 8h2.5l2.1 9.4a2 2 0 0 0 1.9 1.6h8a2 2 0 0 0 1.9-1.5l1.6-6.5H9.5M13 24a1.5 1.5 0 1 0 3 0 1.5 1.5 0 0 0-3 0M20 24a1.5 1.5 0 1 0 3 0 1.5 1.5 0 0 0-3 0" fill="none"/>
   </svg>
 );
-const ShopeeIcon = () => (
-  <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-8 h-8">
-    <path fill="currentColor" d="M25.08,10.89c0-.22-.17-.39-.39-.39h-4.22c-.1-2.75-2.07-4.95-4.48-4.95s-4.37,2.19-4.48,4.95h-4.22c-.21,0-.38.18-.38.39,0,.01,0,.02,0,.03h0l.6,13.27s0,.07,0,.11c0,0,0,.02,0,.03v.03s0,0,0,0c.09.92.76,1.67,1.67,1.7h0s13.46,0,13.46,0h0c.93-.03,1.68-.78,1.76-1.71h0s0-.01,0-.01c0,0,0-.02,0-.03,0-.02,0-.05,0-.07l.66-13.32h0s0-.01,0-.02ZM16,6.75c1.75,0,3.19,1.67,3.25,3.75h-6.5c.07-2.08,1.5-3.75,3.25-3.75ZM19.33,20.9c-.12.98-.72,1.77-1.64,2.17-.52.22-1.21.34-1.75.3-.85-.03-1.66-.24-2.39-.62-.26-.14-.66-.41-.96-.66-.08-.06-.09-.1-.04-.18.03-.04.08-.11.19-.28.16-.24.18-.27.2-.29.05-.08.14-.09.22-.02t.02.01s.01.01.05.04c.03.03.05.04.06.05.8.62,1.73.98,2.66,1.02,1.3-.02,2.24-.6,2.41-1.5.19-.99-.59-1.85-2.11-2.32-.48-.15-1.68-.63-1.9-.76-1.04-.61-1.53-1.41-1.46-2.4.11-1.37,1.38-2.39,2.99-2.4.72,0,1.44.15,2.13.44.24.1.68.34.83.45.09.06.1.14.05.22-.03.05-.07.12-.17.27h0c-.13.2-.13.21-.16.26-.05.08-.11.08-.2.03-.74-.5-1.56-.74-2.45-.76-1.12.02-1.96.69-2.01,1.6-.01.82.6,1.42,1.93,1.87,2.7.87,3.73,1.88,3.53,3.48Z"/>
+
+const ChevronDown = ({ className = '' }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <polyline points="6 9 12 15 18 9" />
   </svg>
 );
-const TikTokIcon = () => (
-  <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-8 h-8">
-    <path fill="currentColor" d="M13.77,14.38v-.78c-.27-.04-.54-.07-.82-.07-2.64,0-4.98,1.71-5.78,4.23-.79,2.52.14,5.27,2.31,6.78-2.28-2.44-2.15-6.26.29-8.53,1.09-1.01,2.51-1.59,3.99-1.62h0Z"/>
-    <path fill="currentColor" d="M13.92,23.18c1.48,0,2.69-1.17,2.76-2.64V7.36h2.41c-.05-.28-.07-.55-.07-.83h-3.29v13.16c-.05,1.48-1.27,2.66-2.76,2.66-.44,0-.88-.11-1.27-.32.52.72,1.35,1.14,2.23,1.15h0ZM23.58,11.83v-.73c-.89,0-1.75-.26-2.49-.75.65.75,1.52,1.27,2.49,1.48Z"/>
-    <path fill="currentColor" d="M21.09,10.35c-.73-.83-1.13-1.89-1.13-2.99h-.88c.23,1.23.95,2.31,2.01,2.99h0ZM12.96,16.83c-1.53,0-2.76,1.25-2.75,2.78,0,1.02.57,1.96,1.48,2.43-.89-1.23-.62-2.96.62-3.85.47-.34,1.04-.52,1.62-.52.28,0,.55.05.82.13v-3.35c-.27-.04-.54-.06-.82-.06h-.15v2.55c-.27-.07-.54-.1-.82-.1h0Z"/>
-    <path fill="currentColor" d="M23.58,11.83v2.55c-1.64,0-3.24-.52-4.57-1.48v6.69c0,3.34-2.72,6.04-6.06,6.04-1.24,0-2.45-.38-3.46-1.1,2.27,2.44,6.1,2.58,8.54.31,1.23-1.14,1.93-2.75,1.93-4.42v-6.67c1.33.95,2.93,1.47,4.57,1.46v-3.28c-.32,0-.64-.04-.96-.1h0Z"/>
-    <path fill="currentColor" d="M19.02,19.59v-6.69c1.33.96,2.93,1.47,4.57,1.46v-2.55c-.97-.2-1.84-.72-2.5-1.46-1.05-.68-1.78-1.76-2.01-2.99h-2.41v13.18c-.06,1.53-1.35,2.71-2.87,2.65-.85-.03-1.63-.45-2.13-1.14-1.35-.71-1.87-2.38-1.16-3.73.48-.9,1.41-1.47,2.43-1.48.28,0,.55.05.82.13v-2.59c-3.33.06-5.99,2.84-5.93,6.18.03,1.51.62,2.95,1.65,4.05,1.02.69,2.24,1.05,3.47,1.03,3.34,0,6.05-2.7,6.06-6.04Z"/>
+
+// ── Minimalist 1-color line icons (stroke=currentColor, no fill) ──
+const IconUser = ({ className = 'w-4 h-4' }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+    <circle cx="12" cy="7" r="4" />
   </svg>
 );
-const InstagramIcon = () => (
-  <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-8 h-8">
-    <path fill="currentColor" d="M19.85,6.36h-7.7c-3.19,0-5.79,2.6-5.79,5.79v7.7c0,3.19,2.6,5.79,5.79,5.79h7.7c3.19,0,5.79-2.6,5.79-5.79v-7.7c0-3.19-2.6-5.79-5.79-5.79ZM23.83,19.85c0,2.2-1.78,3.98-3.98,3.98h-7.7c-2.2,0-3.98-1.78-3.98-3.98v-7.7c0-2.2,1.78-3.98,3.98-3.98h7.7c2.2,0,3.98,1.78,3.98,3.98v7.7Z"/>
-    <circle fill="currentColor" cx="21.11" cy="10.93" r="1.13"/>
-    <path fill="currentColor" d="M16.08,11.25c-2.62,0-4.75,2.14-4.75,4.76s2.13,4.75,4.75,4.75,4.75-2.13,4.75-4.75-2.13-4.76-4.75-4.76ZM16.08,19.04c-1.68,0-3.04-1.36-3.04-3.04s1.36-3.05,3.04-3.05,3.04,1.37,3.04,3.05-1.36,3.04-3.04,3.04Z"/>
+
+const IconPackage = ({ className = 'w-4 h-4' }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M16.5 9.4 7.5 4.21" />
+    <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+    <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
+    <line x1="12" y1="22.08" x2="12" y2="12" />
+  </svg>
+);
+
+const IconTruck = ({ className = 'w-4 h-4' }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+    <rect x="1" y="3" width="15" height="13" rx="1" />
+    <polygon points="16 8 20 8 23 11 23 16 16 16 16 8" />
+    <circle cx="5.5" cy="18.5" r="2.5" />
+    <circle cx="18.5" cy="18.5" r="2.5" />
+  </svg>
+);
+
+const IconClipboard = ({ className = 'w-4 h-4' }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+    <rect x="8" y="2" width="8" height="4" rx="1" ry="1" />
+  </svg>
+);
+
+const IconTicket = ({ className = 'w-4 h-4' }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z" />
+    <path d="M13 5v2" />
+    <path d="M13 17v2" />
+    <path d="M13 11v2" />
+  </svg>
+);
+
+const IconWrench = ({ className = 'w-4 h-4' }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+  </svg>
+);
+
+const IconLogOut = ({ className = 'w-4 h-4' }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+    <polyline points="16 17 21 12 16 7" />
+    <line x1="21" y1="12" x2="9" y2="12" />
   </svg>
 );
 
@@ -39,7 +109,7 @@ const NavLinks = () => {
     <>
       {NAV_LINKS.map((link) => (
         <Link key={link.href} to={link.href}
-           className={`nav-link ${link.href === pathname ? 'active' : ''}`}>
+           className={`nav-link text-[0.65rem] px-1.5 md:text-[0.8rem] md:px-4 ${link.href === pathname ? 'active' : ''}`}>
           {link.label}
         </Link>
       ))}
@@ -47,45 +117,144 @@ const NavLinks = () => {
   );
 };
 
-// ✅ Hanya terima onCartOpen dari props — tidak pakai useCart().openCart
-const HeaderProducts = ({ onCartOpen }) => {
-  const { totalQty } = useCart();   // hanya untuk badge angka
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [primaryNavHidden, setPrimaryNavHidden] = useState(false);
-  const [navStuck, setNavStuck] = useState(false);
-  const primaryNavRef = useRef(null);
-  const duplicateNavRef = useRef(null);
-  const headerRef = useRef(null);
+// ── User Menu Dropdown ───────────────────────────────────────
+const UserMenu = () => {
+  const { user, profile, role, isAdmin, logout } = useAuth();
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const dropdownRef = useRef(null);
+  const navigate = useNavigate();
+  const { pathname } = useLocation();
 
   useEffect(() => {
-    let ticking = false;
-    const onScroll = () => {
-      const scrollY = window.scrollY;
-      const headerHeight = headerRef.current?.offsetHeight ?? 60;
-      const dupTop = duplicateNavRef.current?.getBoundingClientRect().top ?? 0;
-      const triggerPoint = dupTop + scrollY - headerHeight;
-      const primBottom = primaryNavRef.current?.getBoundingClientRect().bottom ?? 1;
-      setPrimaryNavHidden(primBottom <= 0);
-      setNavStuck(scrollY >= triggerPoint);
-      ticking = false;
+    if (!dropdownOpen) return;
+    const handler = (e) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
+        setDropdownOpen(false);
+      }
     };
-    const handle = () => {
-      if (!ticking) { requestAnimationFrame(onScroll); ticking = true; }
-    };
-    window.addEventListener('scroll', handle, { passive: true });
-    return () => window.removeEventListener('scroll', handle);
-  }, []);
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [dropdownOpen]);
+
+  if (!user) {
+    return (
+      <div className="flex items-center gap-2">
+        <Link to="/register" state={{ from: pathname }}
+          className="text-[0.82rem] font-semibold text-eglux-primary hover:text-eglux-secondary transition-colors px-2">
+          Daftar
+        </Link>
+        <Link to="/admin" state={{ from: pathname }}
+          className="text-[0.82rem] font-semibold text-eglux-primary hover:text-eglux-secondary transition-colors px-2">
+          Masuk
+        </Link>
+      </div>
+    );
+  }
+
+  const displayName = profile?.full_name || user.email?.split('@')[0] || 'Akun';
+
+  const menuItems = [
+    { label: 'Profil Saya', href: '/profile', Icon: IconUser },
+    { label: 'Pesanan Saya', href: '/orders', Icon: IconPackage },
+    { label: 'Lacak Pesanan', href: '/track', Icon: IconTruck },
+    { label: 'Riwayat Order', href: '/order-history', Icon: IconClipboard },
+    { label: 'Tiket Bantuan', href: '/tickets', Icon: IconTicket },
+  ];
+
+  const adminMenuItems = isAdmin
+    ? [{ label: 'Admin Produk', href: '/products-admin', Icon: IconWrench }]
+    : [];
+
+  return (
+    <div className="relative" ref={dropdownRef}>
+      <button
+        onClick={() => setDropdownOpen(!dropdownOpen)}
+        className="flex items-center gap-1.5 text-[0.82rem] font-semibold text-eglux-primary hover:text-eglux-secondary transition-colors cursor-pointer border-none bg-transparent"
+      >
+        <span className="max-w-[80px] truncate">Hi, {displayName}</span>
+        <ChevronDown className={`w-3.5 h-3.5 transition-transform ${dropdownOpen ? 'rotate-180' : ''}`} />
+      </button>
+
+      {dropdownOpen && (
+        <div className="absolute right-0 top-full mt-2 w-56 bg-white rounded-xl shadow-2xl border border-[#eee] overflow-hidden z-[2000]">
+          <div className="px-4 py-3 border-b border-[#eee] bg-[#faf6ef]">
+            <p className="text-[0.82rem] font-bold text-eglux-primary truncate">{displayName}</p>
+            <p className="text-[0.7rem] text-gray-500 truncate">{user.email}</p>
+            <span className="inline-block mt-1 text-[0.6rem] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-eglux-secondary/10 text-eglux-secondary">
+              {role}
+            </span>
+          </div>
+
+          <div className="py-1">
+            {adminMenuItems.length > 0 && (
+              <>
+                {adminMenuItems.map((item) => (
+                  <Link
+                    key={item.href}
+                    to={item.href}
+                    onClick={() => setDropdownOpen(false)}
+                    className="flex items-center gap-3 px-4 py-2.5 text-[0.82rem] font-semibold text-eglux-secondary hover:bg-[#faf6ef] transition-colors"
+                  >
+                    <item.Icon className="w-4 h-4" />
+                    {item.label}
+                  </Link>
+                ))}
+                <div className="border-t border-[#eee] my-1" />
+              </>
+            )}
+
+            {menuItems.map((item) => (
+              <Link
+                key={item.href}
+                to={item.href}
+                onClick={() => setDropdownOpen(false)}
+                className="flex items-center gap-3 px-4 py-2.5 text-[0.82rem] text-eglux-primary hover:bg-[#faf6ef] transition-colors"
+              >
+                <item.Icon className="w-4 h-4" />
+                {item.label}
+              </Link>
+            ))}
+          </div>
+
+          <div className="border-t border-[#eee] py-1">
+            <button
+              onClick={async () => {
+                await logout();
+                setDropdownOpen(false);
+                navigate('/');
+              }}
+              className="w-full flex items-center gap-3 px-4 py-2.5 text-[0.82rem] text-red-500 hover:bg-red-50 transition-colors cursor-pointer border-none bg-transparent"
+            >
+              <IconLogOut className="w-4 h-4" />
+              Keluar
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ============================================================================
+// HeaderProducts (root)
+// ============================================================================
+const HeaderProducts = ({ onCartOpen }) => {
+  const { totalQty } = useCart();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   return (
     <>
       <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
 
-      <header ref={headerRef} className="sticky top-0 left-0 right-0 bg-white z-[1000] shadow-header">
-        <div className="max-w-container mx-auto px-8 flex items-center justify-between h-[60px]">
+      {/* ── 1. Header (top bar) — STICKY top:0 ──
+          Selalu sticky di top. Hanya berisi top bar (logo, user, cart).
+          Primary nav dikeluarkan dari sini supaya scroll away natural. */}
+      <header className="sticky top-0 left-0 right-0 bg-white z-[1000] shadow-header">
+        <div className="max-w-container mx-auto px-4 md:px-8 flex items-center justify-between h-[60px]">
 
           {/* Hamburger */}
           <button onClick={() => setSidebarOpen(true)} aria-label="Buka menu kategori"
-            className="bg-transparent border-none cursor-pointer p-2 flex flex-col gap-1 transition-all duration-300 z-10">
+            className="bg-transparent border-none cursor-pointer p-2.5 min-w-[44px] min-h-[44px] flex flex-col gap-1 items-center justify-center transition-all duration-300 z-10">
             {[0,1,2].map((i) => (
               <span key={i} className="block w-[22px] h-[2px] bg-eglux-primary rounded-sm transition-all duration-300" />
             ))}
@@ -96,26 +265,13 @@ const HeaderProducts = ({ onCartOpen }) => {
             <img src="/src/assets/img/Logo1.png" alt="Eglux Logo" className="h-12 w-auto" />
           </Link>
 
-          {/* Right icons */}
-          <div className="flex items-center gap-1.5 ml-auto">
-            <button onClick={() => window.open('https://www.instagram.com/eglux_id','_blank')} aria-label="Instagram"
-              className="bg-transparent border-none cursor-pointer p-0.5 flex items-center text-eglux-primary hover:text-eglux-secondary transition-colors duration-300">
-              <InstagramIcon />
-            </button>
-            <button onClick={() => window.open('https://shopee.co.id/eglux','_blank')} aria-label="Shopee"
-              className="bg-transparent border-none cursor-pointer p-0.5 flex items-center text-eglux-primary hover:text-eglux-secondary transition-colors duration-300">
-              <ShopeeIcon />
-            </button>
-            <button onClick={() => window.open('https://www.tiktok.com/@eglux_id','_blank')} aria-label="TikTok"
-              className="bg-transparent border-none cursor-pointer p-0.5 flex items-center text-eglux-primary hover:text-eglux-secondary transition-colors duration-300">
-              <TikTokIcon />
-            </button>
-
-            {/* ✅ Cart — pakai onCartOpen dari props */}
+          {/* Right icons: UserMenu + Cart */}
+          <div className="flex items-center gap-2 md:gap-3 ml-auto">
+            <UserMenu />
             <button onClick={onCartOpen} aria-label="Keranjang Belanja"
-              className="relative bg-transparent border-none cursor-pointer p-0.5 flex items-center text-eglux-primary hover:text-eglux-secondary transition-colors duration-300">
+              className="relative bg-transparent border-none cursor-pointer p-2 min-w-[44px] min-h-[44px] flex items-center justify-center text-eglux-primary hover:text-eglux-secondary transition-colors duration-300">
               <CartIcon />
-              <span className={`absolute -top-1 -right-1 bg-eglux-secondary text-white text-[0.6rem]
+              <span className={`absolute top-1 right-1 bg-eglux-secondary text-white text-[0.6rem]
                                font-bold w-4 h-4 rounded-full flex items-center justify-center
                                transition-all duration-200
                                ${totalQty > 0 ? 'opacity-100 scale-100' : 'opacity-0 scale-0'}`}>
@@ -124,17 +280,29 @@ const HeaderProducts = ({ onCartOpen }) => {
             </button>
           </div>
         </div>
-
-        {/* Primary Nav */}
-        <nav ref={primaryNavRef}
-          className={`bg-white border-t border-b border-[#eee] will-change-transform
-                      transition-[transform,opacity] duration-[400ms]
-                      ${primaryNavHidden ? '-translate-y-full opacity-0 pointer-events-none' : 'translate-y-0 opacity-100'}`}>
-          <div className="max-w-container mx-auto px-8 flex items-center justify-center gap-12 md:gap-8 h-12 overflow-x-auto no-scrollbar">
-            <NavLinks />
-          </div>
-        </nav>
       </header>
+
+      {/* ── 2. Primary nav (top bubble navigation) — NOT sticky ──
+          Ada di normal document flow. Saat user scroll, primary nav akan
+          scroll ke atas & lewati sticky header (visual: hilang dari viewport).
+          Inilah "top bubble navigation" ala Pomelo.
+          Tanpa border-bottom biar nempel langsung ke Swiper di bawahnya (no gap). */}
+      <nav className="bg-white">
+        <div className="max-w-container mx-auto px-2 md:px-8 flex items-center justify-center gap-0.5 md:gap-8 h-12">
+          <NavLinks />
+        </div>
+      </nav>
+
+      {/* ── 3. Swiper container ──
+          Carousel banner/promo sebagai jeda antara primary nav (top bubble)
+          dan duplicate nav (content sticky). Scroll away natural (TIDAK sticky).
+          Slides bisa di-custom lewat props, default pakai 3 banner contoh.
+
+          CATATAN: DuplicateNav TIDAK dirender di sini. DuplicateNav dirender
+          di tiap page (BlogPage, AboutPage, ContactPage, dll) setelah hero
+          section — supaya posisinya fleksibel mengikuti struktur tiap page.
+          DuplicateNav handle scroll detection-nya sendiri (self-contained). */}
+      <SwiperContainer />
     </>
   );
 };

@@ -3,7 +3,7 @@ import HeaderProducts from '../components/layout/HeaderProducts';
 import DuplicateNav from '../components/layout/DuplicateNav';
 import Footer from '../components/layout/Footer';
 import { useCartActions } from './CartPage';
-import PageHeader from '../components/sections/ContactPage/PageHeader';
+// import PageHeader from '../components/sections/ContactPage/PageHeader';
 import ContactSection from '../components/sections/ContactPage/ContactSection';
 import FAQSection from '../components/sections/ContactPage/FAQSection';
 import MapSection from '../components/sections/ContactPage/MapSection';
@@ -16,8 +16,8 @@ const Contact = () => {
   return (
     <>
       <HeaderProducts onCartOpen={openCart} />
-      <PageHeader />
-      <DuplicateNav />
+      {/* <PageHeader /> */}
+      <DuplicateNav activePage="contact" />
       <main>
         <ContactSection />
         <MapSection />

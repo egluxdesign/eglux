@@ -18,7 +18,7 @@
 // Access: /products-admin (hidden storefront page)
 // ============================================================================
 
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import EditProductPanel from '../components/admin/EditProductPanel';
 
@@ -945,10 +945,9 @@ const AdminProductsPage = () => {
                 </thead>
                 <tbody>
                   {filteredProducts.map((p) => (
-                    <>
+                    <React.Fragment key={p.id}>
                       {/* === PRODUCT ROW === */}
                       <tr
-                        key={p.id}
                         className="border-b border-gray-100 hover:bg-blue-50 cursor-pointer transition-colors"
                         onClick={() => setEditingProduct(p)}
                       >
@@ -1006,7 +1005,7 @@ const AdminProductsPage = () => {
                           }) : '—'}
                         </td>
                       </tr>
-                    </>
+                    </React.Fragment>
                   ))}
                 </tbody>
               </table>

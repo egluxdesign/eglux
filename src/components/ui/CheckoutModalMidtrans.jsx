@@ -23,7 +23,9 @@
 // ============================================================================
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useCart, rupiah } from '../../context/CartContext';
+import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../lib/supabaseClient';
 import { useMidtransSnap } from '../../hooks/useMidtransSnap';
 import {
@@ -39,6 +41,10 @@ import {
 import Select from 'react-select';
 import { INDONESIAN_CITIES } from '../../data/indonesianCities';
 import { COUNTRIES, DEFAULT_COUNTRY } from '../../data/countries';
+
+// Key untuk sessionStorage — sinyal agar parent page auto-buka checkout modal
+// setelah user berhasil login dari halaman /admin.
+export const CHECKOUT_INTENT_KEY = 'eglux_checkout_intent';
 
 const INITIAL_FORM = {
   name: '',
@@ -149,6 +155,9 @@ const selectStyles = {
 const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
   const { cart, totalPrice, clearCart } = useCart();
   const { snapReady, loadError } = useMidtransSnap();
+  const { user, profile, isPro } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
 
   const [form, setForm] = useState(INITIAL_FORM);
   const [formErrors, setFormErrors] = useState({});
@@ -170,6 +179,21 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
   const [shippingOptions, setShippingOptions] = useState([]);
   const [shippingLoading, setShippingLoading] = useState(false);
   const [selectedShipping, setSelectedShipping] = useState(null);
+
+  // ============================================================================
+  // AUTH: Pre-fill form dari profile + user_metadata saat user login
+  // ============================================================================
+  useEffect(() => {
+    if (user && profile) {
+      const userMeta = user.user_metadata || {};
+      setForm((prev) => ({
+        ...prev,
+        name: profile.full_name || userMeta.full_name || prev.name,
+        email: user.email || prev.email,
+        phone: profile.phone || userMeta.phone || prev.phone,
+      }));
+    }
+  }, [user, profile]);
 
   const postalDebounceRef = useRef(null);
 
@@ -513,8 +537,28 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
     return newOrderId;
   };
 
-  // ===== Submit → save order → mint Snap token → window.snap.pay() =====
+  // ===== Submit → check auth → save order → mint Snap token → window.snap.pay() =====
   const handlePay = async () => {
+    // Phase C: Wajib login sebelum checkout.
+    // Jika belum login → simpan intent checkout di sessionStorage,
+    // redirect ke halaman login (/admin). Setelah login berhasil,
+    // AdminPage akan redirect balik ke page asal (state.from),
+    // dan parent component akan auto-buka checkout modal karena
+    // intent flag masih ada di sessionStorage.
+    if (!user) {
+      try {
+        sessionStorage.setItem(CHECKOUT_INTENT_KEY, 'true');
+      } catch (e) {
+        // sessionStorage bisa disabled (private mode) — fail silently
+      }
+      onClose?.();
+      navigate('/admin', {
+        state: { from: location.pathname + location.search },
+        replace: true,
+      });
+      return;
+    }
+
     if (!validate()) return;
 
     setSubmitting(true);
@@ -577,7 +621,27 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
     }
   };
 
+  // Kalau user sudah login tapi intent flag masih ada (baru balik dari login),
+  // clear flag — modal sudah terbuka, parent tidak perlu trigger lagi.
+  useEffect(() => {
+    if (user && sessionStorage.getItem(CHECKOUT_INTENT_KEY) === 'true') {
+      sessionStorage.removeItem(CHECKOUT_INTENT_KEY);
+    }
+  }, [user]);
+
   if (!isOpen) return null;
+
+  // Safety net: kalau modal sempat ke-open saat user belum login
+  // (seharusnya parent sudah gate), redirect ke /admin dengan intent flag.
+  if (!user) {
+    try { sessionStorage.setItem(CHECKOUT_INTENT_KEY, 'true'); } catch (e) {}
+    onClose?.();
+    navigate('/admin', {
+      state: { from: location.pathname + location.search },
+      replace: true,
+    });
+    return null;
+  }
 
   const grandTotal = totalPrice + (selectedShipping?.price || 0);
   const isLocked = !!orderId;
@@ -594,8 +658,9 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
     ) : null;
 
   return (
+    <>
     <div
-      className="fixed inset-0 bg-black/60 z-[2200] flex items-center justify-center p-4"
+      className="fixed inset-0 bg-black/60 z-[3500] flex items-center justify-center p-3 md:p-4"
       onClick={(e) => e.target === e.currentTarget && onClose()}
       role="dialog"
       aria-modal="true"
@@ -603,16 +668,16 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
     >
       <div className="bg-white rounded-[20px] max-w-[500px] w-full max-h-[92vh] overflow-y-auto shadow-2xl">
         {/* Header */}
-        <div className="sticky top-0 bg-white z-10 flex items-center justify-between px-6 pt-6 pb-4 border-b border-gray-100">
-          <div>
-            <h3 className="text-[1.1rem] font-bold text-eglux-primary">Checkout</h3>
-            <p className="text-[0.72rem] text-gray-500 mt-0.5 flex items-center gap-1">
-              <ShieldCheck className="w-3 h-3" /> Midtrans · Biteship
+        <div className="sticky top-0 bg-white z-10 flex items-center justify-between px-4 md:px-6 pt-5 md:pt-6 pb-3 md:pb-4 border-b border-gray-100">
+          <div className="min-w-0 pr-2">
+            <h3 className="text-[1rem] md:text-[1.1rem] font-bold text-eglux-primary truncate">Checkout</h3>
+            <p className="text-[0.72rem] text-gray-500 mt-0.5 flex items-center gap-1 truncate">
+              <ShieldCheck className="w-3 h-3 flex-shrink-0" /> Midtrans · Biteship
             </p>
           </div>
           <button
             onClick={onClose}
-            className="w-[34px] h-[34px] rounded-full bg-black/[0.07] flex items-center justify-center
+            className="flex-shrink-0 w-11 h-11 min-w-[44px] min-h-[44px] rounded-full bg-black/[0.07] flex items-center justify-center
                        text-eglux-primary text-xl border-none cursor-pointer hover:bg-black/[0.13] transition-colors"
             aria-label="Tutup"
           >
@@ -620,7 +685,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
           </button>
         </div>
 
-        <div className="px-6 pb-6 pt-5 space-y-6">
+        <div className="px-4 md:px-6 pb-6 pt-5 space-y-6">
           {/* === Order Summary === */}
           <section className="bg-eglux-accent rounded-xl p-4 text-[0.85rem]">
             <h4 className="text-[0.78rem] uppercase tracking-[1px] text-[#666] mb-2 font-semibold flex items-center gap-1.5">
@@ -721,14 +786,14 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
                   inputMode="numeric"
                   autoComplete="tel"
                   disabled={isLocked}
-                  className={`w-full py-3 pl-[100px] pr-4 border-[1.5px] rounded-[10px] text-[0.88rem] text-eglux-primary bg-white outline-none focus:border-eglux-secondary transition-colors disabled:bg-[#f5f5f5] disabled:text-[#999] ${
+                  className={`w-full py-3 pl-[90px] md:pl-[100px] pr-4 border-[1.5px] rounded-[10px] text-[0.88rem] text-eglux-primary bg-white outline-none focus:border-eglux-secondary transition-colors disabled:bg-[#f5f5f5] disabled:text-[#999] ${
                     formErrors.phone ? 'border-red-500' : 'border-[#ddd]'
                   }`}
                 />
 
                 {/* Dropdown: searchable country list */}
                 {countryDropdownOpen && (
-                  <div className="absolute top-full left-0 mt-1 w-[300px] bg-white rounded-[10px] shadow-2xl border border-[#eee] z-[100] max-h-[280px] flex flex-col overflow-hidden">
+                  <div className="absolute top-full left-0 right-0 mt-1 max-w-[300px] bg-white rounded-[10px] shadow-2xl border border-[#eee] z-[100] max-h-[280px] flex flex-col overflow-hidden">
                     {/* Search */}
                     <div className="p-2 border-b border-[#eee]">
                       <input
@@ -752,15 +817,15 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
                             key={c.code}
                             type="button"
                             onClick={() => onSelectCountry(c)}
-                            className={`w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-[#faf6ef] transition-colors ${
+                            className={`w-full flex items-center gap-2.5 px-3 py-3 text-left hover:bg-[#faf6ef] transition-colors ${
                               selectedCountry.code === c.code ? 'bg-[#faf6ef]' : ''
                             }`}
                           >
-                            <span className="text-base leading-none">{c.flag}</span>
+                            <span className="text-base leading-none flex-shrink-0">{c.flag}</span>
                             <span className="text-[0.85rem] text-eglux-primary flex-1 truncate">
                               {c.name}
                             </span>
-                            <span className="text-[0.78rem] text-gray-500 whitespace-nowrap">
+                            <span className="text-[0.78rem] text-gray-500 whitespace-nowrap flex-shrink-0">
                               +{c.dial}
                             </span>
                           </button>
@@ -1031,6 +1096,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
         </div>
       </div>
     </div>
+    </>
   );
 };
 

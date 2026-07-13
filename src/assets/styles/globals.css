@@ -74,3 +74,16 @@
 @layer utilities {
   .font-playfair { font-family: 'Playfair Display', serif; }
 }
+
+.container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 0 2rem;
+}
+
+/* TAMBAH: responsive container */
+@media (max-width: 768px) {
+    .container {
+        padding: 0 1rem;  /* dari 2rem → 1rem */
+    }
+}

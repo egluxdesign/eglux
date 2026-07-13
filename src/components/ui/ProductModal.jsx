@@ -141,9 +141,10 @@ const ProductModal = ({ product, onClose, onAddToCart }) => {
         {/* Close button */}
         <button
           onClick={onClose}
-          className="absolute top-4 right-4 z-[2] w-[34px] h-[34px] rounded-full bg-black/[0.07]
+          className="absolute top-3 right-3 z-[2] w-11 h-11 min-w-[44px] min-h-[44px] rounded-full bg-black/[0.07]
                      flex items-center justify-center text-eglux-primary text-xl cursor-pointer
                      border-none hover:bg-black/[0.13] transition-colors duration-300"
+          aria-label="Tutup"
         >
           &times;
         </button>
@@ -288,7 +289,8 @@ const ProductModal = ({ product, onClose, onAddToCart }) => {
                 <button
                   onClick={() => setQty((q) => Math.max(1, q - 1))}
                   disabled={qty <= 1}
-                  className="w-9 h-9 border-[1.5px] border-[#ddd] rounded-lg bg-white flex items-center justify-center text-xl font-semibold text-eglux-primary cursor-pointer hover:border-eglux-secondary hover:bg-eglux-accent transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="w-11 h-11 min-w-[44px] min-h-[44px] border-[1.5px] border-[#ddd] rounded-lg bg-white flex items-center justify-center text-xl font-semibold text-eglux-primary cursor-pointer hover:border-eglux-secondary hover:bg-eglux-accent transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                  aria-label="Kurangi jumlah"
                 >
                   −
                 </button>
@@ -296,7 +298,8 @@ const ProductModal = ({ product, onClose, onAddToCart }) => {
                 <button
                   onClick={() => setQty((q) => Math.min(maxStock, q + 1))}
                   disabled={qty >= maxStock}
-                  className="w-9 h-9 border-[1.5px] border-[#ddd] rounded-lg bg-white flex items-center justify-center text-xl font-semibold text-eglux-primary cursor-pointer hover:border-eglux-secondary hover:bg-eglux-accent transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="w-11 h-11 min-w-[44px] min-h-[44px] border-[1.5px] border-[#ddd] rounded-lg bg-white flex items-center justify-center text-xl font-semibold text-eglux-primary cursor-pointer hover:border-eglux-secondary hover:bg-eglux-accent transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                  aria-label="Tambah jumlah"
                 >
                   +
                 </button>
