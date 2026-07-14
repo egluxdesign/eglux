@@ -576,14 +576,31 @@ const AdminProductsPage = () => {
       const result = await resp.json();
 
       if (result.success) {
-        showToast(`✓ ${result.success_count} produk dihapus`, 'success');
+        // Differentiate soft delete vs hard delete
+        const softCount = result.soft_deleted_count || 0;
+        const hardCount = result.hard_deleted_count || 0;
+        let msg = `✓ ${result.success_count} produk diproses`;
+        if (hardCount > 0 && softCount > 0) {
+          msg += ` (${hardCount} dihapus permanen, ${softCount} disembunyikan — punya riwayat order)`;
+        } else if (hardCount > 0) {
+          msg += ` — dihapus permanen`;
+        } else if (softCount > 0) {
+          msg += ` — disembunyikan dari katalog (punya riwayat order, data order tetap utuh)`;
+        }
+        showToast(msg, 'success');
         setDeleteConfirm(null);
         setSelectedProducts(new Set());
         await fetchProducts();
       } else {
         // Partial success
         const failed = result.results?.filter((r) => !r.success) || [];
-        showToast(`✓ ${result.success_count} dihapus, ✗ ${result.error_count} gagal`, 'warning');
+        const softCount = result.soft_deleted_count || 0;
+        const hardCount = result.hard_deleted_count || 0;
+        let msg = `✓ ${result.success_count} diproses`;
+        if (hardCount > 0) msg += ` (${hardCount} permanen`;
+        if (softCount > 0) msg += `${hardCount > 0 ? ', ' : '('}${softCount} disembunyikan`;
+        msg += `), ✗ ${result.error_count} gagal`;
+        showToast(msg, 'warning');
         console.error('Delete errors:', failed);
         if (result.success_count > 0) {
           await fetchProducts();

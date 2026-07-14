@@ -17,8 +17,7 @@
 //   2. Delete images dari Supabase Storage (extract path dari URL)
 //   3. Delete product_images rows (DB)
 //   4. Delete product_variants rows (DB)
-//   5. Delete product row (DB) — CASCADE akan handle product_images & variants
-//      kalau FK ON DELETE CASCADE, tapi kita delete manual untuk safety
+//   5. Delete product row (DB)
 //
 // Response:
 //   { success: true, success_count: N, error_count: M, results: [...] }
@@ -55,12 +54,84 @@ function extractStoragePath(url: string): string | null {
 }
 
 // ============================================================================
+// Helper: Cek apakah product pernah dipesan (ada di order_items)
+// ============================================================================
+async function hasOrderHistory(
+  supabase: ReturnType<typeof createClient>,
+  productId: string,
+): Promise<{ hasOrders: boolean; orderCount: number }> {
+  const { count, error } = await supabase
+    .from("order_items")
+    .select("id", { count: "exact", head: true })
+    .eq("product_id", productId);
+
+  if (error) {
+    console.warn(`[delete-products] Failed to check order history for ${productId}:`, error.message);
+    return { hasOrders: false, orderCount: 0 };
+  }
+
+  return {
+    hasOrders: (count || 0) > 0,
+    orderCount: count || 0,
+  };
+}
+
+// ============================================================================
 // Helper: Delete single product (DB + Storage)
+// ============================================================================
+// Strategy:
+//   - Kalau product PERNAH dipesan → SOFT DELETE (is_active=false, badge=null)
+//     + return success tapi dengan flag "soft_deleted": true
+//   - Kalau product BELUM pernah dipesan → HARD DELETE (full remove)
 // ============================================================================
 async function deleteProduct(
   supabase: ReturnType<typeof createClient>,
   productId: string,
-): Promise<{ success: boolean; error?: string; images_deleted?: number }> {
+): Promise<{
+  success: boolean;
+  error?: string;
+  images_deleted?: number;
+  soft_deleted?: boolean;
+  order_count?: number;
+}> {
+  // 0. Cek apakah product pernah dipesan
+  const { hasOrders, orderCount } = await hasOrderHistory(supabase, productId);
+
+  if (hasOrders) {
+    // ── SOFT DELETE: set is_active=false + clear badge ──
+    // Product tetap di DB supaya order history tetap valid (FK terpenuhi).
+    // Tapi product gak akan tampil di catalog (filter is_active=true).
+    const { error: softDelErr } = await supabase
+      .from("products")
+      .update({
+        is_active: false,
+        badge: null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", productId);
+
+    if (softDelErr) {
+      return {
+        success: false,
+        error: `Failed to soft-delete product (has ${orderCount} orders): ${softDelErr.message}`,
+      };
+    }
+
+    // Soft-delete variants juga (set is_active=false)
+    await supabase
+      .from("product_variants")
+      .update({ is_active: false })
+      .eq("product_id", productId);
+
+    return {
+      success: true,
+      soft_deleted: true,
+      order_count: orderCount,
+    };
+  }
+
+  // ── HARD DELETE: product belum pernah dipesan, hapus permanen ──
+
   // 1. Fetch all images untuk product ini
   const { data: images, error: imgFetchErr } = await supabase
     .from("product_images")
@@ -92,7 +163,7 @@ async function deleteProduct(
     }
   }
 
-  // 3. Delete product_images rows (manual, biar pasti clean)
+  // 3. Delete product_images rows
   const { error: imgDelErr } = await supabase
     .from("product_images")
     .delete()
@@ -170,19 +241,30 @@ serve(async (req: Request) => {
       success: boolean;
       error?: string;
       images_deleted?: number;
+      soft_deleted?: boolean;
+      order_count?: number;
     }> = [];
 
     let successCount = 0;
     let errorCount = 0;
+    let softDeleteCount = 0;
+    let hardDeleteCount = 0;
 
     for (const productId of product_ids) {
       const result = await deleteProduct(supabase, productId);
       if (result.success) {
         successCount++;
+        if (result.soft_deleted) {
+          softDeleteCount++;
+        } else {
+          hardDeleteCount++;
+        }
         results.push({
           product_id: productId,
           success: true,
           images_deleted: result.images_deleted,
+          soft_deleted: result.soft_deleted,
+          order_count: result.order_count,
         });
       } else {
         errorCount++;
@@ -199,10 +281,12 @@ serve(async (req: Request) => {
       total: product_ids.length,
       success_count: successCount,
       error_count: errorCount,
+      soft_deleted_count: softDeleteCount,
+      hard_deleted_count: hardDeleteCount,
       results,
       message: errorCount === 0
-        ? `✓ ${successCount} product(s) deleted successfully.`
-        : `${successCount} deleted, ${errorCount} failed. See results for details.`,
+        ? `✓ ${successCount} product(s) processed (${hardDeleteCount} hard delete, ${softDeleteCount} soft delete — has order history).`
+        : `${successCount} processed, ${errorCount} failed. See results for details.`,
     });
   } catch (e) {
     console.error("[delete-products]", e);
