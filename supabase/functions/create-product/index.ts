@@ -1,6 +1,6 @@
 // supabase/functions/create-product/index.ts
 // ============================================================================
-// create-product — Admin: create new product + optional initial variant
+// create-product — Admin: create new product + multiple variants
 // ============================================================================
 //
 // Cara panggil:
@@ -8,17 +8,24 @@
 //   Headers: Authorization: Bearer <admin-jwt>
 //   Body: {
 //     product: {
-//       name, slug, category, base_price, weight_in_gram,
+//       name, slug?, category, base_price, weight_in_gram,
 //       badge?, description?, is_active
 //     },
-//     variant: {  // optional, kalau mau langsung buat variant awal
-//       name, price, stock, weight_in_gram?, sku?,
-//       is_active, length_cm?, width_cm?, height_cm?
-//     }
+//     variants: [  // array, minimal 1
+//       {
+//         name, price, stock, weight_in_gram?, sku?,
+//         is_active, length_cm?, width_cm?, height_cm?
+//       }
+//     ]
 //   }
 //
 // Response:
-//   { success: true, product_id: "uuid", variant_id: "uuid" | null }
+//   {
+//     success: true,
+//     product_id: "uuid",
+//     slug: "auto-generated-slug",
+//     variants: [{ id: "uuid", name: "..." }, ...]
+//   }
 // ============================================================================
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
@@ -35,14 +42,10 @@ function slugify(text: string): string {
   return text
     .toLowerCase()
     .trim()
-    .replace(/[^a-z0-9\s-]/g, "") // hapus karakter non-alphanumeric
-    .replace(/\s+/g, "-")         // spasi → dash
-    .replace(/-+/g, "-")          // multiple dash → single
-    .replace(/^-|-$/g, "");       // trim dash di awal/akhir
-}
-
-function isUUID(str: string): boolean {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+    .replace(/[^a-z0-9\s-]/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
 }
 
 // ============================================================================
@@ -64,7 +67,7 @@ serve(async (req: Request) => {
     }
 
     const body = await req.json();
-    const { product, variant } = body;
+    const { product, variants } = body;
 
     // ── Validate product ──
     if (!product || !product.name || !product.category) {
@@ -79,6 +82,36 @@ serve(async (req: Request) => {
     const weightGram = Number(product.weight_in_gram);
     if (isNaN(weightGram) || weightGram < 0) {
       return json({ error: "product.weight_in_gram must be >= 0" }, 400);
+    }
+
+    // ── Validate variants (array, minimal 1) ──
+    if (!Array.isArray(variants) || variants.length === 0) {
+      return json({ error: "variants array is required (minimal 1 variant)" }, 400);
+    }
+
+    if (variants.length > 50) {
+      return json({ error: `Too many variants (${variants.length}). Maximum 50 per request.` }, 400);
+    }
+
+    // Validate each variant
+    for (let i = 0; i < variants.length; i++) {
+      const v = variants[i];
+      if (!v.name || !String(v.name).trim()) {
+        return json({ error: `variants[${i}].name is required` }, 400);
+      }
+      const vPrice = Number(v.price);
+      if (isNaN(vPrice) || vPrice < 0) {
+        return json({ error: `variants[${i}].price must be >= 0` }, 400);
+      }
+      if (vPrice > basePrice) {
+        return json({
+          error: `variants[${i}].price (${vPrice}) tidak boleh > base_price (${basePrice})`,
+        }, 400);
+      }
+      const vStock = parseInt(String(v.stock), 10);
+      if (isNaN(vStock) || vStock < 0) {
+        return json({ error: `variants[${i}].stock must be >= 0` }, 400);
+      }
     }
 
     // Generate slug kalau gak diisi
@@ -124,80 +157,78 @@ serve(async (req: Request) => {
       return json({ error: `Failed to insert product: ${prodInsertErr.message}` }, 500);
     }
 
-    // ── Optional: INSERT initial variant ──
-    let variantId: string | null = null;
-    if (variant) {
-      // Validate variant
-      if (!variant.name) {
-        return json({ error: "variant.name is required when variant is provided" }, 400);
-      }
-      const variantPrice = Number(variant.price);
-      if (isNaN(variantPrice) || variantPrice < 0) {
-        return json({ error: "variant.price must be >= 0" }, 400);
-      }
-      if (variantPrice > basePrice) {
+    // ── INSERT all variants ──
+    const variantRecords = [];
+    const variantResults = [];
+
+    for (let i = 0; i < variants.length; i++) {
+      const v = variants[i];
+      const variantId = crypto.randomUUID();
+      const vPrice = Number(v.price);
+      const vStock = parseInt(String(v.stock), 10);
+
+      // Variant weight: fallback ke product weight kalau gak diisi
+      const variantWeight = v.weight_in_gram
+        ? Number(v.weight_in_gram)
+        : weightGram;
+
+      // Variant is_active: kalau true, weight wajib > 0
+      const variantIsActive = v.is_active !== undefined
+        ? Boolean(v.is_active)
+        : false;
+      if (variantIsActive && (!variantWeight || variantWeight <= 0)) {
+        // Cleanup: hapus product + variants yang sudah di-insert
+        await supabase.from("product_variants").delete().eq("product_id", productId);
+        await supabase.from("products").delete().eq("id", productId);
         return json({
-          error: `variant.price (${variantPrice}) tidak boleh > base_price (${basePrice})`,
+          error: `variants[${i}].weight_in_gram must be > 0 when is_active=true`,
         }, 400);
-      }
-      const variantStock = parseInt(String(variant.stock), 10);
-      if (isNaN(variantStock) || variantStock < 0) {
-        return json({ error: "variant.stock must be >= 0" }, 400);
       }
 
       // SKU: empty → null (avoid UNIQUE constraint issue)
-      const variantSku = variant.sku?.trim() || null;
+      const variantSku = v.sku?.trim() || null;
 
-      // Variant weight: fallback ke product weight kalau gak diisi
-      const variantWeight = variant.weight_in_gram
-        ? Number(variant.weight_in_gram)
-        : weightGram;
+      variantRecords.push({
+        id: variantId,
+        product_id: productId,
+        name: v.name.trim(),
+        price: vPrice,
+        stock: vStock,
+        weight_in_gram: variantWeight,
+        sku: variantSku,
+        is_active: variantIsActive,
+        length_cm: v.length_cm ? Number(v.length_cm) : null,
+        width_cm: v.width_cm ? Number(v.width_cm) : null,
+        height_cm: v.height_cm ? Number(v.height_cm) : null,
+      });
 
-      // Variant is_active: kalau true, weight wajib > 0 (sesuai docs)
-      const variantIsActive = variant.is_active !== undefined
-        ? Boolean(variant.is_active)
-        : false;
-      if (variantIsActive && (!variantWeight || variantWeight <= 0)) {
-        return json({
-          error: "variant.weight_in_gram must be > 0 when is_active=true",
-        }, 400);
-      }
+      variantResults.push({
+        id: variantId,
+        name: v.name.trim(),
+        temp_index: i,
+      });
+    }
 
-      variantId = crypto.randomUUID();
-      const { error: varInsertErr } = await supabase
-        .from("product_variants")
-        .insert({
-          id: variantId,
-          product_id: productId,
-          name: variant.name.trim(),
-          price: variantPrice,
-          stock: variantStock,
-          weight_in_gram: variantWeight,
-          sku: variantSku,
-          is_active: variantIsActive,
-          length_cm: variant.length_cm ? Number(variant.length_cm) : null,
-          width_cm: variant.width_cm ? Number(variant.width_cm) : null,
-          height_cm: variant.height_cm ? Number(variant.height_cm) : null,
-        });
+    // Bulk insert variants
+    const { error: varInsertErr } = await supabase
+      .from("product_variants")
+      .insert(variantRecords);
 
-      if (varInsertErr) {
-        // Cleanup: hapus product yang baru di-insert (variant gagal)
-        await supabase.from("products").delete().eq("id", productId);
-        return json({
-          error: `Failed to insert variant: ${varInsertErr.message}`,
-        }, 500);
-      }
+    if (varInsertErr) {
+      // Cleanup: hapus product yang baru di-insert
+      await supabase.from("products").delete().eq("id", productId);
+      return json({
+        error: `Failed to insert variants: ${varInsertErr.message}`,
+      }, 500);
     }
 
     // ── Success ──
     return json({
       success: true,
       product_id: productId,
-      variant_id: variantId,
       slug: slug,
-      message: variantId
-        ? "Product + initial variant created"
-        : "Product created (no variant yet — add via Edit panel)",
+      variants: variantResults,
+      message: `Product created with ${variantResults.length} variant(s)`,
     });
   } catch (e) {
     console.error("[create-product]", e);
