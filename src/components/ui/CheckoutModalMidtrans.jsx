@@ -589,21 +589,12 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
           onClose();
           showToast('Pembayaran berhasil! Terima kasih ✓');
 
-          // Fire WABA notification (TEST mode for now — switch to 'send-waba-live' after Meta approval)
-          // Fire-and-forget: jangan block UI, jangan throw error kalau gagal
-          try {
-            const { error: wabaError } = await supabase.functions.invoke(
-              'send-waba-test',
-              { body: { order_id: currentOrderId, event: 'payment_success' } }
-            );
-            if (wabaError) {
-              console.warn('[WABA] Test notification failed:', wabaError.message);
-            } else {
-              console.log('[WABA] Test notification queued (mock mode)');
-            }
-          } catch (e) {
-            console.warn('[WABA] Network error:', e);
-          }
+          // ⚠️ WABA notification TIDAK di-trigger dari frontend lagi.
+          // midtrans-webhook edge function sudah handle WABA notification
+          // saat menerima webhook dari Midtrans (settlement/capture).
+          // Kalau di-trigger dari frontend juga → double row di waba_messages.
+          // Plus send-waba-test butuh admin JWT, frontend gak punya.
+          // Webhook = single source of truth, lebih reliable.
         },
         onPending: () => {
           showToast('Menunggu pembayaran. Cek WA/email untuk instruksi.');
