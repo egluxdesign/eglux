@@ -37,7 +37,15 @@ const ProtectedRoute = ({ children, roles = null }) => {
   }
 
   // Role check (kalau roles specified)
-  if (roles && role && !roles.includes(role)) {
+  // FIX: Sebelumnya `roles && role && !roles.includes(role)` — kalau role === null
+  // (profile belum load / fetch gagal), check dilewati → akses DIBERIKAN ke route admin.
+  // Sekarang: kalau roles specified tapi role belum load (null/undefined), TOLAK.
+  // Lebih aman: deny by default kalau role belum diketahui.
+  if (roles && (!role || !roles.includes(role))) {
+    // Kalau role belum load sama sekali (null), kirim ke login biar reload auth state
+    if (!role) {
+      return <Navigate to="/admin" state={{ from: location.pathname }} replace />;
+    }
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="text-center max-w-md px-6">

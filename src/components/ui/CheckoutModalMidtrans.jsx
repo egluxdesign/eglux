@@ -483,58 +483,60 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
 
   // ===== Persist order ke Supabase =====
   const saveOrderToSupabase = async () => {
-    const customerId = generateUUID();
-    const { error: customerError } = await supabase.from('customers').insert({
-      id: customerId,
-      name: form.name.trim(),
-      phone: form.phone.trim(), // E.164: +628xxxxxxxxxx
-      email: form.email.trim() || null,
-      address: form.address.trim(),
-    });
-    if (customerError) throw customerError;
-
-    const newOrderId = generateUUID();
+    // ── Pakai edge function create-order (auth-gated, bypass RLS) ──
+    // Setelah SQL 006 (tighten RLS), anon key gak bisa INSERT ke
+    // customers/orders/order_items. Edge function pakai service_role.
     const shippingCost = selectedShipping?.price || 0;
     const grandTotal = totalPrice + shippingCost;
     const selectedArea = areas.find((a) => String(a.id) === String(selectedAreaId));
 
-    const { error: orderError } = await supabase.from('orders').insert({
-      id: newOrderId,
-      customer_id: customerId,
-      status: 'pending',
-      payment_method: 'midtrans_snap',
-      payment_status: 'unpaid',
-      subtotal: totalPrice,
-      shipping_cost: shippingCost,
-      total_amount: grandTotal,
-      shipping_address: form.address.trim(),
-      shipping_city: form.city.trim(), // dari dropdown kota
-      shipping_postal_code: form.postal,
-      shipping_area_id: String(selectedAreaId || '').trim() || null,
-      shipping_area_name: selectedArea?.name || null,
-      courier_code: (selectedShipping?.courier || '').toLowerCase(),
-      courier_service: selectedShipping?.service || null,
-      courier_duration: selectedShipping?.duration || null,
-      courier_rate: shippingCost,
-      notes: form.notes.trim() || null,
-    });
-    if (orderError) throw orderError;
+    const payload = {
+      customer: {
+        name: form.name.trim(),
+        phone: form.phone.trim(), // E.164: +628xxxxxxxxxx
+        email: form.email.trim() || null,
+        address: form.address.trim(),
+      },
+      order: {
+        subtotal: totalPrice,
+        shipping_cost: shippingCost,
+        total_amount: grandTotal,
+        shipping_address: form.address.trim(),
+        shipping_city: form.city.trim(),
+        shipping_postal_code: form.postal,
+        shipping_area_id: String(selectedAreaId || '').trim() || null,
+        shipping_area_name: selectedArea?.name || null,
+        courier_code: (selectedShipping?.courier || '').toLowerCase(),
+        courier_service: selectedShipping?.service || null,
+        courier_duration: selectedShipping?.duration || null,
+        courier_rate: shippingCost,
+        notes: form.notes.trim() || null,
+      },
+      items: cart.map((item) => ({
+        product_id: item.productId,
+        variant_id: item.variantId ?? null,
+        product_name_snapshot: item.name,
+        variant_name_snapshot: item.variantName ?? null,
+        unit_price_snapshot: item.price || 0,
+        quantity: item.qty,
+        subtotal: (item.price || 0) * item.qty,
+        weight_gram: item.weight_in_gram || 500,
+      })),
+    };
 
-    const itemsPayload = cart.map((item) => ({
-      order_id: newOrderId,
-      product_id: item.productId,
-      variant_id: item.variantId ?? null,
-      product_name_snapshot: item.name,
-      variant_name_snapshot: item.variantName ?? null,
-      unit_price_snapshot: item.price || 0,
-      quantity: item.qty,
-      subtotal: (item.price || 0) * item.qty,
-      weight_gram: item.weight_in_gram || 500,
-    }));
-    const { error: itemsError } = await supabase.from('order_items').insert(itemsPayload);
-    if (itemsError) throw itemsError;
+    const { data: result, error: fnError } = await supabase.functions.invoke(
+      'create-order',
+      { body: payload }
+    );
 
-    return newOrderId;
+    if (fnError) {
+      throw new Error(`create-order: ${fnError.message}`);
+    }
+    if (!result?.success || !result?.order_id) {
+      throw new Error(`create-order: ${result?.error || 'Unknown error'}`);
+    }
+
+    return result.order_id;
   };
 
   // ===== Submit → check auth → save order → mint Snap token → window.snap.pay() =====

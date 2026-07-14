@@ -145,11 +145,35 @@ export const AuthProvider = ({ children }) => {
     // Kalau email confirmation OFF (sandbox), user langsung login
     if (data.user) {
       setUser(data.user);
-      // Profile di-create oleh trigger handle_new_user
-      // Tunggu sebentar supaya trigger selesai, lalu fetch
-      setTimeout(async () => {
-        await fetchProfile(data.user.id);
-      }, 500);
+
+      // ⭐ Retry loop: fetch profile sampai tersedia (max 5 attempts, 300ms interval)
+      // Sebelumnya pakai setTimeout(500) sekali — race condition kalau trigger
+      // lambat (cold start DB, RLS policy eval, dll).
+      const maxAttempts = 5;
+      const intervalMs = 300;
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        await new Promise((r) => setTimeout(r, intervalMs));
+        try {
+          const { data: profileData, error: profileErr } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', data.user.id)
+            .maybeSingle();
+
+          if (profileData) {
+            setProfile(profileData);
+            console.log(`[AuthContext] Profile fetched on attempt ${attempt}`);
+            break;
+          }
+          if (attempt === maxAttempts) {
+            console.warn(`[AuthContext] Profile not found after ${maxAttempts} attempts. Trigger may have failed.`);
+            // Jangan throw — kasih user login dulu, profile bisa di-fetch ulang
+            // via onAuthStateChange atau refreshProfile nanti.
+          }
+        } catch (e) {
+          console.warn(`[AuthContext] Profile fetch attempt ${attempt} error:`, e.message);
+        }
+      }
     }
 
     return data;

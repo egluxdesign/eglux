@@ -34,7 +34,29 @@ const LoginForm = () => {
     setError('');
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) {
-      setError('Email atau password salah.');
+      // ⭐ Tampilkan error asli dari Supabase, bukan generic "email/password salah".
+      // Supabase error messages (English) yang umum:
+      //   - "Invalid login credentials"
+      //   - "Email not confirmed"
+      //   - "User not found"
+      //   - "Too many requests"
+      // Mapping ke bahasa Indonesia supaya user-friendly:
+      let friendlyError;
+      const msg = (error.message || '').toLowerCase();
+      if (msg.includes('invalid login credentials') || msg.includes('user not found')) {
+        friendlyError = 'Email atau password salah.';
+      } else if (msg.includes('email not confirmed')) {
+        friendlyError = 'Email belum dikonfirmasi. Cek inbox email kamu (termasuk folder spam) untuk link konfirmasi.';
+      } else if (msg.includes('too many requests')) {
+        friendlyError = 'Terlalu banyak percobaan login. Tunggu beberapa menit lalu coba lagi.';
+      } else if (msg.includes('email rate limit exceeded')) {
+        friendlyError = 'Batas email tercapai. Tunggu sebentar lalu coba lagi.';
+      } else {
+        // Default: tampilkan error asli biar gampang debug
+        friendlyError = error.message;
+      }
+      setError(friendlyError);
+      console.error('[Login] Supabase auth error:', error);
       setLoading(false);
       return;
     }
