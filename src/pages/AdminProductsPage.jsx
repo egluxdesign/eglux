@@ -301,6 +301,10 @@ const AdminProductsPage = () => {
     base_price: '', weight_in_gram: '', badge: '', is_active: '',
   });
 
+  // Delete confirmation modal
+  const [deleteConfirm, setDeleteConfirm] = useState(null); // { productIds: [], productNames: [], isBulk: bool }
+  const [deleting, setDeleting] = useState(false);
+
   // CSV/XLSX upload
   const [uploadFormat, setUploadFormat] = useState('csv'); // 'csv' | 'xlsx'
   const [productsFile, setProductsFile] = useState(null);
@@ -522,6 +526,74 @@ const AdminProductsPage = () => {
       }
     } catch (e) {
       showToast(`✗ Network error: ${e.message}`, 'error');
+    }
+  };
+
+  // ============================================================================
+  // DELETE PRODUCTS (single + bulk)
+  // ============================================================================
+  const handleDeleteSingle = (product) => {
+    setDeleteConfirm({
+      productIds: [product.id],
+      productNames: [product.name],
+      isBulk: false,
+    });
+  };
+
+  const handleDeleteSelected = () => {
+    if (selectedProducts.size === 0) {
+      showToast('Pilih produk dulu', 'error');
+      return;
+    }
+    const selectedList = products.filter((p) => selectedProducts.has(p.id));
+    setDeleteConfirm({
+      productIds: Array.from(selectedProducts),
+      productNames: selectedList.map((p) => p.name),
+      isBulk: true,
+    });
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteConfirm) return;
+    setDeleting(true);
+    try {
+      // Get current session JWT for auth
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        showToast('Sesi login habis. Login ulang dulu.', 'error');
+        setDeleting(false);
+        return;
+      }
+
+      const resp = await fetch(`${SUPABASE_URL}/functions/v1/delete-products`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ product_ids: deleteConfirm.productIds }),
+      });
+      const result = await resp.json();
+
+      if (result.success) {
+        showToast(`✓ ${result.success_count} produk dihapus`, 'success');
+        setDeleteConfirm(null);
+        setSelectedProducts(new Set());
+        await fetchProducts();
+      } else {
+        // Partial success
+        const failed = result.results?.filter((r) => !r.success) || [];
+        showToast(`✓ ${result.success_count} dihapus, ✗ ${result.error_count} gagal`, 'warning');
+        console.error('Delete errors:', failed);
+        if (result.success_count > 0) {
+          await fetchProducts();
+        }
+        setDeleteConfirm(null);
+      }
+    } catch (e) {
+      showToast(`✗ Network error: ${e.message}`, 'error');
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -843,6 +915,12 @@ const AdminProductsPage = () => {
                   {bulkEditMode ? 'Cancel' : '✏ Bulk Edit'}
                 </button>
                 <button
+                  onClick={handleDeleteSelected}
+                  className="px-3 py-1.5 text-sm font-medium text-red-700 bg-white border border-red-300 rounded-md hover:bg-red-50"
+                >
+                  🗑 Hapus ({selectedProducts.size})
+                </button>
+                <button
                   onClick={() => setSelectedProducts(new Set())}
                   className="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-800"
                 >
@@ -952,13 +1030,22 @@ const AdminProductsPage = () => {
                         onClick={() => setEditingProduct(p)}
                       >
                         <td className="px-3 py-2 text-center" onClick={(e) => e.stopPropagation()}>
-                          <button
-                            onClick={() => setEditingProduct(p)}
-                            className="text-gray-400 hover:text-blue-600 text-xs px-1"
-                            title="Edit produk (Shopee-style panel)"
-                          >
-                            ✏
-                          </button>
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => setEditingProduct(p)}
+                              className="text-gray-400 hover:text-blue-600 text-xs px-1"
+                              title="Edit produk (Shopee-style panel)"
+                            >
+                              ✏
+                            </button>
+                            <button
+                              onClick={() => handleDeleteSingle(p)}
+                              className="text-gray-400 hover:text-red-600 text-xs px-1"
+                              title="Hapus produk"
+                            >
+                              🗑
+                            </button>
+                          </div>
                         </td>
                         <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
                           <input
@@ -1036,6 +1123,88 @@ const AdminProductsPage = () => {
           'bg-gray-800 text-white'
         }`}>
           {toast.msg}
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {deleteConfirm && (
+        <div
+          className="fixed inset-0 bg-black/50 z-[2000] flex items-center justify-center p-4"
+          onClick={(e) => e.target === e.currentTarget && !deleting && setDeleteConfirm(null)}
+        >
+          <div className="bg-white rounded-xl max-w-md w-full p-6 shadow-2xl">
+            {/* Header */}
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center flex-shrink-0">
+                <svg className="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-gray-900">
+                  {deleteConfirm.isBulk ? `Hapus ${deleteConfirm.productIds.length} Produk?` : 'Hapus Produk?'}
+                </h3>
+                <p className="text-sm text-gray-500">Tindakan ini tidak bisa dibatalkan.</p>
+              </div>
+            </div>
+
+            {/* Warning text */}
+            <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4">
+              <p className="text-sm text-red-700">
+                Semua data berikut akan dihapus permanen:
+              </p>
+              <ul className="text-xs text-red-600 mt-1.5 ml-4 list-disc">
+                <li>Product row dari database</li>
+                <li>Semua variants dari product ini</li>
+                <li>Semua images dari Storage & database</li>
+              </ul>
+            </div>
+
+            {/* Product names preview (max 5) */}
+            <div className="mb-4">
+              <p className="text-xs font-medium text-gray-600 mb-1.5">
+                Produk yang akan dihapus:
+              </p>
+              <div className="bg-gray-50 rounded-lg p-2 max-h-[120px] overflow-y-auto">
+                {deleteConfirm.productNames.slice(0, 5).map((name, i) => (
+                  <p key={i} className="text-sm text-gray-700 truncate">• {name}</p>
+                ))}
+                {deleteConfirm.productNames.length > 5 && (
+                  <p className="text-xs text-gray-500 mt-1">
+                    ...dan {deleteConfirm.productNames.length - 5} produk lainnya
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {/* Action buttons */}
+            <div className="flex gap-3">
+              <button
+                onClick={() => setDeleteConfirm(null)}
+                disabled={deleting}
+                className="flex-1 px-4 py-2.5 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Batal
+              </button>
+              <button
+                onClick={confirmDelete}
+                disabled={deleting}
+                className="flex-1 px-4 py-2.5 text-sm font-bold text-white bg-red-600 rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                {deleting ? (
+                  <>
+                    <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                    Menghapus...
+                  </>
+                ) : (
+                  `🗑 Hapus Permanen`
+                )}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
