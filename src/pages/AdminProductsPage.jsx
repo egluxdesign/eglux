@@ -21,6 +21,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import EditProductPanel from '../components/admin/EditProductPanel';
+import AddProductPanel from '../components/admin/AddProductPanel';
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -293,6 +294,9 @@ const AdminProductsPage = () => {
 
   // Edit panel (Shopee-style slide-in)
   const [editingProduct, setEditingProduct] = useState(null);
+
+  // Add Product panel (slide-in untuk create new product)
+  const [showAddPanel, setShowAddPanel] = useState(false);
 
   // Bulk select
   const [selectedProducts, setSelectedProducts] = useState(new Set());
@@ -739,6 +743,12 @@ const AdminProductsPage = () => {
           </div>
           <div className="flex gap-2">
             <button
+              onClick={() => setShowAddPanel(true)}
+              className="px-4 py-2 text-sm font-bold text-white bg-blue-600 rounded-md hover:bg-blue-700"
+            >
+              + Tambah Produk
+            </button>
+            <button
               onClick={handleExport}
               disabled={exporting}
               className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50"
@@ -1130,6 +1140,13 @@ const AdminProductsPage = () => {
           onSaved={fetchProducts}
         />
       )}
+
+      {/* Add Product Panel (slide-in untuk create new product) */}
+      <AddProductPanel
+        isOpen={showAddPanel}
+        onClose={() => setShowAddPanel(false)}
+        onCreated={fetchProducts}
+      />
 
       {/* Toast */}
       {toast && (
