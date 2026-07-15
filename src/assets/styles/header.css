@@ -85,11 +85,14 @@ nav.eglux-primary-nav {
   font-size: 0.82rem;
   font-weight: 500;
   color: #1a1d2b; /* eglux-primary */
-  padding: 0.5rem 1rem;
+  /* Padding di-handle oleh Tailwind (px-2 md:px-4) — jangan set di sini */
   white-space: nowrap;
   transition: color 0.2s ease;
   text-decoration: none;
   position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .nav-link:hover {
@@ -105,8 +108,10 @@ nav.eglux-primary-nav {
   content: '';
   position: absolute;
   bottom: -1px;
-  left: 1rem;
-  right: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 60%;
+  max-width: 32px;
   height: 2px;
   background: #c9a96e;
   border-radius: 1px;
