@@ -15,7 +15,7 @@
 // Cara panggil:
 //   POST /functions/v1/send-waba-test
 //   Body: { "order_id": "uuid", "event": "payment_success" }
-//   Headers: Authorization: Bearer <anon_key>
+//   Headers: Authorization: Bearer <admin-jwt-or-service-role>
 //
 // Switch ke live: ganti URL ke /functions/v1/send-waba-live
 // ============================================================================
@@ -46,7 +46,10 @@ serve(async (req: Request) => {
     return jsonResponse({ error: "Method not allowed" }, 405);
   }
 
-  // ── AUTH: Admin-only (team_dev / master / admin) ──
+  // ── AUTH: Admin-only ──
+  // Note: midtrans-webhook invoke function ini pakai service_role key.
+  // _shared/auth.ts sudah bypass service_role (return success tanpa JWT check).
+  // Frontend manual trigger (dari admin dashboard) pakai user JWT.
   const authResult = await requireAdmin(req);
   if (!authResult.success) {
     return authResult.response!;
@@ -155,6 +158,7 @@ serve(async (req: Request) => {
     success: true,
     mode: "test",
     message_id: messageId,
+    status: "test_sent",
     recipient: `+${order.customer_phone}`,
     template: message.template_name,
     template_params: message.template_params,

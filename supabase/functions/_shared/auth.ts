@@ -84,6 +84,20 @@ export async function authenticate(
   req: Request,
   allowedRoles?: string[],
 ): Promise<AuthResult> {
+  // ── 0. Service role bypass (internal edge function calls) ──
+  // Kalau caller adalah service_role (mis. midtrans-webhook invoke send-waba-test),
+  // Authorization header = service_role key (bukan user JWT). Skip auth check.
+  const authHeader0 = req.headers.get("Authorization");
+  if (authHeader0?.startsWith("Bearer ")) {
+    const token = authHeader0.slice(7).trim();
+    if (token === SUPABASE_SERVICE_ROLE_KEY) {
+      return {
+        success: true,
+        role: "service_role",
+      };
+    }
+  }
+
   // ── 1. Parse Authorization header ──
   const authHeader = req.headers.get("Authorization");
   if (!authHeader) {
