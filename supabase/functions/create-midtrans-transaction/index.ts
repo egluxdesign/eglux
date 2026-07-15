@@ -159,22 +159,11 @@ serve(async (req: Request) => {
         shipping_address: addressBlock,
       },
       item_details,
-      // Payment methods yang di-enable di Snap popup.
-      // EGLUX hanya accept QRIS:
-      //   - Customer scan QR pakai GoPay/Ovo/Dana/ShopeePay/BCA/etc.
-      //   - Settlement T+1 ke rekening BCA merchant (via Midtrans aggregation)
-      //
-      // Tidak ada payment method lain (BCA VA, credit card, e-wallet direct, retail) —
-      // sengaja disable untuk simplifikasi reconciliation dan UX.
-      //
-      // Kalau mau enable method lain di future:
-      //   - Tambah ke array ini (e.g., "bca_va", "gopay", "credit_card")
-      //   - Pastikan method aktif di Midtrans Dashboard → Settings → Payment Methods
-      //   - Catatan: kalau array cuma 2-3 methods, Midtrans Snap UI kadang render
-      //     sebagai accordion yang hide method tertentu. Test setelah deploy.
-      enabled_payments: [
-        "qris",
-      ],
+      // Payment methods: TIDAK di-restrict (biarkan Midtrans tampilkan semua
+      // methods yang aktif di akun merchant). Kalau restrict ke ["qris"] saja
+      // tapi QRIS belum di-enable di Dashboard → "No payment channels available".
+      // Untuk restrict QRIS only: enable QRIS di Dashboard dulu, lalu set:
+      //   enabled_payments: ["qris"],
       custom_field1: order.courier_code ? `${order.courier_code}/${order.courier_service}` : null,
       custom_field2: order.shipping_postal_code || null,
     };
