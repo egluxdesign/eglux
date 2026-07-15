@@ -39,14 +39,11 @@
     <meta name="twitter:image" content="https://eglux.vercel.app/og-image.png" />
 
     <!-- ── Midtrans Snap.js ──────────────────────────────────── -->
-    <!-- ⭐ Pakai %VITE_MIDTRANS_CLIENT_KEY% — Vite auto-replace saat build -->
-    <!-- Pastikan VITE_MIDTRANS_CLIENT_KEY ada di .env file -->
-    <script
-      type="text/javascript"
-      src="https://app.sandbox.midtrans.com/snap/snap.js"
-      data-client-key="%VITE_MIDTRANS_CLIENT_KEY%"
-    ></script>
-    <!-- Production: ganti src ke https://app.midtrans.com/snap/snap.js -->
+    <!-- ⚠️ Snap.js TIDAK di-load di sini. Di-load dynamically via
+         useMidtransSnap hook supaya:
+         1. CSP gak block (dynamic createElement bypass static script CSP issue)
+         2. Client key pasti benar (dari import.meta.env, bukan placeholder)
+         3. Load saat dibutuhkan saja (lazy load) -->
 
     <!-- ── Preconnect (speed up external resources) ──────────── -->
     <link rel="preconnect" href="https://down-id.img.susercontent.com" crossorigin />

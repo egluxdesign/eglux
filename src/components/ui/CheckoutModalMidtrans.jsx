@@ -582,37 +582,33 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
 
       setSubmitting(false);
 
-      // ── POPUP MODE (default) + FALLBACK KE REDIRECT ──
-      // Coba popup dulu. Kalau CSP block / window.snap undefined,
-      // auto-fallback ke redirect mode (lebih reliable).
-      const useRedirectFallback = !window.snap || typeof window.snap.pay !== 'function';
+      // ── PAYMENT: Popup mode (default) + Redirect fallback ──
+      // Cek apakah Snap.js ready (loaded via useMidtransSnap hook).
+      // Kalau gak ready (CSP block, load error, dll) → fallback ke redirect mode.
 
-      if (useRedirectFallback) {
+      const isSnapReady = window.snap && typeof window.snap.pay === 'function';
+
+      if (!isSnapReady) {
         // Fallback: redirect ke Midtrans Snap page langsung
-        console.warn('[Midtrans] window.snap not available — fallback to redirect mode');
+        console.warn('[Midtrans] Snap.js not ready — using redirect mode');
         const redirectUrl = data.redirect_url || `https://app.sandbox.midtrans.com/snap/v3/redirection/${data.token}`;
         onClose();
         clearCart();
         try { sessionStorage.setItem('eglux_last_order_id', currentOrderId); } catch (e) {}
+        showToast('Mengarahkan ke halaman pembayaran Midtrans...', 'info');
         window.location.href = redirectUrl;
         return;
       }
 
       // Popup mode — window.snap.pay()
-      // ⭐ Pastikan client key ter-set (fallback kalau data-client-key di index.html gagal)
-      if (window.snap && import.meta.env.VITE_MIDTRANS_CLIENT_KEY) {
-        window.snap.clientKey = import.meta.env.VITE_MIDTRANS_CLIENT_KEY;
-      }
-
       window.snap.pay(data.token, {
         onSuccess: async (result) => {
           console.log('[Midtrans] Payment success:', result.transaction_id);
           clearCart();
           onClose();
-          showToast('Pembayaran berhasil! Terima kasih ✓');
+          showToast('Pembayaran berhasil! Terima kasih ✓', 'success');
 
           // ⚠️ WABA notification di-handle oleh midtrans-webhook edge function
-          // (single source of truth, no double trigger)
         },
         onPending: () => {
           onClose();

@@ -72,7 +72,7 @@ const TOAST_STYLES = {
 
 const Toast = ({ toast, onClose }) => {
   useEffect(() => {
-    if (!toast) return;
+    if (!toast || !onClose) return;
     const timer = setTimeout(() => onClose(), 3000);
     return () => clearTimeout(timer);
   }, [toast, onClose]);
@@ -81,6 +81,10 @@ const Toast = ({ toast, onClose }) => {
 
   const style = TOAST_STYLES[toast.type] || TOAST_STYLES.info;
   const { Icon } = style;
+
+  const handleClose = () => {
+    if (typeof onClose === 'function') onClose();
+  };
 
   return (
     <div
@@ -92,7 +96,7 @@ const Toast = ({ toast, onClose }) => {
       <Icon className="w-4 h-4 flex-shrink-0" />
       <span className="text-[0.85rem] font-medium">{toast.message}</span>
       <button
-        onClick={onClose}
+        onClick={handleClose}
         aria-label="Tutup notifikasi"
         className="ml-2 p-1 hover:bg-black/5 rounded-full transition-colors cursor-pointer border-none bg-transparent"
       >

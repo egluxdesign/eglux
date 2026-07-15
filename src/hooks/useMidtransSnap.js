@@ -1,18 +1,7 @@
 // src/hooks/useMidtransSnap.js
-//
-// Hook buat load script Snap.js Midtrans secara dinamis (gak perlu taruh
-// <script> manual di index.html — otomatis milih URL sandbox/production).
-//
-// Cara pakai:
-//   const { snapReady } = useMidtransSnap();
-//   ...
-//   if (snapReady) window.snap.pay(token, { onSuccess, onPending, onError, onClose });
-
 import { useState, useEffect } from 'react';
 
-// GANTI sesuai environment lu. Client Key AMAN ditaruh di frontend (bukan rahasia),
-// beda sama Server Key yang cuma boleh ada di Edge Function.
-const MIDTRANS_CLIENT_KEY = import.meta.env.VITE_MIDTRANS_CLIENT_KEY; // atau process.env.NEXT_PUBLIC_... kalau Next.js
+const MIDTRANS_CLIENT_KEY = import.meta.env.VITE_MIDTRANS_CLIENT_KEY;
 const MIDTRANS_IS_PRODUCTION = import.meta.env.VITE_MIDTRANS_IS_PRODUCTION === 'true';
 
 const SNAP_SRC = MIDTRANS_IS_PRODUCTION
@@ -25,7 +14,7 @@ export function useMidtransSnap() {
 
   useEffect(() => {
     // Kalau script udah pernah dimuat (misal komponen lain sudah manggil hook ini duluan)
-    if (window.snap) {
+    if (window.snap && typeof window.snap.pay === 'function') {
       setSnapReady(true);
       return;
     }
@@ -34,7 +23,15 @@ export function useMidtransSnap() {
     script.src = SNAP_SRC;
     script.setAttribute('data-client-key', MIDTRANS_CLIENT_KEY);
     script.async = true;
-    script.onload = () => setSnapReady(true);
+    
+    script.onload = () => {
+      if (window.snap && typeof window.snap.pay === 'function') {
+        setSnapReady(true);
+      } else {
+        setLoadError('Snap.js loaded but API not ready');
+      }
+    };
+    
     script.onerror = () => setLoadError('Gagal memuat Snap.js. Cek koneksi atau Client Key.');
 
     document.body.appendChild(script);
