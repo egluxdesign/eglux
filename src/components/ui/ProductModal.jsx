@@ -18,6 +18,7 @@ const ProductModal = ({ product, onClose, onAddToCart }) => {
   const [selectedVariant, setSelectedVariant] = useState(null);
   const [qty, setQty] = useState(1);
   const [activeImage, setActiveImage] = useState('');
+  const [descOpen, setDescOpen] = useState(false);
 
   // 1. Filter: hanya tampilkan variant yang ACTIVE
   const activeVariants = useMemo(() => {
@@ -137,7 +138,7 @@ const ProductModal = ({ product, onClose, onAddToCart }) => {
       role="dialog"
       aria-modal="true"
     >
-      <div className="bg-white rounded-[20px] max-w-[520px] w-full max-h-[90vh] overflow-y-auto relative">
+      <div className="bg-white rounded-[20px] max-w-[520px] w-full max-h-[90vh] flex flex-col overflow-hidden relative">
         {/* Close button */}
         <button
           onClick={onClose}
@@ -149,176 +150,190 @@ const ProductModal = ({ product, onClose, onAddToCart }) => {
           &times;
         </button>
 
-        {/* === MAIN IMAGE (single large, square-ish) === */}
-        <div className="relative w-full h-[300px] md:h-[340px] overflow-hidden rounded-t-[20px] bg-[#f3f4f6]">
-          {activeImage ? (
-            <img
-              src={activeImage}
-              alt={product.name}
-              className="w-full h-full object-cover transition-all duration-300"
-              loading="lazy"
-            />
-          ) : (
-            <div className="w-full h-full flex flex-col items-center justify-center text-[#9ca3af]">
-              <span className="text-4xl mb-2">📷</span>
-              <span className="text-[0.85rem]">Upload gambar di Admin</span>
-            </div>
-          )}
-
-          {/* Badge overlay */}
-          {product.badge && (
-            <span className="absolute top-4 left-4 bg-eglux-secondary text-white text-[0.72rem] font-semibold py-1 px-3 rounded-full">
-              {product.badge}
-            </span>
-          )}
-        </div>
-
-        {/* === THUMBNAIL STRIP (ALL images: cover + variants) === */}
-        {allThumbnails.length > 1 && (
-          <div className="flex gap-2 px-6 pt-3 pb-2 overflow-x-auto">
-            {allThumbnails.map((img, idx) => (
-              <button
-                key={img.id || img.url || idx}
-                onClick={() => handleThumbnailClick(img)}
-                className={`relative flex-shrink-0 w-14 h-14 rounded-lg overflow-hidden border-2 transition-all ${
-                  activeImage === img.url
-                    ? 'border-eglux-secondary'
-                    : 'border-transparent opacity-60 hover:opacity-100'
-                }`}
-              >
-                <img src={img.url} alt="" className="w-full h-full object-cover" />
-                {/* Badge: variant name di thumbnail */}
-                {img.type === 'variant' && (
-                  <span className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-[0.55rem] py-0.5 px-1 truncate">
-                    {img.variantName}
-                  </span>
-                )}
-              </button>
-            ))}
-          </div>
-        )}
-
-        {/* === PRODUCT INFO === */}
-        <div className="p-6 pt-3">
-          <h2 className="text-[1.1rem] font-bold text-eglux-primary mb-1 leading-snug">{product.name}</h2>
-          <p className="text-[0.8rem] text-[#999] mb-3 uppercase tracking-[0.5px]">{product.category}</p>
-
-          {/* === PRICE DISPLAY (Shopee pattern: strike base + large variant) === */}
-          <div className="mb-4 pb-4 border-b border-[#eee]">
-            {selectedVariant && effectivePrice > 0 ? (
-              <div className="flex items-baseline gap-2 flex-wrap">
-                {/* Strike through base price (small, gray) — only if variant < base */}
-                {basePrice > effectivePrice && (
-                  <span className="text-[0.85rem] text-[#999] line-through">
-                    {rupiah(basePrice)}
-                  </span>
-                )}
-                {/* Variant price (large, gold/accent) */}
-                <span className="text-[1.5rem] font-bold text-eglux-secondary">
-                  {rupiah(effectivePrice)}
-                </span>
-                {/* Discount badge (optional) */}
-                {basePrice > effectivePrice && (
-                  <span className="bg-red-500 text-white text-[0.65rem] font-bold py-0.5 px-1.5 rounded">
-                    -{Math.round(((basePrice - effectivePrice) / basePrice) * 100)}%
-                  </span>
-                )}
-              </div>
+        {/* === SCROLLABLE CONTENT === */}
+        <div className="flex-1 overflow-y-auto">
+          {/* === MAIN IMAGE (1:1 square) === */}
+          <div className="relative w-full aspect-square overflow-hidden bg-[#f3f4f6]">
+            {activeImage ? (
+              <img
+                src={activeImage}
+                alt={product.name}
+                className="w-full h-full object-cover transition-all duration-300"
+                loading="lazy"
+              />
             ) : (
-              <span className="text-[1.2rem] font-bold text-[#999]">Hubungi CS</span>
+              <div className="w-full h-full flex flex-col items-center justify-center text-[#9ca3af]">
+                <span className="text-4xl mb-2">📷</span>
+                <span className="text-[0.85rem]">Upload gambar di Admin</span>
+              </div>
+            )}
+
+            {/* Badge overlay */}
+            {product.badge && (
+              <span className="absolute top-4 left-4 bg-eglux-secondary text-white text-[0.72rem] font-semibold py-1 px-3 rounded-full">
+                {product.badge}
+              </span>
             )}
           </div>
 
-          {/* Description */}
-          {product.desc && (
-            <p className="text-[0.85rem] text-[#666] leading-relaxed mb-4">{product.desc}</p>
-          )}
-
-          {/* === VARIANT SELECTOR (Shopee chip pattern) === */}
-          {sortedVariants.length > 0 && (
-            <div className="mb-4">
-              <p className="text-[0.78rem] font-semibold uppercase tracking-[1px] text-eglux-primary mb-2">
-                Pilih Varian {selectedVariant && <span className="text-eglux-secondary normal-case">: {selectedVariant.name}</span>}
-              </p>
-              <div className="flex flex-wrap gap-2">
-                {sortedVariants.map((v) => {
-                  const isSelected = selectedVariant?.id === v.id;
-                  const vStock = parseInt(v.stock, 10) || 0;
-                  // Hanya out of stock kalau stock PASTI 0 (bukan null/undefined)
-                  const vOutOfStock = vStock === 0 && v.stock !== null && v.stock !== undefined;
-                  const showStock = vStock > 0 && vStock < 20;
-                  const vPrice = Number(v.price) || 0;
-
-                  return (
-                    <button
-                      key={v.id}
-                      onClick={() => handleVariantClick(v)}
-                      disabled={vOutOfStock}
-                      className={`relative py-2 px-3 border-[1.5px] rounded-lg text-[0.82rem] cursor-pointer font-medium transition-all duration-200 text-center min-w-[80px]
-                        ${isSelected
-                          ? 'border-eglux-secondary bg-eglux-accent'
-                          : 'border-[#ddd] bg-white hover:border-eglux-secondary hover:bg-eglux-accent/50'}
-                        ${vOutOfStock ? 'opacity-40 cursor-not-allowed' : ''}`}
-                    >
-                      <span className="block font-semibold leading-tight">{v.name}</span>
-                      <span className={`block text-[0.72rem] mt-0.5 ${isSelected ? 'text-eglux-secondary' : 'text-[#999]'}`}>
-                        {vPrice > 0 ? rupiah(vPrice) : 'Hubungi CS'}
-                      </span>
-                      {showStock && (
-                        <span className="block text-[0.65rem] text-[#bbb] mt-0.5">
-                          Sisa {vStock}
-                        </span>
-                      )}
-                      {vOutOfStock && (
-                        <span className="block text-[0.65rem] text-red-400 mt-0.5">
-                          Habis
-                        </span>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
+          {/* === THUMBNAIL STRIP === */}
+          {allThumbnails.length > 1 && (
+            <div className="flex gap-2 px-6 pt-3 pb-2 overflow-x-auto">
+              {allThumbnails.map((img, idx) => (
+                <button
+                  key={img.id || img.url || idx}
+                  onClick={() => handleThumbnailClick(img)}
+                  className={`relative flex-shrink-0 w-14 h-14 rounded-lg overflow-hidden border-2 transition-all ${
+                    activeImage === img.url
+                      ? 'border-eglux-secondary'
+                      : 'border-transparent opacity-60 hover:opacity-100'
+                  }`}
+                >
+                  <img src={img.url} alt="" className="w-full h-full object-cover" />
+                  {img.type === 'variant' && (
+                    <span className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-[0.55rem] py-0.5 px-1 truncate">
+                      {img.variantName}
+                    </span>
+                  )}
+                </button>
+              ))}
             </div>
           )}
 
-          {/* === QUANTITY === */}
-          {selectedVariant && !isOutOfStock && effectivePrice > 0 && (
-            <div className="mb-4">
-              <p className="text-[0.78rem] font-semibold uppercase tracking-[1px] text-eglux-primary mb-2">Jumlah</p>
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={() => setQty((q) => Math.max(1, q - 1))}
-                  disabled={qty <= 1}
-                  className="w-11 h-11 min-w-[44px] min-h-[44px] border-[1.5px] border-[#ddd] rounded-lg bg-white flex items-center justify-center text-xl font-semibold text-eglux-primary cursor-pointer hover:border-eglux-secondary hover:bg-eglux-accent transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-                  aria-label="Kurangi jumlah"
-                >
-                  −
-                </button>
-                <span className="text-[1.1rem] font-bold min-w-[28px] text-center text-eglux-primary">{qty}</span>
-                <button
-                  onClick={() => setQty((q) => Math.min(maxStock, q + 1))}
-                  disabled={qty >= maxStock}
-                  className="w-11 h-11 min-w-[44px] min-h-[44px] border-[1.5px] border-[#ddd] rounded-lg bg-white flex items-center justify-center text-xl font-semibold text-eglux-primary cursor-pointer hover:border-eglux-secondary hover:bg-eglux-accent transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-                  aria-label="Tambah jumlah"
-                >
-                  +
-                </button>
-                <span className="text-[0.75rem] text-[#999] ml-2">
-                  {maxStock} tersedia
-                </span>
-              </div>
-            </div>
-          )}
+          {/* === PRODUCT INFO === */}
+          <div className="p-6 pt-3">
+            <h2 className="text-[1.1rem] font-bold text-eglux-primary mb-1 leading-snug">{product.name}</h2>
+            <p className="text-[0.8rem] text-[#999] mb-3 uppercase tracking-[0.5px]">{product.category}</p>
 
-          {/* === SUBTOTAL === */}
+            {/* === PRICE DISPLAY === */}
+            <div className="mb-4 pb-4 border-b border-[#eee]">
+              {selectedVariant && effectivePrice > 0 ? (
+                <div className="flex items-baseline gap-2 flex-wrap">
+                  {basePrice > effectivePrice && (
+                    <span className="text-[0.85rem] text-[#999] line-through">
+                      {rupiah(basePrice)}
+                    </span>
+                  )}
+                  <span className="text-[1.5rem] font-bold text-eglux-secondary">
+                    {rupiah(effectivePrice)}
+                  </span>
+                  {basePrice > effectivePrice && (
+                    <span className="bg-red-500 text-white text-[0.65rem] font-bold py-0.5 px-1.5 rounded">
+                      -{Math.round(((basePrice - effectivePrice) / basePrice) * 100)}%
+                    </span>
+                  )}
+                </div>
+              ) : (
+                <span className="text-[1.2rem] font-bold text-[#999]">Hubungi CS</span>
+              )}
+            </div>
+
+            {/* === VARIANT SELECTOR (moved up, above description) === */}
+            {sortedVariants.length > 0 && (
+              <div className="mb-4">
+                <p className="text-[0.78rem] font-semibold uppercase tracking-[1px] text-eglux-primary mb-2">
+                  Pilih Varian {selectedVariant && <span className="text-eglux-secondary normal-case">: {selectedVariant.name}</span>}
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {sortedVariants.map((v) => {
+                    const isSelected = selectedVariant?.id === v.id;
+                    const vStock = parseInt(v.stock, 10) || 0;
+                    const vOutOfStock = vStock === 0 && v.stock !== null && v.stock !== undefined;
+                    const showStock = vStock > 0 && vStock < 20;
+                    const vPrice = Number(v.price) || 0;
+
+                    return (
+                      <button
+                        key={v.id}
+                        onClick={() => handleVariantClick(v)}
+                        disabled={vOutOfStock}
+                        className={`relative py-2 px-3 border-[1.5px] rounded-lg text-[0.82rem] cursor-pointer font-medium transition-all duration-200 text-center min-w-[80px]
+                          ${isSelected
+                            ? 'border-eglux-secondary bg-eglux-accent'
+                            : 'border-[#ddd] bg-white hover:border-eglux-secondary hover:bg-eglux-accent/50'}
+                          ${vOutOfStock ? 'opacity-40 cursor-not-allowed' : ''}`}
+                      >
+                        <span className="block font-semibold leading-tight">{v.name}</span>
+                        <span className={`block text-[0.72rem] mt-0.5 ${isSelected ? 'text-eglux-secondary' : 'text-[#999]'}`}>
+                          {vPrice > 0 ? rupiah(vPrice) : 'Hubungi CS'}
+                        </span>
+                        {showStock && (
+                          <span className="block text-[0.65rem] text-[#bbb] mt-0.5">
+                            Sisa {vStock}
+                          </span>
+                        )}
+                        {vOutOfStock && (
+                          <span className="block text-[0.65rem] text-red-400 mt-0.5">
+                            Habis
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* === QUANTITY (moved up, above description) === */}
+            {selectedVariant && !isOutOfStock && effectivePrice > 0 && (
+              <div className="mb-4">
+                <p className="text-[0.78rem] font-semibold uppercase tracking-[1px] text-eglux-primary mb-2">Jumlah</p>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => setQty((q) => Math.max(1, q - 1))}
+                    disabled={qty <= 1}
+                    className="w-11 h-11 min-w-[44px] min-h-[44px] border-[1.5px] border-[#ddd] rounded-lg bg-white flex items-center justify-center text-xl font-semibold text-eglux-primary cursor-pointer hover:border-eglux-secondary hover:bg-eglux-accent transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                    aria-label="Kurangi jumlah"
+                  >
+                    −
+                  </button>
+                  <span className="text-[1.1rem] font-bold min-w-[28px] text-center text-eglux-primary">{qty}</span>
+                  <button
+                    onClick={() => setQty((q) => Math.min(maxStock, q + 1))}
+                    disabled={qty >= maxStock}
+                    className="w-11 h-11 min-w-[44px] min-h-[44px] border-[1.5px] border-[#ddd] rounded-lg bg-white flex items-center justify-center text-xl font-semibold text-eglux-primary cursor-pointer hover:border-eglux-secondary hover:bg-eglux-accent transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                    aria-label="Tambah jumlah"
+                  >
+                    +
+                  </button>
+                  <span className="text-[0.75rem] text-[#999] ml-2">
+                    {maxStock} tersedia
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* === DESCRIPTION (FAQ-style accordion, di bagian bawah) === */}
+            {product.desc && (
+              <div className="border-t border-[#eee] pt-4 mt-2">
+                <button
+                  onClick={() => setDescOpen(!descOpen)}
+                  className="w-full flex items-center justify-between text-[0.85rem] font-semibold text-eglux-primary cursor-pointer border-none bg-transparent"
+                >
+                  <span>Deskripsi</span>
+                  <svg
+                    className={`w-4 h-4 transition-transform duration-300 ${descOpen ? 'rotate-180' : ''}`}
+                    viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                  >
+                    <polyline points="6 9 12 15 18 9" />
+                  </svg>
+                </button>
+                <div className={`overflow-hidden transition-all duration-300 ${descOpen ? 'max-h-[500px] mt-3' : 'max-h-0'}`}>
+                  <p className="text-[0.85rem] text-[#666] leading-relaxed">{product.desc}</p>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* === STICKY BOTTOM: Subtotal + Cart Button === */}
+        <div className="border-t border-[#eee] bg-white px-6 py-4 flex-shrink-0">
           {selectedVariant && !isOutOfStock && effectivePrice > 0 && (
-            <div className="flex items-center justify-between bg-eglux-accent rounded-[10px] py-3 px-4 mb-4">
+            <div className="flex items-center justify-between mb-3">
               <span className="text-[0.82rem] text-[#666] font-medium">Subtotal</span>
               <span className="text-[1.1rem] font-bold text-eglux-primary">{rupiah(subtotal)}</span>
             </div>
           )}
-
-          {/* === CTA BUTTON === */}
           <button
             onClick={() => {
               if (selectedVariant && !isOutOfStock && effectivePrice > 0) {
