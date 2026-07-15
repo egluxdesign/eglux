@@ -582,64 +582,33 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
 
       setSubmitting(false);
 
-      // ── PAYMENT: Popup mode + Auto-fallback ke Redirect ──
-      const redirectUrl = data.redirect_url ||
-        `https://app.sandbox.midtrans.com/snap/v3/redirection/${data.token}`;
-
-      // Cek apakah Snap.js siap
+      // ── PAYMENT: Popup mode ──
       const isSnapReady = window.snap && typeof window.snap.pay === 'function';
 
       if (!isSnapReady) {
-        // Snap.js gak ready → langsung redirect
-        console.warn('[Midtrans] Snap.js not ready — using redirect mode');
-        onClose();
-        clearCart();
-        try { sessionStorage.setItem('eglux_last_order_id', currentOrderId); } catch (e) {}
-        showToast('Mengarahkan ke halaman pembayaran Midtrans...', 'info');
-        window.location.href = redirectUrl;
+        showToast('Sistem pembayaran belum siap. Refresh halaman lalu coba lagi.', 'error');
+        setSubmitting(false);
         return;
       }
-
-      // ⭐ Auto-fallback timer: kalau popup gak sukses dalam 8 detik,
-      // auto-redirect ke halaman Midtrans (cegah stuck kalau popup crash)
-      let popupSucceeded = false;
-      const fallbackTimer = setTimeout(() => {
-        if (!popupSucceeded) {
-          console.warn('[Midtrans] Popup timeout — fallback to redirect');
-          onClose();
-          clearCart();
-          try { sessionStorage.setItem('eglux_last_order_id', currentOrderId); } catch (e) {}
-          showToast('Mengarahkan ke halaman pembayaran...', 'info');
-          window.location.href = redirectUrl;
-        }
-      }, 8000);
 
       // Popup mode — window.snap.pay()
       window.snap.pay(data.token, {
         onSuccess: (result) => {
-          popupSucceeded = true;
-          clearTimeout(fallbackTimer);
           console.log('[Midtrans] Payment success:', result.transaction_id);
           clearCart();
           onClose();
           showToast('Pembayaran berhasil! Terima kasih ✓', 'success');
         },
         onPending: () => {
-          popupSucceeded = true;
-          clearTimeout(fallbackTimer);
           onClose();
           showToast('Menunggu pembayaran. Cek WA/email untuk instruksi.', 'info');
         },
         onError: (result) => {
-          popupSucceeded = true;
-          clearTimeout(fallbackTimer);
           console.error('[Midtrans] Payment error:', result);
           onClose();
           showToast('Pembayaran gagal. Coba metode lain.', 'error');
         },
         onClose: () => {
-          popupSucceeded = true;
-          clearTimeout(fallbackTimer);
           onClose();
           showToast('Kamu menutup halaman pembayaran. Order tersimpan — hubungi kami untuk bayar.', 'warning');
         },
