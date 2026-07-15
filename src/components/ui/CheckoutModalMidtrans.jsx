@@ -582,6 +582,28 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
 
       setSubmitting(false);
 
+      // ── POPUP MODE (default) + FALLBACK KE REDIRECT ──
+      // Coba popup dulu. Kalau CSP block / window.snap undefined,
+      // auto-fallback ke redirect mode (lebih reliable).
+      const useRedirectFallback = !window.snap || typeof window.snap.pay !== 'function';
+
+      if (useRedirectFallback) {
+        // Fallback: redirect ke Midtrans Snap page langsung
+        console.warn('[Midtrans] window.snap not available — fallback to redirect mode');
+        const redirectUrl = data.redirect_url || `https://app.sandbox.midtrans.com/snap/v3/redirection/${data.token}`;
+        onClose();
+        clearCart();
+        try { sessionStorage.setItem('eglux_last_order_id', currentOrderId); } catch (e) {}
+        window.location.href = redirectUrl;
+        return;
+      }
+
+      // Popup mode — window.snap.pay()
+      // ⭐ Pastikan client key ter-set (fallback kalau data-client-key di index.html gagal)
+      if (window.snap && import.meta.env.VITE_MIDTRANS_CLIENT_KEY) {
+        window.snap.clientKey = import.meta.env.VITE_MIDTRANS_CLIENT_KEY;
+      }
+
       window.snap.pay(data.token, {
         onSuccess: async (result) => {
           console.log('[Midtrans] Payment success:', result.transaction_id);
@@ -589,22 +611,22 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
           onClose();
           showToast('Pembayaran berhasil! Terima kasih ✓');
 
-          // ⚠️ WABA notification TIDAK di-trigger dari frontend lagi.
-          // midtrans-webhook edge function sudah handle WABA notification
-          // saat menerima webhook dari Midtrans (settlement/capture).
-          // Kalau di-trigger dari frontend juga → double row di waba_messages.
-          // Plus send-waba-test butuh admin JWT, frontend gak punya.
-          // Webhook = single source of truth, lebih reliable.
+          // ⚠️ WABA notification di-handle oleh midtrans-webhook edge function
+          // (single source of truth, no double trigger)
         },
         onPending: () => {
-          showToast('Menunggu pembayaran. Cek WA/email untuk instruksi.');
+          onClose();
+          showToast('Menunggu pembayaran. Cek WA/email untuk instruksi.', 'info');
         },
         onError: (result) => {
           console.error('[Midtrans] Payment error:', result);
-          showToast('Pembayaran gagal. Coba metode lain.');
+          onClose();
+          showToast('Pembayaran gagal. Coba metode lain.', 'error');
         },
         onClose: () => {
-          showToast('Kamu menutup halaman pembayaran. Order tersimpan — hubungi kami untuk bayar.');
+          // ⭐ Saat user close popup, close modal juga + reset body overflow
+          onClose();
+          showToast('Kamu menutup halaman pembayaran. Order tersimpan — hubungi kami untuk bayar.', 'warning');
         },
       });
     } catch (err) {
