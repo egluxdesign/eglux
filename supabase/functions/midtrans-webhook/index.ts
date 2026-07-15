@@ -459,6 +459,33 @@ serve(async (req: Request) => {
       // Jangan fail webhook — Midtrans akan retry webhook, dan create-biteship-order
       // bisa di-trigger manual dari admin dashboard kalau perlu
     }
+
+    // ── Create admin notification (payment success) ──
+    // Notifikasi hanya muncul saat pembayaran berhasil, BUKAN saat order dibuat.
+    try {
+      // Fetch order + customer untuk data notifikasi
+      const { data: orderData } = await supabase
+        .from("orders")
+        .select("id, total_amount, customer:customers(name)")
+        .eq("id", order_id)
+        .single();
+
+      if (orderData) {
+        const customerName = (orderData.customer as any)?.name || "Customer";
+        const totalAmount = Number(orderData.total_amount) || 0;
+
+        await supabase.from("notifications").insert({
+          type: "payment",
+          title: "Pembayaran Diterima",
+          message: `${customerName} membayar Rp ${totalAmount.toLocaleString("id-ID")} (${finalPaymentType || "transfer"})`,
+          reference_id: order_id,
+          is_read: false,
+        });
+        console.log("[midtrans-webhook] ✓ Payment notification created");
+      }
+    } catch (e) {
+      console.warn("[midtrans-webhook] Notification creation failed:", e);
+    }
   }
 
   // 5. Return 200 ke Midtrans (penting — kalau tidak 200, Midtrans retry)
