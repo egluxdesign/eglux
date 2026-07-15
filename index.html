@@ -25,10 +25,7 @@
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://eglux.vercel.app/" />
     <meta property="og:title" content="Eglux — Produk Rumah Tangga & Dapur Berkualitas" />
-    <meta
-      property="og:description"
-      content="Perlengkapan dapur, tempat prasmanan, storage, dan home decor estetik berkualitas. Desain elegan untuk rumah modern."
-    />
+    <meta property="og:description" content="Perlengkapan dapur, tempat prasmanan, storage, dan home decor estetik berkualitas. Desain elegan untuk rumah modern." />
     <meta property="og:image" content="https://eglux.vercel.app/og-image.png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
@@ -38,11 +35,18 @@
     <!-- ── Twitter Card ──────────────────────────────────────── -->
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="Eglux — Produk Rumah Tangga & Dapur Berkualitas" />
-    <meta
-      name="twitter:description"
-      content="Perlengkapan dapur, tempat prasmanan, storage, dan home decor estetik berkualitas."
-    />
+    <meta name="twitter:description" content="Perlengkapan dapur, tempat prasmanan, storage, dan home decor estetik berkualitas." />
     <meta name="twitter:image" content="https://eglux.vercel.app/og-image.png" />
+
+    <!-- Midtrans Snap.js — load di head supaya ready sebelum checkout -->
+    <!-- Snap.js butuh CSP allow: script-src https://app.sandbox.midtrans.com -->
+    <script
+      type="text/javascript"
+      src="https://app.sandbox.midtrans.com/snap/snap.js"
+      data-client-key="<VITE_MIDTRANS_CLIENT_KEY>"
+    ></script>
+    <!-- Production: ganti src ke https://app.midtrans.com/snap/snap.js -->
+
 
     <!-- ── Preconnect (speed up external resources) ──────────── -->
     <link rel="preconnect" href="https://down-id.img.susercontent.com" crossorigin />
