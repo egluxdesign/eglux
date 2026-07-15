@@ -1,22 +1,10 @@
 // src/components/ui/Toast.jsx
 // ============================================================================
 // Toast — notifikasi singkat yang muncul di pojok layar (top-right).
-// Auto-dismiss setelah 3 detik. Bisa di-close manual.
-//
-// Pemakaian:
-//   const { toast, showToast } = useToast();
-//   return (
-//     <>
-//       <button onClick={() => showToast('Item ditambahkan', 'success')}>Test</button>
-//       <Toast toast={toast} onClose={closeToast} />
-//     </>
-//   );
-//
-// Atau kalau mau pakai tanpa hook (controlled):
-//   <Toast toast={{ message: 'Halo', type: 'success', id: 1 }} onClose={() => {}} />
+// Auto-dismiss setelah 4 detik. Bisa di-close manual.
 // ============================================================================
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 
 // ── Minimalist line icons (1-color) ──
 const IconCheck = ({ className = 'w-4 h-4' }) => (
@@ -68,14 +56,42 @@ const TOAST_STYLES = {
     text: 'text-blue-700',
     Icon: IconInfo,
   },
+  warning: {
+    bg: 'bg-amber-50',
+    border: 'border-amber-200',
+    text: 'text-amber-700',
+    Icon: IconAlert,
+  },
 };
 
-const Toast = ({ toast, onClose }) => {
+const Toast = ({ toast, onClose, duration = 4000 }) => {
+  const [visible, setVisible] = useState(false);
+
+  // ⭐ Auto-dismiss dengan fade-out animation
   useEffect(() => {
-    if (!toast || !onClose) return;
-    const timer = setTimeout(() => onClose(), 3000);
-    return () => clearTimeout(timer);
-  }, [toast, onClose]);
+    if (!toast) {
+      setVisible(false);
+      return;
+    }
+
+    // Step 1: Show toast (fade-in)
+    setVisible(true);
+
+    // Step 2: Start fade-out after (duration - 500ms)
+    const fadeTimer = setTimeout(() => {
+      setVisible(false);
+    }, duration - 500);
+
+    // Step 3: Remove from DOM after fade-out completes (500ms)
+    const removeTimer = setTimeout(() => {
+      if (typeof onClose === 'function') onClose();
+    }, duration);
+
+    return () => {
+      clearTimeout(fadeTimer);
+      clearTimeout(removeTimer);
+    };
+  }, [toast, onClose, duration]);
 
   if (!toast) return null;
 
@@ -83,13 +99,18 @@ const Toast = ({ toast, onClose }) => {
   const { Icon } = style;
 
   const handleClose = () => {
-    if (typeof onClose === 'function') onClose();
+    setVisible(false);
+    setTimeout(() => {
+      if (typeof onClose === 'function') onClose();
+    }, 300);
   };
 
   return (
     <div
       key={toast.id}
-      className={`fixed top-4 right-4 z-[4000] flex items-center gap-3 px-4 py-3 rounded-xl border ${style.bg} ${style.border} ${style.text} shadow-lg max-w-sm`}
+      className={`fixed top-4 right-4 z-[9999] flex items-center gap-3 px-4 py-3 rounded-xl border ${style.bg} ${style.border} ${style.text} shadow-lg max-w-sm transition-all duration-500 ${
+        visible ? 'opacity-100 translate-x-0' : 'opacity-0 translate-x-4'
+      }`}
       role="status"
       aria-live="polite"
     >
