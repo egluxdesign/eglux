@@ -38,15 +38,15 @@
     <meta name="twitter:description" content="Perlengkapan dapur, tempat prasmanan, storage, dan home decor estetik berkualitas." />
     <meta name="twitter:image" content="https://eglux.vercel.app/og-image.png" />
 
-    <!-- Midtrans Snap.js — load di head supaya ready sebelum checkout -->
-    <!-- Snap.js butuh CSP allow: script-src https://app.sandbox.midtrans.com -->
+    <!-- ── Midtrans Snap.js ──────────────────────────────────── -->
+    <!-- ⭐ Pakai %VITE_MIDTRANS_CLIENT_KEY% — Vite auto-replace saat build -->
+    <!-- Pastikan VITE_MIDTRANS_CLIENT_KEY ada di .env file -->
     <script
       type="text/javascript"
       src="https://app.sandbox.midtrans.com/snap/snap.js"
-      data-client-key="<VITE_MIDTRANS_CLIENT_KEY>"
+      data-client-key="%VITE_MIDTRANS_CLIENT_KEY%"
     ></script>
     <!-- Production: ganti src ke https://app.midtrans.com/snap/snap.js -->
-
 
     <!-- ── Preconnect (speed up external resources) ──────────── -->
     <link rel="preconnect" href="https://down-id.img.susercontent.com" crossorigin />
