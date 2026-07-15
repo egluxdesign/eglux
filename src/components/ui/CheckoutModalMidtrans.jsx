@@ -582,35 +582,68 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
 
       setSubmitting(false);
 
-      // ── PAYMENT: Redirect mode (bukan popup) ──
-      // Redirect user ke halaman Midtrans Snap langsung.
-      // Kenapa redirect (bukan popup)?
-      //   1. Cross-origin: Browser blokir iframe access antar domain
-      //      (eglux.vercel.app ↔ app.sandbox.midtrans.com). QRIS tidak muncul.
-      //   2. CSP: Midtrans inject inline script yang di-block CSP, bikin popup crash.
-      //   3. Redirect = Midtrans control page sendiri → gak ada restriction.
-      //   4. Setelah bayar → Midtrans auto-redirect balik ke finish_redirect_url.
-      //
-      // URL format:
-      //   Sandbox: https://app.sandbox.midtrans.com/snap/v3/redirection/{token}
-      //   Production: https://app.midtrans.com/snap/v3/redirection/{token}
+      // ── PAYMENT: Popup mode + Auto-fallback ke Redirect ──
       const redirectUrl = data.redirect_url ||
         `https://app.sandbox.midtrans.com/snap/v3/redirection/${data.token}`;
 
-      // Close modal + clear cart sebelum redirect
-      onClose();
-      clearCart();
+      // Cek apakah Snap.js siap
+      const isSnapReady = window.snap && typeof window.snap.pay === 'function';
 
-      // Simpan order_id ke sessionStorage supaya setelah redirect balik,
-      // bisa tampilkan status pembayaran
-      try {
-        sessionStorage.setItem('eglux_last_order_id', currentOrderId);
-      } catch (e) {}
+      if (!isSnapReady) {
+        // Snap.js gak ready → langsung redirect
+        console.warn('[Midtrans] Snap.js not ready — using redirect mode');
+        onClose();
+        clearCart();
+        try { sessionStorage.setItem('eglux_last_order_id', currentOrderId); } catch (e) {}
+        showToast('Mengarahkan ke halaman pembayaran Midtrans...', 'info');
+        window.location.href = redirectUrl;
+        return;
+      }
 
-      showToast('Mengarahkan ke halaman pembayaran Midtrans...', 'info');
+      // ⭐ Auto-fallback timer: kalau popup gak sukses dalam 8 detik,
+      // auto-redirect ke halaman Midtrans (cegah stuck kalau popup crash)
+      let popupSucceeded = false;
+      const fallbackTimer = setTimeout(() => {
+        if (!popupSucceeded) {
+          console.warn('[Midtrans] Popup timeout — fallback to redirect');
+          onClose();
+          clearCart();
+          try { sessionStorage.setItem('eglux_last_order_id', currentOrderId); } catch (e) {}
+          showToast('Mengarahkan ke halaman pembayaran...', 'info');
+          window.location.href = redirectUrl;
+        }
+      }, 8000);
 
-      // Redirect ke Midtrans Snap page
-      window.location.href = redirectUrl;
+      // Popup mode — window.snap.pay()
+      window.snap.pay(data.token, {
+        onSuccess: (result) => {
+          popupSucceeded = true;
+          clearTimeout(fallbackTimer);
+          console.log('[Midtrans] Payment success:', result.transaction_id);
+          clearCart();
+          onClose();
+          showToast('Pembayaran berhasil! Terima kasih ✓', 'success');
+        },
+        onPending: () => {
+          popupSucceeded = true;
+          clearTimeout(fallbackTimer);
+          onClose();
+          showToast('Menunggu pembayaran. Cek WA/email untuk instruksi.', 'info');
+        },
+        onError: (result) => {
+          popupSucceeded = true;
+          clearTimeout(fallbackTimer);
+          console.error('[Midtrans] Payment error:', result);
+          onClose();
+          showToast('Pembayaran gagal. Coba metode lain.', 'error');
+        },
+        onClose: () => {
+          popupSucceeded = true;
+          clearTimeout(fallbackTimer);
+          onClose();
+          showToast('Kamu menutup halaman pembayaran. Order tersimpan — hubungi kami untuk bayar.', 'warning');
+        },
+      });
     } catch (err) {
       console.error('[Midtrans Checkout] Gagal:', err);
       showToast(`Gagal: ${err.message}`);
