@@ -64,7 +64,7 @@ const TOAST_STYLES = {
   },
 };
 
-const Toast = ({ toast, onClose, duration = 4000 }) => {
+const Toast = ({ toast, onClose, duration = 2000 }) => {
   const [visible, setVisible] = useState(false);
 
   // ⭐ Auto-dismiss dengan fade-out animation
