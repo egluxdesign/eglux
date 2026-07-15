@@ -399,30 +399,72 @@ serve(async (req: Request) => {
     console.log("[midtrans-webhook] Payment success → trigger WABA notification");
 
     try {
-      // Fire WABA notification (async, jangan block webhook response)
-      // Mode: 'send-waba-test' for now — switch to 'send-waba-live' setelah Meta approval
-      const { data: wabaResult, error: wabaError } = await supabase.functions.invoke(
-        "send-waba-test",
-        { body: { order_id, event: "payment_success" } }
-      );
+      // ⭐ INLINE WABA TEST MODE (langsung execute, tanpa invoke edge function lain)
+      // Ambil helper dari _shared/waba-shared.ts
+      const {
+        fetchOrderData,
+        buildPaymentSuccessMessage,
+        saveWabaMessage,
+        updateWabaMessageStatus,
+      } = await import("../_shared/waba-shared.ts");
 
-      if (wabaError) {
-        console.warn("[midtrans-webhook] WABA notification failed:", wabaError.message);
-      } else {
-        console.log("[midtrans-webhook] ✓ WABA notification queued (test mode)");
+      const wabaOrder = await fetchOrderData(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, order_id);
+      
+      if (wabaOrder && wabaOrder.customer_phone) {
+        const message = buildPaymentSuccessMessage(wabaOrder);
+        
+        console.log(`[midtrans-webhook] ===== MOCK WABA MESSAGE =====`);
+        console.log(`[midtrans-webhook] To: +${wabaOrder.customer_phone}`);
+        console.log(`[midtrans-webhook] Body: ${message.body.substring(0, 50)}...`);
 
-        // Update waba_last_* fields di orders table
-        if (wabaResult?.message_id) {
+        const messageId = await saveWabaMessage(
+          SUPABASE_URL,
+          SUPABASE_SERVICE_ROLE_KEY,
+          {
+            order_id: wabaOrder.order_id,
+            phone: wabaOrder.customer_phone,
+            event: "payment_success",
+            template_name: message.template_name,
+            template_params: message.template_params,
+            message_body: message.body,
+            mode: "test",
+            status: "test_sent",
+          }
+        );
+
+        if (messageId) {
+          const mockResponse = {
+            messaging_product: "whatsapp",
+            messages: [{ id: `wamid.test_${Date.now()}_${messageId.slice(0, 8)}` }],
+            _mock: true,
+          };
+
+          await updateWabaMessageStatus(
+            SUPABASE_URL,
+            SUPABASE_SERVICE_ROLE_KEY,
+            messageId,
+            {
+              status: "test_sent",
+              provider_response: mockResponse,
+              provider_message_id: mockResponse.messages[0].id,
+            }
+          );
+
+          // Update waba_last_* di orders table
           await supabase.from("orders").update({
-            waba_last_message_id: wabaResult.message_id,
+            waba_last_message_id: messageId,
             waba_last_event: "payment_success",
-            waba_last_status: wabaResult.status || "test_sent",
+            waba_last_status: "test_sent",
             waba_last_sent_at: new Date().toISOString(),
           }).eq("id", order_id);
+
+          console.log("[midtrans-webhook] ✓ WABA test message saved & orders table updated");
         }
+      } else {
+        console.warn("[midtrans-webhook] WABA skipped: order not found or phone empty");
       }
     } catch (e) {
-      console.warn("[midtrans-webhook] WABA invoke error:", e);
+      console.warn("[midtrans-webhook] WABA inline error:", e.message);
     }
 
     // Auto-create Biteship order (setelah payment sukses)
