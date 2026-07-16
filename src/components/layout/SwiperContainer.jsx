@@ -42,22 +42,22 @@ import 'swiper/css/effect-fade';
 
 // ── Default slides (contoh — bisa di-override via props) ──
 const DEFAULT_SLIDES = [
-  {
-    id: 1,
-    image: '/src/assets/img/banner-1.jpg',
-    title: 'Koleksi Baru',
-    subtitle: 'Temukan gaya terbaru musim ini',
-    ctaText: 'Belanja Sekarang',
-    ctaHref: '/products',
-  },
-  {
-    id: 2,
-    image: '/src/assets/img/banner-2.jpg',
-    title: 'Diskon Hingga 50%',
-    subtitle: 'Promo spesial untuk member EGLUX',
-    ctaText: 'Lihat Promo',
-    ctaHref: '/sale',
-  },
+  // {
+  //   id: 1,
+  //   image: '/src/assets/img/banner-1.jpg',
+  //   title: 'Koleksi Baru',
+  //   subtitle: 'Temukan gaya terbaru musim ini',
+  //   ctaText: 'Belanja Sekarang',
+  //   ctaHref: '/products',
+  // },
+  // {
+  //   id: 2,
+  //   image: '/src/assets/img/banner-2.jpg',
+  //   title: 'Diskon Hingga 50%',
+  //   subtitle: 'Promo spesial untuk member EGLUX',
+  //   ctaText: 'Lihat Promo',
+  //   ctaHref: '/sale',
+  // },
   {
     id: 3,
     image: '/src/assets/img/banner-3.jpg',
