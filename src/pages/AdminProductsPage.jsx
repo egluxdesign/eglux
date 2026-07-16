@@ -20,6 +20,7 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { supabase } from '../lib/supabaseClient';
+import AdminLayout from '../components/admin/layout/AdminLayout';
 import EditProductPanel from '../components/admin/EditProductPanel';
 import AddProductPanel from '../components/admin/AddProductPanel';
 
@@ -298,6 +299,10 @@ const AdminProductsPage = () => {
   // Add Product panel (slide-in untuk create new product)
   const [showAddPanel, setShowAddPanel] = useState(false);
 
+  // Pagination
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 15;
+
   // Bulk select
   const [selectedProducts, setSelectedProducts] = useState(new Set());
   const [bulkEditMode, setBulkEditMode] = useState(false);
@@ -375,6 +380,23 @@ const AdminProductsPage = () => {
       return true;
     });
   }, [products, searchQuery, filterCategory, filterActive]);
+
+  // ── Pagination ──
+  const totalPages = Math.ceil(filteredProducts.length / itemsPerPage) || 1;
+  const paginatedProducts = useMemo(() => {
+    const start = (currentPage - 1) * itemsPerPage;
+    return filteredProducts.slice(start, start + itemsPerPage);
+  }, [filteredProducts, currentPage]);
+
+  // Reset page ke 1 kalau filter/search berubah
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, filterCategory, filterActive]);
+
+  const goToPage = (page) => {
+    setCurrentPage(Math.max(1, Math.min(totalPages, page)));
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
 
   const categories = useMemo(() => {
     const set = new Set(products.map((p) => p.category).filter(Boolean));
@@ -473,10 +495,10 @@ const AdminProductsPage = () => {
   };
 
   const toggleSelectAll = () => {
-    if (selectedProducts.size === filteredProducts.length) {
+    if (selectedProducts.size === paginatedProducts.length) {
       setSelectedProducts(new Set());
     } else {
-      setSelectedProducts(new Set(filteredProducts.map((p) => p.id)));
+      setSelectedProducts(new Set(paginatedProducts.map((p) => p.id)));
     }
   };
 
@@ -730,42 +752,48 @@ const AdminProductsPage = () => {
   // ============================================================================
   // RENDER
   // ============================================================================
-  return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <div className="bg-white border-b border-gray-200 sticky top-0 z-10">
-        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-          <div>
-            <h1 className="text-xl font-bold text-gray-900">EGLUX Admin — Products</h1>
-            <p className="text-xs text-gray-500 mt-0.5">
-              {products.length} total · {products.filter(p => p.is_active).length} active · {products.filter(p => !p.is_active).length} inactive
-            </p>
-          </div>
-          <div className="flex gap-2">
-            <button
-              onClick={() => setShowAddPanel(true)}
-              className="px-4 py-2 text-sm font-bold text-white bg-blue-600 rounded-md hover:bg-blue-700"
-            >
-              + Tambah Produk
-            </button>
-            <button
-              onClick={handleExport}
-              disabled={exporting}
-              className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50"
-            >
-              {exporting ? 'Exporting...' : '⬇ Export CSV'}
-            </button>
-            <button
-              onClick={fetchProducts}
-              className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
-            >
-              ↻ Refresh
-            </button>
-          </div>
-        </div>
-      </div>
+  const subtitle = `${products.length} total · ${products.filter(p => p.is_active).length} active · ${products.filter(p => !p.is_active).length} inactive`;
 
-      <div className="max-w-7xl mx-auto px-6 py-6">
+  const actions = (
+    <>
+      <button
+        onClick={() => setShowAddPanel(true)}
+        className="hidden md:inline-block px-4 py-2 text-sm font-bold text-white bg-eglux-primary rounded-md hover:opacity-90"
+      >
+        + Tambah Produk
+      </button>
+      <button
+        onClick={handleExport}
+        disabled={exporting}
+        className="hidden md:inline-block px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50"
+      >
+        {exporting ? 'Exporting...' : '⬇ Export'}
+      </button>
+      <button
+        onClick={fetchProducts}
+        className="hidden md:inline-block px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+      >
+        ↻ Refresh
+      </button>
+      {/* Mobile compact */}
+      <button
+        onClick={() => setShowAddPanel(true)}
+        className="md:hidden px-3 py-2 text-sm font-bold text-white bg-eglux-primary rounded-md"
+      >+</button>
+      <button
+        onClick={handleExport}
+        disabled={exporting}
+        className="md:hidden px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md disabled:opacity-50"
+      >⬇</button>
+      <button
+        onClick={fetchProducts}
+        className="md:hidden px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md"
+      >↻</button>
+    </>
+  );
+
+  return (
+    <AdminLayout title="Products Admin" subtitle={subtitle} actions={actions}>
         {/* === UPLOAD SECTION === */}
         <section className="bg-white border border-gray-200 rounded-lg p-6 mb-6">
           <h2 className="text-lg font-semibold text-gray-900 mb-4">📦 Bulk Upload (CSV / XLSX)</h2>
@@ -1022,22 +1050,15 @@ const AdminProductsPage = () => {
             <p className="text-center text-gray-500 py-12">Memuat produk...</p>
           ) : error ? (
             <p className="text-center text-red-500 py-12">Error: {error}</p>
-          ) : filteredProducts.length === 0 ? (
+          ) : paginatedProducts.length === 0 ? (
             <p className="text-center text-gray-500 py-12">Tidak ada produk.</p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="bg-gray-50 border-b border-gray-200">
                   <tr>
-                    <th className="px-3 py-2 w-8"></th> {/* expand toggle */}
-                    <th className="px-3 py-2 w-8 text-left">
-                      <input
-                        type="checkbox"
-                        checked={selectedProducts.size === filteredProducts.length && filteredProducts.length > 0}
-                        onChange={toggleSelectAll}
-                        className="cursor-pointer"
-                      />
-                    </th>
+                    <th className="px-3 py-2 w-8"></th>
+                    <th className="px-3 py-2 w-8 text-left"><input type="checkbox" checked={selectedProducts.size === paginatedProducts.length && paginatedProducts.length > 0} onChange={toggleSelectAll} className="cursor-pointer" /></th>
                     <th className="px-3 py-2 text-left font-medium text-gray-700">Name</th>
                     <th className="px-3 py-2 text-left font-medium text-gray-700">Category</th>
                     <th className="px-3 py-2 text-right font-medium text-gray-700">Base Price</th>
@@ -1049,7 +1070,7 @@ const AdminProductsPage = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredProducts.map((p) => (
+                  {paginatedProducts.map((p) => (
                     <React.Fragment key={p.id}>
                       {/* === PRODUCT ROW === */}
                       <tr
@@ -1127,10 +1148,61 @@ const AdminProductsPage = () => {
           )}
         </section>
 
+        {/* === PAGINATION === */}
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between mt-4 px-2">
+            <p className="text-xs text-gray-500">
+              Halaman {currentPage} dari {totalPages} · {filteredProducts.length} produk total
+            </p>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => goToPage(currentPage - 1)}
+                disabled={currentPage <= 1}
+                className="px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed"
+              >
+                ← Sebelumnya
+              </button>
+              <div className="flex items-center gap-1">
+                {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                  let pageNum;
+                  if (totalPages <= 5) {
+                    pageNum = i + 1;
+                  } else if (currentPage <= 3) {
+                    pageNum = i + 1;
+                  } else if (currentPage >= totalPages - 2) {
+                    pageNum = totalPages - 4 + i;
+                  } else {
+                    pageNum = currentPage - 2 + i;
+                  }
+                  return (
+                    <button
+                      key={pageNum}
+                      onClick={() => goToPage(pageNum)}
+                      className={`w-8 h-8 text-sm font-medium rounded-md transition-colors ${
+                        pageNum === currentPage
+                          ? 'bg-blue-600 text-white'
+                          : 'text-gray-700 bg-white border border-gray-300 hover:bg-gray-50'
+                      }`}
+                    >
+                      {pageNum}
+                    </button>
+                  );
+                })}
+              </div>
+              <button
+                onClick={() => goToPage(currentPage + 1)}
+                disabled={currentPage >= totalPages}
+                className="px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed"
+              >
+                Berikutnya →
+              </button>
+            </div>
+          </div>
+        )}
+
         <p className="text-xs text-gray-400 mt-4 text-center">
           EGLUX Admin — hidden page. All operations via edge functions (service_role). Auto-save per cell.
         </p>
-      </div>
 
       {/* Edit Product Panel (Shopee-style slide-in) */}
       {editingProduct && (
@@ -1241,7 +1313,7 @@ const AdminProductsPage = () => {
           </div>
         </div>
       )}
-    </div>
+    </AdminLayout>
   );
 };
 

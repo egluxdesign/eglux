@@ -13,7 +13,12 @@ import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
-const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+// ⭐ Helper: get current session JWT for auth-gated edge function calls
+const getSessionToken = async () => {
+  const { data: { session } } = await supabase.auth.getSession();
+  return session?.access_token || '';
+};
 
 const formatPrice = (v) => {
   if (!v && v !== 0) return '—';
@@ -154,7 +159,7 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
       const resp = await fetch(`${SUPABASE_URL}/functions/v1/upload-product-image`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${ANON_KEY}`,
+          'Authorization': `Bearer ${await getSessionToken()}`,
         },
         body: formData,
       });
@@ -173,12 +178,31 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
         position: 0,
       };
       setProductImages((prev) => [...prev, newImage]);
-      showToast('✓ Foto diupload', 'success');
       onSaved(); // refresh parent background only
+      return result;
     } catch (e) {
       showToast(`✗ Upload gagal: ${e.message}`, 'error');
-    } finally {
-      setUploadingPhoto(false);
+      return null;
+    }
+  };
+
+  // ⭐ Bulk upload: multiple files sekaligus
+  const uploadMultiplePhotos = async (files, variantId = null) => {
+    if (!files || files.length === 0) return;
+
+    setUploadingPhoto(true);
+    let successCount = 0;
+    let failCount = 0;
+
+    for (const file of Array.from(files)) {
+      const result = await uploadPhoto(file, variantId);
+      if (result) successCount++;
+      else failCount++;
+    }
+
+    setUploadingPhoto(false);
+    if (successCount > 0) {
+      showToast(`✓ ${successCount} foto diupload${failCount > 0 ? `, ${failCount} gagal` : ''}`, 'success');
     }
   };
 
@@ -187,7 +211,7 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
       const resp = await fetch(`${SUPABASE_URL}/functions/v1/manage-product-asset`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${ANON_KEY}`,
+          'Authorization': `Bearer ${await getSessionToken()}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
@@ -219,7 +243,7 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
       const resp = await fetch(`${SUPABASE_URL}/functions/v1/manage-product-asset`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${ANON_KEY}`,
+          'Authorization': `Bearer ${await getSessionToken()}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
@@ -253,7 +277,7 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
       const resp = await fetch(`${SUPABASE_URL}/functions/v1/manage-product-asset`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${ANON_KEY}`,
+          'Authorization': `Bearer ${await getSessionToken()}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
@@ -302,7 +326,7 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
       const resp = await fetch(`${SUPABASE_URL}/functions/v1/manage-product-asset`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${ANON_KEY}`,
+          'Authorization': `Bearer ${await getSessionToken()}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
@@ -424,7 +448,7 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
       const resp = await fetch(`${SUPABASE_URL}/functions/v1/bulk-update-products`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${ANON_KEY}`,
+          'Authorization': `Bearer ${await getSessionToken()}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ updates }),
@@ -503,29 +527,62 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
         </div>
 
         <div className="flex-1 px-6 py-6 space-y-8">
-          {/* === SECTION 1: PRODUCT PHOTOS === */}
+          {/* === SECTION 1: PRODUCT PHOTOS (Cover) — drag to reorder, star for primary === */}
           <section>
             <h3 className="text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
               📸 Foto Produk (Cover)
             </h3>
             <div className="flex flex-wrap gap-3">
-              {coverImages.map((img) => (
-                <div key={img.id} className="relative group w-24 h-24 rounded-lg overflow-hidden border-2 border-gray-200">
-                  <img src={img.url} alt="" className="w-full h-full object-cover" />
+              {coverImages.map((img, idx) => (
+                <div
+                  key={img.id}
+                  className="relative group w-24 h-24 rounded-lg overflow-hidden border-2 border-gray-200 cursor-move"
+                  draggable
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData('text/plain', String(idx));
+                    e.dataTransfer.effectAllowed = 'move';
+                  }}
+                  onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
+                  onDrop={async (e) => {
+                    e.preventDefault();
+                    const fromIdx = parseInt(e.dataTransfer.getData('text/plain'));
+                    if (isNaN(fromIdx) || fromIdx === idx) return;
+                    // Reorder coverImages locally
+                    const next = [...coverImages];
+                    const [moved] = next.splice(fromIdx, 1);
+                    next.splice(idx, 0, moved);
+                    // First photo = primary
+                    next.forEach((im, i) => im.is_primary = i === 0);
+                    // Update local state
+                    setProductImages(prev => {
+                      const variants = prev.filter(p => p.variant_id);
+                      return [...next.map((im, i) => ({ ...im, is_primary: i === 0 })), ...variants];
+                    });
+                    // Update DB: set first photo as primary
+                    const primaryImg = next[0];
+                    if (primaryImg) {
+                      try {
+                        const token = await getSessionToken();
+                        await fetch(`${SUPABASE_URL}/functions/v1/manage-product-asset`, {
+                          method: 'POST',
+                          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ action: 'set_primary', image_id: primaryImg.id, product_id: product.id }),
+                        });
+                      } catch (err) { console.warn('Reorder set_primary failed:', err); }
+                    }
+                  }}
+                >
+                  <img src={img.url} alt="" className="w-full h-full object-cover pointer-events-none" />
+                  {/* Star icon for primary (first photo) */}
                   {img.is_primary && (
-                    <span className="absolute top-0 left-0 bg-amber-500 text-white text-[0.6rem] px-1.5 py-0.5 rounded-br font-bold">
-                      ★ UTAMA
-                    </span>
+                    <div className="absolute top-1 left-1 w-5 h-5 bg-amber-500 rounded-full flex items-center justify-center">
+                      <svg className="w-3 h-3 text-white" viewBox="0 0 24 24" fill="currentColor">
+                        <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+                      </svg>
+                    </div>
                   )}
-                  <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex flex-col items-center justify-center gap-1 transition-opacity">
-                    {!img.is_primary && (
-                      <button
-                        onClick={() => setPrimaryPhoto(img.id)}
-                        className="text-[0.65rem] text-white bg-amber-600 px-2 py-0.5 rounded hover:bg-amber-700"
-                      >
-                        Jadikan Utama
-                      </button>
-                    )}
+                  {/* Hover: Hapus only */}
+                  <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
                     <button
                       onClick={() => deletePhoto(img.id, img.url)}
                       className="text-[0.65rem] text-white bg-red-600 px-2 py-0.5 rounded hover:bg-red-700"
@@ -535,7 +592,7 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
                   </div>
                 </div>
               ))}
-              {/* Upload button */}
+              {/* Upload button — multiple files */}
               <label className="w-24 h-24 rounded-lg border-2 border-dashed border-gray-300 flex flex-col items-center justify-center cursor-pointer hover:border-blue-400 hover:bg-blue-50 transition-colors">
                 {uploadingPhoto ? (
                   <span className="text-xs text-gray-400">⏳</span>
@@ -548,8 +605,12 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
                 <input
                   type="file"
                   accept="image/*"
+                  multiple
                   className="hidden"
-                  onChange={(e) => uploadPhoto(e.target.files[0])}
+                  onChange={(e) => {
+                    uploadMultiplePhotos(e.target.files, null);
+                    e.target.value = '';
+                  }}
                   disabled={uploadingPhoto}
                 />
               </label>
@@ -703,28 +764,37 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
 
                       {/* Variant photo thumbnail + fields */}
                       <div className="flex gap-3">
-                        {/* Photo */}
+                        {/* Photo — show variant photo with hover hapus, or upload button */}
                         <div className="flex-shrink-0">
-                          <label className="block w-20 h-20 rounded-lg overflow-hidden border-2 border-gray-300 cursor-pointer hover:border-blue-400 relative group">
-                            {variantImages.length > 0 ? (
+                          {variantImages.length > 0 ? (
+                            <div className="relative group w-20 h-20 rounded-lg overflow-hidden border-2 border-gray-200">
                               <img src={variantImages[0].url} alt="" className="w-full h-full object-cover" />
-                            ) : (
+                              <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                                <button
+                                  onClick={() => deletePhoto(variantImages[0].id, variantImages[0].url)}
+                                  className="text-[0.6rem] text-white bg-red-600 px-2 py-0.5 rounded hover:bg-red-700"
+                                >
+                                  Hapus
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <label className="block w-20 h-20 rounded-lg overflow-hidden border-2 border-dashed border-gray-300 cursor-pointer hover:border-blue-400 relative">
                               <div className="w-full h-full flex flex-col items-center justify-center bg-white">
                                 <span className="text-xl text-gray-300">📷</span>
                                 <span className="text-[0.55rem] text-gray-400 mt-0.5">Upload</span>
                               </div>
-                            )}
-                            <input
-                              type="file"
-                              accept="image/*"
-                              className="hidden"
-                              onChange={(e) => uploadPhoto(e.target.files[0], v.id)}
-                            />
-                          </label>
-                          {variantImages.length > 1 && (
-                            <span className="text-[0.55rem] text-gray-400 text-center block mt-0.5">
-                              +{variantImages.length - 1} foto
-                            </span>
+                              <input
+                                type="file"
+                                accept="image/*"
+                                className="hidden"
+                                onChange={(e) => {
+                                  uploadPhoto(e.target.files[0], v.id);
+                                  e.target.value = '';
+                                }}
+                                disabled={uploadingPhoto}
+                              />
+                            </label>
                           )}
                         </div>
 

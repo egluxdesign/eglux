@@ -164,6 +164,18 @@ const AddProductPanel = ({ isOpen, onClose, onCreated }) => {
     setPendingPhotos((prev) => [...prev, photo]);
   };
 
+  // ⭐ Bulk add photos (multiple files sekaligus)
+  const addMultiplePhotos = (files, variantId = null) => {
+    if (!files || files.length === 0) return;
+    const newPhotos = Array.from(files).map((file) => ({
+      id: `photo-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      file,
+      preview_url: URL.createObjectURL(file),
+      variant_id: variantId,
+    }));
+    setPendingPhotos((prev) => [...prev, ...newPhotos]);
+  };
+
   const removePhoto = (photoId) => {
     setPendingPhotos((prev) => {
       const photo = prev.find((p) => p.id === photoId);
@@ -368,15 +380,18 @@ const AddProductPanel = ({ isOpen, onClose, onCreated }) => {
               📸 Foto Produk (Cover)
             </h3>
             <div className="flex flex-wrap gap-3">
-              {getPhotos(null).map((photo) => (
+              {getPhotos(null).map((photo, idx) => (
                 <div key={photo.id} className="relative group w-24 h-24 rounded-lg overflow-hidden border-2 border-gray-200">
                   <img src={photo.preview_url} alt="" className="w-full h-full object-cover" />
-                  {photo.is_primary && (
-                    <span className="absolute top-0 left-0 bg-amber-500 text-white text-[0.6rem] px-1.5 py-0.5 rounded-br font-bold">
-                      ★ UTAMA
-                    </span>
+                  {/* Star icon for first photo (primary/cover) */}
+                  {idx === 0 && (
+                    <div className="absolute top-1 left-1 w-5 h-5 bg-amber-500 rounded-full flex items-center justify-center">
+                      <svg className="w-3 h-3 text-white" viewBox="0 0 24 24" fill="currentColor">
+                        <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+                      </svg>
+                    </div>
                   )}
-                  <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex flex-col items-center justify-center gap-1 transition-opacity">
+                  <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
                     <button
                       onClick={() => removePhoto(photo.id)}
                       className="text-[0.65rem] text-white bg-red-600 px-2 py-0.5 rounded hover:bg-red-700"
@@ -399,10 +414,11 @@ const AddProductPanel = ({ isOpen, onClose, onCreated }) => {
                 <input
                   type="file"
                   accept="image/*"
+                  multiple
                   className="hidden"
                   onChange={(e) => {
-                    addPhoto(e.target.files[0], null);
-                    e.target.value = ''; // reset supaya bisa upload file yang sama lagi
+                    addMultiplePhotos(e.target.files, null);
+                    e.target.value = '';
                   }}
                   disabled={uploadingPhoto || saving}
                 />
@@ -564,34 +580,38 @@ const AddProductPanel = ({ isOpen, onClose, onCreated }) => {
                         </div>
                       </div>
 
-                      {/* Variant photo thumbnail + fields — match EditProductPanel */}
+                      {/* Variant photo — single only. If has photo, show with hapus. If not, show upload. */}
                       <div className="flex gap-3">
-                        {/* Photo */}
                         <div className="flex-shrink-0">
-                          <label className="block w-20 h-20 rounded-lg overflow-hidden border-2 border-gray-300 cursor-pointer hover:border-blue-400 relative group">
-                            {variantPhotos.length > 0 ? (
+                          {variantPhotos.length > 0 ? (
+                            <div className="relative group w-20 h-20 rounded-lg overflow-hidden border-2 border-gray-200">
                               <img src={variantPhotos[0].preview_url} alt="" className="w-full h-full object-cover" />
-                            ) : (
+                              <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                                <button
+                                  onClick={() => removePhoto(variantPhotos[0].id)}
+                                  className="text-[0.6rem] text-white bg-red-600 px-2 py-0.5 rounded hover:bg-red-700"
+                                >
+                                  Hapus
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <label className="block w-20 h-20 rounded-lg overflow-hidden border-2 border-dashed border-gray-300 cursor-pointer hover:border-blue-400 relative">
                               <div className="w-full h-full flex flex-col items-center justify-center bg-white">
                                 <span className="text-xl text-gray-300">📷</span>
                                 <span className="text-[0.55rem] text-gray-400 mt-0.5">Upload</span>
                               </div>
-                            )}
-                            <input
-                              type="file"
-                              accept="image/*"
-                              className="hidden"
-                              onChange={(e) => {
-                                addPhoto(e.target.files[0], v.id);
-                                e.target.value = '';
-                              }}
-                              disabled={saving}
-                            />
-                          </label>
-                          {variantPhotos.length > 1 && (
-                            <span className="text-[0.55rem] text-gray-400 text-center block mt-0.5">
-                              +{variantPhotos.length - 1} foto
-                            </span>
+                              <input
+                                type="file"
+                                accept="image/*"
+                                className="hidden"
+                                onChange={(e) => {
+                                  addPhoto(e.target.files[0], v.id);
+                                  e.target.value = '';
+                                }}
+                                disabled={saving}
+                              />
+                            </label>
                           )}
                         </div>
 
