@@ -34,6 +34,8 @@ import { Swiper, SwiperSlide } from 'swiper/react';
 import { Autoplay, Pagination, Navigation, EffectFade, A11y } from 'swiper/modules';
 import { Link } from 'react-router-dom';
 
+import banner3 from '@/assets/img/banner-3.jpg';
+
 // Import Swiper CSS — kalau pakai Vite, ini akan otomatis di-bundle
 import 'swiper/css';
 import 'swiper/css/pagination';
@@ -60,7 +62,7 @@ const DEFAULT_SLIDES = [
   // },
   {
     id: 3,
-    image: '/src/assets/img/banner-3.jpg',
+    image: banner3,   // bukan string path lagi
     title: 'Gratis Ongkir',
     subtitle: 'Untuk pembelian di atas Rp 500.000',
     ctaText: 'Mulai Belanja',
