@@ -34,6 +34,9 @@ import { NAV_LINKS } from '../../data';
 import { useCart } from '../../context/CartContext';
 import { useAuth } from '../../context/AuthContext';
 
+// dari src/components/Header.jsx ke src/assets/img/Logo1.png
+import logo from '../../assets/img/Logo1.png';
+
 const CartIcon = () => (
   <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-8 h-8">
     <path stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"

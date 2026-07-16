@@ -34,7 +34,7 @@ import { Swiper, SwiperSlide } from 'swiper/react';
 import { Autoplay, Pagination, Navigation, EffectFade, A11y } from 'swiper/modules';
 import { Link } from 'react-router-dom';
 
-import banner3 from '@/assets/img/banner-3.jpg';
+import banner3 from '../../assets/img/banner-3.jpg';
 
 // Import Swiper CSS — kalau pakai Vite, ini akan otomatis di-bundle
 import 'swiper/css';
