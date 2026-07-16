@@ -29,7 +29,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import Sidebar from './Sidebar';
-import SwiperContainer from './SwiperContainer';
 import ProfileModal from '../ui/ProfileModal';
 import { NAV_LINKS } from '../../data';
 import { useCart } from '../../context/CartContext';
@@ -382,7 +381,7 @@ const HeaderProducts = ({ onCartOpen }) => {
           di tiap page (BlogPage, AboutPage, ContactPage, dll) setelah hero
           section — supaya posisinya fleksibel mengikuti struktur tiap page.
           DuplicateNav handle scroll detection-nya sendiri (self-contained). */}
-      <SwiperContainer />
+      
     </>
   );
 };
