@@ -13,6 +13,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../../context/AuthContext';
+import ProfileModal from '../../ui/ProfileModal';
 
 // ── Icons (line art, 1-color) ──
 const ChevronDown = ({ className = '' }) => (
@@ -77,6 +78,7 @@ const ADMIN_NAV_ITEMS = [
 const UserMenu = () => {
   const { user, profile, role, isAdmin, logout } = useAuth();
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [profileModalOpen, setProfileModalOpen] = useState(false);
   const dropdownRef = useRef(null);
   const navigate = useNavigate();
   const { pathname } = useLocation();
@@ -109,7 +111,6 @@ const UserMenu = () => {
 
   const displayName = profile?.full_name || user.email?.split('@')[0] || 'Akun';
   const menuItems = [
-    { label: 'Profil Saya', href: '/profile', Icon: IconUser },
     { label: 'Pesanan Saya', href: '/orders', Icon: IconPackage },
     { label: 'Lacak Pesanan', href: '/track', Icon: IconTruck },
     { label: 'Riwayat Order', href: '/order-history', Icon: IconClipboard },
@@ -125,7 +126,15 @@ const UserMenu = () => {
         onClick={() => setDropdownOpen(!dropdownOpen)}
         className="flex items-center gap-1.5 text-[0.82rem] font-semibold text-eglux-primary hover:text-eglux-secondary transition-colors cursor-pointer border-none bg-transparent"
       >
-        <span className="max-w-[80px] truncate">Hi, {displayName}</span>
+        {/* Avatar */}
+        {profile?.avatar_url ? (
+          <img src={profile.avatar_url} alt="" className="w-7 h-7 rounded-full object-cover border border-eglux-secondary/30" />
+        ) : (
+          <div className="w-7 h-7 rounded-full bg-eglux-secondary flex items-center justify-center text-white text-xs font-bold">
+            {displayName.charAt(0).toUpperCase()}
+          </div>
+        )}
+        <span className="max-w-[80px] truncate hidden sm:inline">Hi, {displayName}</span>
         <ChevronDown className={`w-3.5 h-3.5 transition-transform ${dropdownOpen ? 'rotate-180' : ''}`} />
       </button>
 
@@ -150,6 +159,13 @@ const UserMenu = () => {
                 <div className="border-t border-[#eee] my-1" />
               </>
             )}
+            {/* Profil Saya — opens modal */}
+            <button
+              onClick={() => { setDropdownOpen(false); setProfileModalOpen(true); }}
+              className="w-full flex items-center gap-3 px-4 py-2.5 text-[0.82rem] text-eglux-primary hover:bg-[#faf6ef] transition-colors cursor-pointer border-none bg-transparent text-left"
+            >
+              <IconUser className="w-4 h-4" />Profil Saya
+            </button>
             {menuItems.map((item) => (
               <Link key={item.href} to={item.href} onClick={() => setDropdownOpen(false)}
                 className="flex items-center gap-3 px-4 py-2.5 text-[0.82rem] text-eglux-primary hover:bg-[#faf6ef] transition-colors">
@@ -167,6 +183,9 @@ const UserMenu = () => {
           </div>
         </div>
       )}
+
+      {/* Profile Modal */}
+      <ProfileModal isOpen={profileModalOpen} onClose={() => setProfileModalOpen(false)} />
     </div>
   );
 };

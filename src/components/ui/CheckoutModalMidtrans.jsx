@@ -191,6 +191,8 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
         name: profile.full_name || userMeta.full_name || prev.name,
         email: user.email || prev.email,
         phone: profile.phone || userMeta.phone || prev.phone,
+        // ⭐ Auto-fill address dari profile (jika user sudah set di ProfileModal)
+        address: profile.address || prev.address,
       }));
     }
   }, [user, profile]);

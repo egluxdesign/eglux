@@ -30,6 +30,7 @@ import { useState, useEffect, useRef } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import SwiperContainer from './SwiperContainer';
+import ProfileModal from '../ui/ProfileModal';
 import { NAV_LINKS } from '../../data';
 import { useCart } from '../../context/CartContext';
 import { useAuth } from '../../context/AuthContext';
@@ -180,6 +181,7 @@ const NavLinks = () => {
 const UserMenu = () => {
   const { user, profile, role, isAdmin, logout } = useAuth();
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [profileModalOpen, setProfileModalOpen] = useState(false);
   const dropdownRef = useRef(null);
   const navigate = useNavigate();
   const { pathname } = useLocation();
@@ -213,7 +215,6 @@ const UserMenu = () => {
   const displayName = profile?.full_name || user.email?.split('@')[0] || 'Akun';
 
   const menuItems = [
-    { label: 'Profil Saya', href: '/profile', Icon: IconUser },
     { label: 'Pesanan Saya', href: '/orders', Icon: IconPackage },
     { label: 'Lacak Pesanan', href: '/track', Icon: IconTruck },
     { label: 'Riwayat Order', href: '/order-history', Icon: IconClipboard },
@@ -228,9 +229,17 @@ const UserMenu = () => {
     <div className="relative" ref={dropdownRef}>
       <button
         onClick={() => setDropdownOpen(!dropdownOpen)}
-        className="flex items-center gap-1.5 text-[0.82rem] font-semibold text-eglux-primary hover:text-eglux-secondary transition-colors cursor-pointer border-none bg-transparent"
+        className="flex items-center gap-1.5 text-[0.82rem] font-semibold text-eglux-primary hover:text-eglux-secondary transition-colors cursor-pointer border-none bg-transparent relative z-[2100]"
       >
-        <span className="max-w-[80px] truncate">Hi, {displayName}</span>
+        {/* Avatar */}
+        {profile?.avatar_url ? (
+          <img src={profile.avatar_url} alt="" className="w-7 h-7 rounded-full object-cover border border-eglux-secondary/30" />
+        ) : (
+          <div className="w-7 h-7 rounded-full bg-eglux-secondary flex items-center justify-center text-white text-xs font-bold">
+            {displayName.charAt(0).toUpperCase()}
+          </div>
+        )}
+        <span className="max-w-[80px] truncate hidden sm:inline">Hi, {displayName}</span>
         <ChevronDown className={`w-3.5 h-3.5 transition-transform ${dropdownOpen ? 'rotate-180' : ''}`} />
       </button>
 
@@ -262,6 +271,15 @@ const UserMenu = () => {
               </>
             )}
 
+            {/* Profil Saya — opens modal (bukan navigate) */}
+            <button
+              onClick={() => { setDropdownOpen(false); setProfileModalOpen(true); }}
+              className="w-full flex items-center gap-3 px-4 py-2.5 text-[0.82rem] text-eglux-primary hover:bg-[#faf6ef] transition-colors cursor-pointer border-none bg-transparent text-left"
+            >
+              <IconUser className="w-4 h-4" />
+              Profil Saya
+            </button>
+
             {menuItems.map((item) => (
               <Link
                 key={item.href}
@@ -290,6 +308,9 @@ const UserMenu = () => {
           </div>
         </div>
       )}
+
+      {/* Profile Modal */}
+      <ProfileModal isOpen={profileModalOpen} onClose={() => setProfileModalOpen(false)} />
     </div>
   );
 };
@@ -325,7 +346,7 @@ const HeaderProducts = ({ onCartOpen }) => {
           </Link>
 
           {/* Right icons: UserMenu + Cart */}
-          <div className="flex items-center gap-2 md:gap-3 ml-auto">
+          <div className="flex items-center gap-2 md:gap-3 ml-auto relative z-[1100]">
             <UserMenu />
             <button onClick={onCartOpen} aria-label="Keranjang Belanja"
               className="relative bg-transparent border-none cursor-pointer p-2 min-w-[44px] min-h-[44px] flex items-center justify-center text-eglux-primary hover:text-eglux-secondary transition-colors duration-300">

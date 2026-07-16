@@ -2,6 +2,7 @@
 import { useState, useCallback } from 'react';
 import { useCartActions }        from './CartPage';
 import HeaderProducts            from '../components/layout/HeaderProducts';
+import PromoBanners               from '../components/sections/HomePage/PromoBanners';
 import DuplicateNav              from '../components/layout/DuplicateNav';
 import Footer                    from '../components/layout/Footer';
 import ProductsSection           from '../components/sections/ProductPage/ProductsSection';
@@ -25,6 +26,7 @@ const ProductPage = () => {
     <>
       <HeaderProducts onCartOpen={openCart} />
       <main>
+        <PromoBanners />
         <DuplicateNav />
         <ProductsSection onOpenModal={openModal} />
       </main>

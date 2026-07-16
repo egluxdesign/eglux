@@ -103,18 +103,18 @@ export const HERO_DATA = {
 
 // ── Promo Banners ─────────────────────────────────────────────
 export const PROMO_BANNERS = [
-  {
-    id:      'flash-sale',
-    tag:     '🔥 Flash Sale',
-    title:   'Diskon Hingga 50%',
-    desc:    'Perlengkapan Dapur Premium — Hanya Hari Ini!',
-    cta:     'Beli Sekarang',
-    href:    '/products?filter=flashsale',
-    variant: 'primary',   // coklat overlay
-    // TODO: Ganti dengan hero banner dari Supabase Storage
-    image:   'https://images.unsplash.com/photo-1556909114-f6e7ad7d3136?w=1200&q=80',
-    tall:    true,
-  },
+  // {
+  //   id:      'flash-sale',
+  //   tag:     '🔥 Flash Sale',
+  //   title:   'Diskon Hingga 50%',
+  //   desc:    'Perlengkapan Dapur Premium — Hanya Hari Ini!',
+  //   cta:     'Beli Sekarang',
+  //   href:    '/products?filter=flashsale',
+  //   variant: 'primary',   // coklat overlay
+  //   // TODO: Ganti dengan hero banner dari Supabase Storage
+  //   image:   'https://images.unsplash.com/photo-1556909114-f6e7ad7d3136?w=1200&q=80',
+  //   tall:    true,
+  // },
   {
     id:      'new-arrival',
     tag:     '✨ New Arrival',
