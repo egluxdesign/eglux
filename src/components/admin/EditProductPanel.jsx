@@ -153,6 +153,12 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
     } catch (e) {
       showToast(`✗ Upload gagal: ${e.message}`, 'error');
       return null;
+    } finally {
+      // FIX: sebelumnya tidak ada finally, jadi uploadingPhoto nyangkut
+      // true selamanya setelah upload pertama — bikin semua input file
+      // lain jadi disabled permanen. Sekarang selalu di-reset di sini,
+      // baik upload sukses maupun gagal.
+      setUploadingPhoto(false);
     }
   };
 
