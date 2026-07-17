@@ -48,7 +48,7 @@ Deno.serve(async (req) => {
     // ── 1. Ambil detail ticket + info user ──
     const { data: ticket, error: ticketErr } = await supabaseAdmin
       .from('tickets')
-      .select('id, subject, description, status, created_at, user_id')
+      .select('id, ticket_number, subject, description, status, created_at, user_id')
       .eq('id', ticket_id)
       .single();
 
@@ -58,7 +58,23 @@ Deno.serve(async (req) => {
 
     // Ambil email user dari auth.users (butuh service_role, tidak bisa lewat RLS biasa)
     const { data: userData } = await supabaseAdmin.auth.admin.getUserById(ticket.user_id);
-    const userEmail = userData?.user?.email || 'tidak diketahui';
+    const userEmail = userData?.user?.email;
+
+    // Ambil nama lengkap dari profiles untuk sapaan di email konfirmasi customer
+    const { data: profileData } = await supabaseAdmin
+      .from('profiles')
+      .select('full_name')
+      .eq('id', ticket.user_id)
+      .single();
+    const userName = profileData?.full_name || 'Pelanggan';
+
+    // Format nomor tiket & tanggal jadi human-readable
+    const ticketNumberDisplay = ticket.ticket_number
+      ? `TIK-${String(ticket.ticket_number).padStart(6, '0')}`
+      : ticket.id;
+    const createdAtDisplay = new Date(ticket.created_at).toLocaleString('id-ID', {
+      day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit',
+    });
 
     // ── 2. Ambil attachment ticket ini (kalau ada) ──
     const { data: attachments } = await supabaseAdmin
@@ -94,36 +110,82 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ── 3. Kirim email lewat Resend ──
-    const emailHtml = `
-      <h2>Tiket Bantuan Baru</h2>
+    // ── 3a. Email INTERNAL ke tim support (contact@eglux.co.id) ──
+    const internalHtml = `
+      <h2>Tiket Bantuan Baru — ${ticketNumberDisplay}</h2>
+      <p><strong>Dari:</strong> ${userName} (${userEmail || 'email tidak diketahui'})</p>
       <p><strong>Subjek:</strong> ${ticket.subject}</p>
-      <p><strong>Dari:</strong> ${userEmail}</p>
       <p><strong>Status:</strong> ${ticket.status}</p>
       <p><strong>Deskripsi:</strong></p>
       <p>${ticket.description.replace(/\n/g, '<br/>')}</p>
       <hr/>
-      <p style="color:#888;font-size:12px;">Ticket ID: ${ticket.id}</p>
+      <p style="color:#888;font-size:12px;">Ticket ID (internal): ${ticket.id}</p>
     `;
 
-    const resendResp = await fetch('https://api.resend.com/emails', {
+    const internalResp = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${RESEND_API_KEY}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        from: 'Eglux Tickets <contact@eglux.co.id>', // ganti setelah domain diverifikasi, lihat catatan di bawah
+        from: 'Eglux Tickets <contact@eglux.co.id>',
         to: [SUPPORT_EMAIL],
-        subject: `[Tiket Baru] ${ticket.subject}`,
-        html: emailHtml,
+        subject: `[Tiket Baru ${ticketNumberDisplay}] ${ticket.subject}`,
+        html: internalHtml,
         attachments: emailAttachments.length > 0 ? emailAttachments : undefined,
       }),
     });
 
-    if (!resendResp.ok) {
-      const errText = await resendResp.text();
-      throw new Error(`Resend gagal kirim email: ${errText}`);
+    if (!internalResp.ok) {
+      const errText = await internalResp.text();
+      throw new Error(`Resend gagal kirim email internal: ${errText}`);
+    }
+
+    // ── 3b. Email AUTO-REPLY konfirmasi ke customer ──
+    // Hanya dikirim kalau kita berhasil dapat email user-nya.
+    if (userEmail) {
+      const customerText = `Halo ${userName},
+
+Terima kasih telah menghubungi Eglux.
+
+📋 Tiket Anda: #${ticketNumberDisplay}
+⏰ Waktu: ${createdAtDisplay}
+📝 Subjek: ${ticket.subject}
+
+Pesan Anda:
+"${ticket.description}"
+
+Tim kami akan menindaklanjuti dalam 1x24 jam.
+
+Salam,
+Tim Customer Care Eglux`;
+
+      const customerHtml = customerText
+        .replace(/\n/g, '<br/>');
+
+      const customerResp = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${RESEND_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          from: 'Eglux Customer Care <contact@eglux.co.id>',
+          to: [userEmail],
+          subject: `Tiket Anda #${ticketNumberDisplay} telah kami terima`,
+          html: customerHtml,
+        }),
+      });
+
+      if (!customerResp.ok) {
+        const errText = await customerResp.text();
+        // Jangan gagalkan seluruh proses cuma karena auto-reply customer
+        // gagal terkirim — notifikasi internal ke tim sudah berhasil di atas.
+        console.warn('Gagal kirim email konfirmasi ke customer:', errText);
+      }
+    } else {
+      console.warn('Email user tidak ditemukan, auto-reply konfirmasi dilewati.');
     }
 
     // ── 4. Email berhasil terkirim → hapus file dari Storage ──
