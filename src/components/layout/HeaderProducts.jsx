@@ -344,7 +344,7 @@ const HeaderProducts = ({ onCartOpen }) => {
 
           {/* Logo centered */}
           <Link to="/" className="absolute left-1/2 -translate-x-1/2" aria-label="EGLUX Beranda">
-            <img src="/src/assets/img/Logo1.png" alt="Eglux Logo" className="h-12 w-auto" />
+            <img src={logo} alt="Eglux Logo" className="h-12 w-auto" />
           </Link>
 
           {/* Right icons: UserMenu + Cart */}
