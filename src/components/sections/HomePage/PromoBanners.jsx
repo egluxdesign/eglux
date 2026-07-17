@@ -13,8 +13,11 @@ const BannerCard = ({ banner }) => {
 
   return (
     <div
-      className={`banner-card relative w-full rounded-2xl overflow-hidden cursor-pointer
-                  transition-all duration-300 hover:-translate-y-1 hover:shadow-banner-hover
+      // FIX: hapus rounded-2xl (biar nggak keliatan kayak "kartu") dan
+      // hover:-translate-y-1 (efek itu juga bikin keliatan ada jarak/border
+      // pas di-hover). w-full tetap dipertahankan.
+      className={`banner-card relative w-full overflow-hidden cursor-pointer
+                  transition-all duration-300 hover:shadow-banner-hover
                   ${tall ? 'h-[180px] md:h-[260px] lg:h-[280px]' : 'h-[170px] md:h-[220px] lg:h-[240px]'}`}
       onClick={() => window.location.href = href}
       role="link"
@@ -38,7 +41,7 @@ const BannerCard = ({ banner }) => {
         aria-hidden="true"
       />
 
-      {/* Content */}
+      {/* Content — padding tetap ada di konten teks, cuma bukan di gambar */}
       <div className="absolute bottom-0 left-0 right-0 p-7 md:p-10 z-[2] text-white">
         <span
           className="inline-block bg-eglux-secondary text-white text-[0.75rem] font-semibold
@@ -68,11 +71,13 @@ const PromoBanners = () => (
     {PROMO_BANNERS.map((banner, i) => (
       <section
         key={banner.id}
-        className={`py-8 ${i % 2 === 0 ? 'bg-eglux-light' : 'bg-white'}`}
+        // FIX: hapus py-8 supaya banner nempel penuh atas-bawah section
+        className={`${i % 2 === 0 ? 'bg-eglux-light' : 'bg-white'}`}
       >
-        <div className="max-w-container mx-auto px-8">
-          <BannerCard banner={banner} />
-        </div>
+        {/* FIX: hapus max-w-container mx-auto px-8 — itu yang bikin banner
+            "terjebak" di tengah dengan gap kiri-kanan. Sekarang banner
+            langsung full-width mengikuti lebar section/viewport. */}
+        <BannerCard banner={banner} />
       </section>
     ))}
   </>
