@@ -113,7 +113,7 @@ Deno.serve(async (req) => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        from: 'Eglux Support <onboarding@resend.dev>', // ganti setelah domain diverifikasi, lihat catatan di bawah
+        from: 'Eglux Tickets <contact@eglux.co.id>', // ganti setelah domain diverifikasi, lihat catatan di bawah
         to: [SUPPORT_EMAIL],
         subject: `[Tiket Baru] ${ticket.subject}`,
         html: emailHtml,
