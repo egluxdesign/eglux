@@ -34,6 +34,8 @@ import { NAV_LINKS } from '../../data';
 import { useCart } from '../../context/CartContext';
 import { useAuth } from '../../context/AuthContext';
 
+import TicketModal from '../ui/TicketModal';
+
 // dari src/components/Header.jsx ke src/assets/img/Logo1.png
 import logo from '../../assets/img/Logo1.png';
 
@@ -188,6 +190,9 @@ const UserMenu = () => {
   const navigate = useNavigate();
   const { pathname } = useLocation();
 
+  // Ticket modal state
+  const [ticketModalOpen, setTicketModalOpen] = useState(false);
+
   useEffect(() => {
     if (!dropdownOpen) return;
     const handler = (e) => {
@@ -220,7 +225,6 @@ const UserMenu = () => {
     { label: 'Pesanan Saya', href: '/orders', Icon: IconPackage },
     { label: 'Lacak Pesanan', href: '/track', Icon: IconTruck },
     { label: 'Riwayat Order', href: '/order-history', Icon: IconClipboard },
-    { label: 'Tiket Bantuan', href: '/tickets', Icon: IconTicket },
   ];
 
   const adminMenuItems = isAdmin
@@ -282,6 +286,14 @@ const UserMenu = () => {
               Profil Saya
             </button>
 
+            <button
+            onClick={() => { setDropdownOpen(false); setTicketModalOpen(true); }}
+              className="w-full flex items-center gap-3 px-4 py-2.5 text-[0.82rem] text-eglux-primary hover:bg-[#faf6ef] transition-colors cursor-pointer border-none bg-transparent text-left"
+              >
+            <IconTicket className="w-4 h-4" />
+              Tiket Bantuan
+            </button>
+
             {menuItems.map((item) => (
               <Link
                 key={item.href}
@@ -313,6 +325,7 @@ const UserMenu = () => {
 
       {/* Profile Modal */}
       <ProfileModal isOpen={profileModalOpen} onClose={() => setProfileModalOpen(false)} />
+      <TicketModal isOpen={ticketModalOpen} onClose={() => setTicketModalOpen(false)} />
     </div>
   );
 };
