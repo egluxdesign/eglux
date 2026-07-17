@@ -352,8 +352,34 @@ const AddProductPanel = ({ isOpen, onClose, onCreated }) => {
             </h3>
             <div className="flex flex-wrap gap-3">
               {getPhotos(null).map((photo, idx) => (
-                <div key={photo.id} className="relative group w-24 h-24 rounded-lg overflow-hidden border-2 border-gray-200">
-                  <img src={photo.preview_url} alt="" className="w-full h-full object-cover" />
+                <div
+                  key={photo.id}
+                  className="relative group w-24 h-24 rounded-lg overflow-hidden border-2 border-gray-200 cursor-move"
+                  draggable
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData('text/plain', String(idx));
+                    e.dataTransfer.effectAllowed = 'move';
+                  }}
+                  onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    const fromIdx = parseInt(e.dataTransfer.getData('text/plain'));
+                    if (isNaN(fromIdx) || fromIdx === idx) return;
+
+                    // Reorder cover photos lokal (belum ada di DB, jadi cukup
+                    // susun ulang array pendingPhotos — nggak perlu API call).
+                    const coverPhotos = getPhotos(null);
+                    const otherPhotos = pendingPhotos.filter((p) => p.variant_id !== null);
+                    const next = [...coverPhotos];
+                    const [moved] = next.splice(fromIdx, 1);
+                    next.splice(idx, 0, moved);
+
+                    // Cover pertama di array = otomatis jadi primary saat upload
+                    // (lihat logic `firstPhoto` di uploadPendingPhotos).
+                    setPendingPhotos([...next, ...otherPhotos]);
+                  }}
+                >
+                  <img src={photo.preview_url} alt="" className="w-full h-full object-cover pointer-events-none" />
                   {idx === 0 && (
                     <div className="absolute top-1 left-1 w-5 h-5 bg-amber-500 rounded-full flex items-center justify-center">
                       <svg className="w-3 h-3 text-white" viewBox="0 0 24 24" fill="currentColor">
