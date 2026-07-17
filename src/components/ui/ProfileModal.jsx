@@ -1,48 +1,22 @@
 // src/components/ui/ProfileModal.jsx
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../lib/supabaseClient';
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 
-// ── Generate pixel art avatar (random) ──
-function generatePixelAvatar(size = 8) {
-  const canvas = document.createElement('canvas');
-  const ctx = canvas.getContext('2d');
-  const pixelSize = 32;
-  canvas.width = size * pixelSize;
-  canvas.height = size * pixelSize;
+// ── Preset avatars: 12 gambar di bucket 'avatars', folder 'presets/' ──
+// Naming convention: avatar-01.webp ... avatar-12.webp
+const PRESET_AVATAR_COUNT = 12;
 
-  // Random color palette
-  const hue = Math.floor(Math.random() * 360);
-  const bgColor = `hsl(${hue}, 70%, 55%)`;
-  const fgColor = `hsl(${(hue + 180) % 360}, 80%, 95%)`;
-
-  // Generate symmetric pixel pattern
-  const half = Math.ceil(size / 2);
-  const grid = [];
-  for (let y = 0; y < size; y++) {
-    grid[y] = [];
-    for (let x = 0; x < half; x++) {
-      grid[y][x] = Math.random() > 0.5;
-    }
+function buildPresetAvatarUrls() {
+  const urls = [];
+  for (let i = 1; i <= PRESET_AVATAR_COUNT; i++) {
+    const fileName = `avatar-${String(i).padStart(2, '0')}.webp`;
+    const { data } = supabase.storage.from('avatars').getPublicUrl(`presets/${fileName}`);
+    urls.push({ id: fileName, url: data.publicUrl });
   }
-
-  // Draw
-  ctx.fillStyle = bgColor;
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  ctx.fillStyle = fgColor;
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      const mirror = x >= half ? size - 1 - x : x;
-      if (grid[y][mirror]) {
-        ctx.fillRect(x * pixelSize, y * pixelSize, pixelSize, pixelSize);
-      }
-    }
-  }
-
-  return canvas.toDataURL('image/png');
+  return urls;
 }
 
 const ProfileModal = ({ isOpen, onClose }) => {
@@ -51,11 +25,15 @@ const ProfileModal = ({ isOpen, onClose }) => {
     full_name: '',
     address: '',
   });
-  const [avatarDataUrl, setAvatarDataUrl] = useState(null);
+  const [selectedAvatarUrl, setSelectedAvatarUrl] = useState(null);
   const [avatarChanged, setAvatarChanged] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(false);
+
+  // Preset URLs dihitung sekali saja (tidak perlu request ulang tiap render)
+  const presetAvatars = useMemo(() => buildPresetAvatarUrls(), []);
 
   useEffect(() => {
     if (profile) {
@@ -63,7 +41,7 @@ const ProfileModal = ({ isOpen, onClose }) => {
         full_name: profile.full_name || '',
         address: profile.address || '',
       });
-      setAvatarDataUrl(profile.avatar_url || null);
+      setSelectedAvatarUrl(profile.avatar_url || null);
       setAvatarChanged(false);
     }
   }, [profile]);
@@ -73,14 +51,15 @@ const ProfileModal = ({ isOpen, onClose }) => {
       setError(null);
       setSuccess(false);
       setAvatarChanged(false);
+      setPickerOpen(false);
     }
   }, [isOpen]);
 
-  const handleGenerateAvatar = useCallback(() => {
-    const dataUrl = generatePixelAvatar(8);
-    setAvatarDataUrl(dataUrl);
+  const handlePickAvatar = (url) => {
+    setSelectedAvatarUrl(url);
     setAvatarChanged(true);
-  }, []);
+    setPickerOpen(false);
+  };
 
   const handleSave = async () => {
     if (!form.full_name.trim()) {
@@ -100,30 +79,9 @@ const ProfileModal = ({ isOpen, onClose }) => {
         return;
       }
 
-      let avatarUrl = profile?.avatar_url || null;
-
-      // Upload avatar ke Storage kalau berubah
-      if (avatarChanged && avatarDataUrl) {
-        // Convert dataURL ke Blob
-        const base64 = avatarDataUrl.split(',')[1];
-        const blob = await (await fetch(avatarDataUrl)).blob();
-
-        const filePath = `${user.id}/avatar.png`;
-        const { error: uploadErr } = await supabase.storage
-          .from('avatars')
-          .upload(filePath, blob, { upsert: true, contentType: 'image/png' });
-
-        if (uploadErr) {
-          console.warn('Avatar upload failed, saving dataURL directly:', uploadErr.message);
-          // Fallback: simpan dataURL langsung (lebih besar tapi works)
-          avatarUrl = avatarDataUrl;
-        } else {
-          const { data: urlData } = supabase.storage
-            .from('avatars')
-            .getPublicUrl(filePath);
-          avatarUrl = urlData.publicUrl;
-        }
-      }
+      // Avatar preset sudah berupa public URL langsung dari Storage,
+      // jadi tidak perlu upload/blob — tinggal kirim URL-nya.
+      const avatarUrl = avatarChanged ? selectedAvatarUrl : (profile?.avatar_url || null);
 
       const resp = await fetch(`${SUPABASE_URL}/functions/v1/update-profile`, {
         method: 'POST',
@@ -186,15 +144,15 @@ const ProfileModal = ({ isOpen, onClose }) => {
             </div>
           )}
 
-          {/* Avatar — click to generate random pixel art */}
+          {/* Avatar — click to open preset picker */}
           <div className="flex flex-col items-center gap-2">
             <button
-              onClick={handleGenerateAvatar}
+              onClick={() => setPickerOpen((v) => !v)}
               className="relative w-20 h-20 rounded-full overflow-hidden border-2 border-eglux-secondary cursor-pointer hover:opacity-80 transition-opacity group"
-              title="Klik untuk generate foto profil baru"
+              title="Klik untuk pilih avatar"
             >
-              {avatarDataUrl ? (
-                <img src={avatarDataUrl} alt="Avatar" className="w-full h-full object-cover" />
+              {selectedAvatarUrl ? (
+                <img src={selectedAvatarUrl} alt="Avatar" className="w-full h-full object-cover" />
               ) : (
                 <div className="w-full h-full bg-eglux-secondary flex items-center justify-center text-white text-2xl font-bold">
                   {displayName.charAt(0).toUpperCase()}
@@ -202,10 +160,42 @@ const ProfileModal = ({ isOpen, onClose }) => {
               )}
               {/* Hover overlay */}
               <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
-                <span className="text-[0.6rem] text-white font-medium">🎲 Generate</span>
+                <span className="text-[0.6rem] text-white font-medium">Ganti</span>
               </div>
             </button>
-            <p className="text-[0.65rem] text-gray-400">Klik foto untuk generate baru</p>
+            <p className="text-[0.65rem] text-gray-400">Klik foto untuk pilih avatar</p>
+
+            {/* Preset avatar grid */}
+            {pickerOpen && (
+              <div className="w-full mt-2 p-3 bg-gray-50 rounded-xl border border-gray-100">
+                <div className="grid grid-cols-4 gap-2.5">
+                  {presetAvatars.map((avatar) => {
+                    const isSelected = selectedAvatarUrl === avatar.url;
+                    return (
+                      <button
+                        key={avatar.id}
+                        onClick={() => handlePickAvatar(avatar.url)}
+                        className={`relative aspect-square rounded-full overflow-hidden border-2 transition-all cursor-pointer
+                          ${isSelected ? 'border-eglux-secondary ring-2 ring-eglux-secondary/40' : 'border-transparent hover:border-gray-300'}`}
+                        title={avatar.id}
+                      >
+                        <img
+                          src={avatar.url}
+                          alt=""
+                          loading="lazy"
+                          className="w-full h-full object-cover bg-white"
+                        />
+                        {isSelected && (
+                          <span className="absolute inset-0 bg-eglux-secondary/20 flex items-center justify-center">
+                            <span className="w-5 h-5 rounded-full bg-eglux-secondary text-white text-xs flex items-center justify-center">✓</span>
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Full Name */}
