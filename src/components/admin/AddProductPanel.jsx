@@ -19,6 +19,7 @@
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from '../../lib/supabaseClient';
+import { compressImage } from '../../utils/compressImage';
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 
@@ -162,6 +163,12 @@ const AddProductPanel = ({ isOpen, onClose, onCreated }) => {
     };
     setPendingPhotos((prev) => [...prev, photo]);
   };
+
+  const compressedFile = await compressImage(file); // ← tambahin ini
+  // ...lanjut pakai compressedFile, bukan file, buat FormData
+  formData.append('file', compressedFile);
+  // ...
+};
 
   // ⭐ Bulk add photos (multiple files sekaligus)
   const addMultiplePhotos = (files, variantId = null) => {
