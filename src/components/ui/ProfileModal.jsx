@@ -200,10 +200,12 @@ const ProfileModal = ({ isOpen, onClose }) => {
 
           {/* Full Name */}
           <div>
-            <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1.5">
+            <label htmlFor="profile-full-name" className="block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1.5">
               Nama Lengkap
             </label>
             <input
+              id="profile-full-name"
+              name="full_name"
               type="text"
               value={form.full_name}
               onChange={(e) => setForm({ ...form, full_name: e.target.value })}
@@ -230,10 +232,12 @@ const ProfileModal = ({ isOpen, onClose }) => {
 
           {/* Address */}
           <div>
-            <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1.5">
+            <label htmlFor="profile-address" className="block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1.5">
               Alamat Pengiriman
             </label>
             <textarea
+              id="profile-address"
+              name="address"
               value={form.address}
               onChange={(e) => setForm({ ...form, address: e.target.value })}
               placeholder="Jalan, nomor rumah, RT/RW, kelurahan, kota, kode pos"

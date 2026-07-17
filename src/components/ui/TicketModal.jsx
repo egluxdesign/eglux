@@ -320,10 +320,12 @@ const TicketModal = ({ isOpen, onClose }) => {
             )}
 
             <div>
-              <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1.5">
+              <label htmlFor="ticket-subject" className="block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1.5">
                 Subjek
               </label>
               <input
+                id="ticket-subject"
+                name="subject"
                 type="text"
                 value={form.subject}
                 onChange={(e) => setForm({ ...form, subject: e.target.value })}
@@ -333,10 +335,12 @@ const TicketModal = ({ isOpen, onClose }) => {
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1.5">
+              <label htmlFor="ticket-description" className="block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1.5">
                 Deskripsi
               </label>
               <textarea
+                id="ticket-description"
+                name="description"
                 value={form.description}
                 onChange={(e) => setForm({ ...form, description: e.target.value })}
                 placeholder="Jelaskan masalah kamu secara detail"
@@ -346,10 +350,12 @@ const TicketModal = ({ isOpen, onClose }) => {
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1.5">
+              <label htmlFor="ticket-attachment" className="block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1.5">
                 Lampiran Foto/Video <span className="normal-case font-normal text-gray-400">(opsional, maks {MAX_FILE_SIZE_MB}MB)</span>
               </label>
               <input
+                id="ticket-attachment"
+                name="attachment"
                 type="file"
                 accept="image/*,video/*"
                 onChange={handleFileChange}
