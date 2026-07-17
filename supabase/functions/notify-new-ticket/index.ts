@@ -18,7 +18,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY');
-const SUPPORT_EMAIL = 'coonedesign.id@gmail.com'; // ganti sesuai kebutuhan
+const SUPPORT_EMAIL = 'egluxdesign.id@gmail.com'; // ganti sesuai kebutuhan
 const ATTACHMENT_BUCKET = 'ticket-attachments';
 
 const supabaseAdmin = createClient(
