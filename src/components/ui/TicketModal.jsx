@@ -30,9 +30,13 @@ const StatusBadge = ({ status }) => {
 const TicketModal = ({ isOpen, onClose }) => {
   const { user } = useAuth();
 
-  const [view, setView] = useState('list'); // 'list' | 'create'
+  const [view, setView] = useState('list'); // 'list' | 'create' | 'detail'
   const [tickets, setTickets] = useState([]);
   const [loadingTickets, setLoadingTickets] = useState(false);
+
+  const [selectedTicket, setSelectedTicket] = useState(null);
+  const [selectedAttachments, setSelectedAttachments] = useState([]);
+  const [loadingDetail, setLoadingDetail] = useState(false);
 
   const [form, setForm] = useState({ subject: '', description: '' });
   const [attachmentFile, setAttachmentFile] = useState(null);
@@ -52,6 +56,20 @@ const TicketModal = ({ isOpen, onClose }) => {
     if (!fetchErr) setTickets(data || []);
     setLoadingTickets(false);
   }, [user]);
+
+  const handleOpenTicket = useCallback(async (ticketId) => {
+    setLoadingDetail(true);
+    setView('detail');
+
+    const [{ data: ticketData }, { data: attachmentsData }] = await Promise.all([
+      supabase.from('tickets').select('*').eq('id', ticketId).single(),
+      supabase.from('ticket_attachments').select('*').eq('ticket_id', ticketId),
+    ]);
+
+    setSelectedTicket(ticketData || null);
+    setSelectedAttachments(attachmentsData || []);
+    setLoadingDetail(false);
+  }, []);
 
   useEffect(() => {
     if (isOpen) {
@@ -180,7 +198,9 @@ const TicketModal = ({ isOpen, onClose }) => {
         {/* Header */}
         <div className="px-6 pt-6 pb-4 border-b border-gray-100 flex items-center justify-between">
           <h2 className="text-lg font-bold text-eglux-primary">
-            {view === 'list' ? 'Tiket Bantuan' : 'Buat Tiket Baru'}
+            {view === 'list' && 'Tiket Bantuan'}
+            {view === 'create' && 'Buat Tiket Baru'}
+            {view === 'detail' && 'Detail Tiket'}
           </h2>
           <button
             onClick={onClose}
@@ -213,19 +233,76 @@ const TicketModal = ({ isOpen, onClose }) => {
               )}
 
               {!loadingTickets && tickets.map((t) => (
-                <div
+                <button
                   key={t.id}
-                  className="p-3 border border-gray-100 rounded-lg hover:bg-gray-50 transition-colors"
+                  onClick={() => handleOpenTicket(t.id)}
+                  className="w-full text-left p-3 border border-gray-100 rounded-lg hover:bg-gray-50 transition-colors cursor-pointer bg-transparent"
                 >
                   <div className="flex items-start justify-between gap-2">
                     <p className="text-sm font-semibold text-eglux-primary truncate flex-1">{t.subject}</p>
                     <StatusBadge status={t.status} />
                   </div>
                   <p className="text-[0.7rem] text-gray-400 mt-1">{formatDate(t.created_at)}</p>
-                </div>
+                </button>
               ))}
             </div>
           </>
+        )}
+
+        {/* ── DETAIL VIEW ── */}
+        {view === 'detail' && (
+          <div className="px-6 py-5 space-y-4">
+            {loadingDetail && (
+              <p className="text-sm text-gray-400 text-center py-6">Memuat detail tiket...</p>
+            )}
+
+            {!loadingDetail && selectedTicket && (
+              <>
+                <div className="flex items-start justify-between gap-2">
+                  <h3 className="text-base font-bold text-eglux-primary">{selectedTicket.subject}</h3>
+                  <StatusBadge status={selectedTicket.status} />
+                </div>
+                <p className="text-[0.7rem] text-gray-400 -mt-2">{formatDate(selectedTicket.created_at)}</p>
+
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1.5">
+                    Deskripsi
+                  </label>
+                  <p className="text-sm text-eglux-primary whitespace-pre-wrap bg-gray-50 rounded-lg p-3 border border-gray-100">
+                    {selectedTicket.description}
+                  </p>
+                </div>
+
+                {selectedAttachments.length > 0 && (
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1.5">
+                      Lampiran
+                    </label>
+                    <div className="space-y-1.5">
+                      {selectedAttachments.map((att) => (
+                        <div
+                          key={att.id}
+                          className="flex items-center gap-2 text-sm text-gray-500 bg-gray-50 rounded-lg p-2.5 border border-gray-100"
+                        >
+                          <span>{att.file_type === 'image' ? '🖼️' : '🎬'}</span>
+                          <span>
+                            Lampiran {att.file_type === 'image' ? 'foto' : 'video'} sudah dikirim via email ke tim support
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <button
+                  onClick={() => setView('list')}
+                  className="w-full py-2.5 text-sm font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 mt-2"
+                >
+                  Kembali ke Daftar Tiket
+                </button>
+              </>
+            )}
+          </div>
         )}
 
         {/* ── CREATE VIEW ── */}
