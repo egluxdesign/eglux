@@ -18,6 +18,7 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
 import { CartProvider } from './context/CartContext';
 import CartPage from './pages/CartPage';
+import { useDisableNumberInputScroll } from './hooks/useDisableNumberInputScroll';
 
 // Pages
 import HomePage from './pages/HomePage';
@@ -34,6 +35,10 @@ import AdminProductsPage from './pages/AdminProductsPage';
 import ProtectedRoute from './components/ui/ProtectedRoute';
 
 const App = () => {
+  // Cegah scroll wheel mengubah value di semua <input type="number">
+  // di seluruh aplikasi (berlaku global, tidak perlu diulang per form).
+  useDisableNumberInputScroll();
+
   return (
     <AuthProvider>
       <CartProvider>
