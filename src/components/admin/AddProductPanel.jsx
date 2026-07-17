@@ -21,7 +21,6 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
-const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 // ── Helpers ──
 function slugify(text) {
@@ -185,52 +184,61 @@ const AddProductPanel = ({ isOpen, onClose, onCreated }) => {
   };
 
   // ── Upload photos ke Storage setelah product created ──
-  const uploadPendingPhotos = async (productId, variantIdMap) => {
-    // variantIdMap: { tempId: realUuid }
-    if (pendingPhotos.length === 0) return;
+// FIX: sebelumnya pakai ANON_KEY (salah) → sekarang pakai session.access_token
+// milik user yang login, sama seperti EditProductPanel.jsx.
+const uploadPendingPhotos = async (productId, variantIdMap) => {
+  // variantIdMap: { tempId: realUuid }
+  if (pendingPhotos.length === 0) return;
 
-    setUploadingPhoto(true);
-    let uploaded = 0;
-    let firstPhoto = true; // first cover photo = primary
+  // Ambil access_token user yang sedang login (bukan anon key statis)
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session) {
+    showToast('Sesi login habis, foto tidak bisa diupload', 'error');
+    return;
+  }
 
-    for (const photo of pendingPhotos) {
-      try {
-        const fd = new FormData();
-        fd.append('file', photo.file);
-        fd.append('product_id', productId);
-        // Variant photo: pakai real UUID dari map. Cover: variant_id kosong.
-        if (photo.variant_id && variantIdMap[photo.variant_id]) {
-          fd.append('variant_id', variantIdMap[photo.variant_id]);
-        }
-        // First cover photo auto-primary
-        if (!photo.variant_id && firstPhoto) {
-          fd.append('is_primary', 'true');
-          firstPhoto = false;
-        }
+  setUploadingPhoto(true);
+  let uploaded = 0;
+  let firstPhoto = true; // first cover photo = primary
 
-        const resp = await fetch(`${SUPABASE_URL}/functions/v1/upload-product-image`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${ANON_KEY}`,
-          },
-          body: fd,
+  for (const photo of pendingPhotos) {
+    try {
+      const fd = new FormData();
+      fd.append('file', photo.file);
+      fd.append('product_id', productId);
+      // Variant photo: pakai real UUID dari map. Cover: variant_id kosong.
+      if (photo.variant_id && variantIdMap[photo.variant_id]) {
+        fd.append('variant_id', variantIdMap[photo.variant_id]);
+      }
+      // First cover photo auto-primary
+      if (!photo.variant_id && firstPhoto) {
+        fd.append('is_primary', 'true');
+        firstPhoto = false;
+      }
+
+      const resp = await fetch(`${SUPABASE_URL}/functions/v1/upload-product-image`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+        body: fd,
         });
 
         if (resp.ok) {
           uploaded++;
         } else {
           console.warn('Photo upload failed:', await resp.text());
+          }
+          } catch (e) {
+            console.warn('Photo upload error:', e.message);
+          }
         }
-      } catch (e) {
-        console.warn('Photo upload error:', e.message);
-      }
-    }
 
-    setUploadingPhoto(false);
-    if (uploaded > 0) {
-      showToast(`✓ ${uploaded} foto diupload`, 'success');
-    }
-  };
+        setUploadingPhoto(false);
+        if (uploaded > 0) {
+          showToast(`✓ ${uploaded} foto diupload`, 'success');
+        }
+      };
 
   // ── Validation ──
   const validationErrors = useMemo(() => {
