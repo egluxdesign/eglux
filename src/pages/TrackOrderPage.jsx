@@ -30,14 +30,23 @@ const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const TRACKABLE_STATUSES = ['processing', 'shipping', 'completed'];
 
 // ── Biteship status labels (Indonesian) ──
+// ⭐ Source: https://biteship.com/en/docs/api/trackings/status
+// Biteship pakai camelCase (bukan snake_case). 15 status total.
 const TRACKING_STATUS = {
-  confirmed: { label: 'Pesanan Dikonfirmasi', color: 'text-blue-600', dot: 'bg-blue-500' },
-  allocated: { label: 'Kurir Dialokasikan', color: 'text-blue-600', dot: 'bg-blue-500' },
-  picking_up: { label: 'Kurir Menuju Lokasi', color: 'text-amber-600', dot: 'bg-amber-500' },
-  picked: { label: 'Paket Diambil', color: 'text-amber-600', dot: 'bg-amber-500' },
-  dropping_off: { label: 'Sedang Dikirim', color: 'text-purple-600', dot: 'bg-purple-500' },
-  delivered: { label: 'Tiba di Tujuan', color: 'text-green-600', dot: 'bg-green-500' },
-  cancelled: { label: 'Dibatalkan', color: 'text-red-500', dot: 'bg-red-400' },
+  confirmed:       { label: 'Pesanan Dikonfirmasi',  color: 'text-blue-600',   dot: 'bg-blue-500' },
+  allocated:       { label: 'Kurir Dialokasikan',    color: 'text-blue-600',   dot: 'bg-blue-500' },
+  pickingUp:       { label: 'Kurir Menuju Lokasi',   color: 'text-amber-600',  dot: 'bg-amber-500' },
+  picked:          { label: 'Paket Diambil',         color: 'text-amber-600',  dot: 'bg-amber-500' },
+  inTransit:       { label: 'Dalam Perjalanan',      color: 'text-purple-600', dot: 'bg-purple-500' },
+  droppingOff:     { label: 'Menuju Penerima',       color: 'text-purple-600', dot: 'bg-purple-500' },
+  returnInTransit: { label: 'Dikembalikan ke Pengirim', color: 'text-orange-600', dot: 'bg-orange-500' },
+  onHold:          { label: 'Ditahan',               color: 'text-gray-600',   dot: 'bg-gray-500' },
+  delivered:       { label: 'Tiba di Tujuan',        color: 'text-green-600',  dot: 'bg-green-500' },
+  rejected:        { label: 'Ditolak',               color: 'text-red-500',    dot: 'bg-red-400' },
+  courierNotFound: { label: 'Kurir Tidak Tersedia',  color: 'text-red-500',    dot: 'bg-red-400' },
+  returned:        { label: 'Dikembalikan',          color: 'text-orange-600', dot: 'bg-orange-500' },
+  cancelled:       { label: 'Dibatalkan',            color: 'text-red-500',    dot: 'bg-red-400' },
+  disposed:        { label: 'Disposal',              color: 'text-gray-600',   dot: 'bg-gray-500' },
 };
 
 // ── Order status badge ──
@@ -75,6 +84,10 @@ const TrackOrderPage = () => {
   const [trackingData, setTrackingData] = useState(null);
   const [trackingLoading, setTrackingLoading] = useState(false);
   const [trackingError, setTrackingError] = useState(null);
+
+  // ⭐ State untuk sync manual (fallback kalau webhook gak jalan)
+  const [syncing, setSyncing] = useState(false);
+  const [syncMessage, setSyncMessage] = useState(null);
 
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -210,7 +223,58 @@ const TrackOrderPage = () => {
     setActiveOrder(order);
     setTrackingData(null);
     setTrackingError(null);
+    setSyncMessage(null);
     fetchTracking(order.id);
+  };
+
+  // ⭐ Sync Status Manual: fetch dari Biteship API → update DB → refresh tracking
+  // (Fallback kalau webhook Biteship gak kirim event ke edge function kita)
+  const handleSyncStatus = async () => {
+    if (!activeOrder) return;
+    setSyncing(true);
+    setSyncMessage(null);
+
+    try {
+      const { data, error: invokeError } = await supabase.functions.invoke(
+        'sync-biteship-status',
+        { body: { order_id: activeOrder.id } }
+      );
+
+      if (invokeError) {
+        throw new Error(invokeError.message || 'Gagal menghubungi server');
+      }
+      if (!data?.success) {
+        throw new Error(data?.error || 'Gagal sync status dari Biteship');
+      }
+
+      // Update activeOrder state dengan data baru
+      const updatedOrder = {
+        ...activeOrder,
+        status: data.new_eglux_status || activeOrder.status,
+        biteship_status: data.new_biteship_status || activeOrder.biteship_status,
+        tracking_number: data.tracking_number || activeOrder.tracking_number,
+      };
+      setActiveOrder(updatedOrder);
+
+      // Refresh tracking detail
+      await fetchTracking(activeOrder.id);
+
+      // Refresh list orders juga
+      fetchOrders();
+
+      setSyncMessage(
+        `✓ Status di-sync dari Biteship: ${data.new_biteship_status || 'tidak berubah'} ` +
+        `→ ${data.new_eglux_status || 'tidak berubah'}`
+      );
+    } catch (e) {
+      console.error('[TrackOrder] sync error:', e);
+      const msg = e.message?.includes('Failed to fetch') || e.message?.includes('CORS')
+        ? 'Gagal terhubung ke server. Pastikan edge function "sync-biteship-status" sudah di-deploy.'
+        : e.message;
+      setSyncMessage(`❌ ${msg}`);
+    } finally {
+      setSyncing(false);
+    }
   };
 
   // ── Kembali ke list view ──
@@ -282,12 +346,36 @@ const TrackOrderPage = () => {
               </svg>
               Kembali
             </button>
+            {/* ⭐ Sync Status button — manual sync dari Biteship API */}
+            <button
+              onClick={handleSyncStatus}
+              disabled={syncing}
+              className="flex items-center gap-1.5 text-xs text-eglux-primary font-semibold bg-eglux-accent hover:bg-eglux-accent/80 px-3 py-1.5 rounded-lg transition-colors cursor-pointer border-none disabled:opacity-50 ml-auto"
+            >
+              <svg className={`w-3.5 h-3.5 ${syncing ? 'animate-spin' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="23 4 23 10 17 10" />
+                <polyline points="1 20 1 14 7 14" />
+                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+              </svg>
+              {syncing ? 'Syncing...' : 'Sync Status'}
+            </button>
             <Link to="/orders" className="text-xs text-eglux-secondary font-medium hover:underline whitespace-nowrap">
               ← Lihat Rincian Pesanan
             </Link>
           </div>
           <h1 className="text-2xl font-bold text-eglux-primary mb-1">Lacak Pesanan</h1>
           <p className="text-sm text-gray-500 mb-6">Status pengiriman order #{shortId(order.id)}</p>
+
+          {/* Sync message (success/error) */}
+          {syncMessage && (
+            <div className={`mb-4 p-3 rounded-lg text-xs font-medium ${
+              syncMessage.startsWith('✓')
+                ? 'bg-green-50 border border-green-200 text-green-700'
+                : 'bg-red-50 border border-red-200 text-red-600'
+            }`}>
+              {syncMessage}
+            </div>
+          )}
 
           {/* Order header card */}
           <div className="bg-white border border-gray-200 rounded-xl p-4 mb-4">

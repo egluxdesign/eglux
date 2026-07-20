@@ -1,6 +1,6 @@
 // supabase/functions/biteship-webhook/index.ts
 // ============================================================================
-// Biteship Webhook Handler (STUB)
+// Biteship Webhook Handler (v2 — FIXED)
 // ============================================================================
 //
 // Receive POST dari Biteship saat status order berubah:
@@ -11,28 +11,25 @@
 //   - Order cancelled
 //
 // Update orders table:
-//   - biteship_status       (confirmed, processing, shipping, delivered, cancelled)
-//   - tracking_number       (Biteship assign tracking number setelah confirmed)
+//   - biteship_status       (camelCase: confirmed, allocated, pickingUp, picked, inTransit, droppingOff, delivered, dst.)
+//   - status                (EGLUX internal: processing, shipping, completed, cancelled)
+//   - tracking_number       (nomor resi dari Biteship/kurir)
 //   - biteship_waybill_url  (URL PDF shipping label)
 //   - biteship_pickup_code  (kode pickup untuk verify courier)
 //
+// ⭐ FIXES di v2:
+//   1. orderId detection: cek reference_id → metadata.reference_id → id (Biteship order ID)
+//   2. UUID detection: kalau orderId bukan UUID, lookup via biteship_order_id column
+//   3. Cek 0 rows affected: log error kalau update gak match order manapun
+//   4. Verbose logging: log setiap step untuk debugging
+//   5. Status mapping: 15 Biteship status (camelCase) → 4 EGLUX status
+//
 // Setup:
 //   1. Set webhook URL di Biteship dashboard:
-//        Settings → Webhooks → Add Webhook
+//        Settings → Integrations → For Developers → Webhook
 //        URL: https://<project-ref>.supabase.co/functions/v1/biteship-webhook
-//        Events: order.created, order.confirmed, order.processing,
-//                order.shipping, order.delivered, order.cancelled
-//   2. Set env var BITESHIP_WEBHOOK_SECRET (kalau ada signature verification)
-//
-// TODO (belum implemented — stub only):
-//   - Verify Biteship webhook signature
-//   - Map Biteship event_type ke internal biteship_status
-//   - Update orders table
-//   - Trigger WABA notification saat status berubah (optional)
-//
-// Catatan: Saat ini, Biteship order creation kemungkinan dilakukan manual
-// via Biteship dashboard (screenshot 2 yang Boss kasih). Webhook ini akan
-// auto-update status di DB Boss saat ada perubahan di Biteship.
+//        Events: order.status, order.waybill_id, order.price
+//   2. (Optional) Set BITESHIP_WEBHOOK_SECRET + Headers Signature Key di Biteship
 // ============================================================================
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
@@ -42,9 +39,6 @@ const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
 // Optional: Biteship webhook secret untuk signature verification.
-// Biteship tidak punya signature default, jadi pakai custom secret yang di-set
-// di Biteship dashboard + Supabase env var. Kalau gak di-set, webhook bisa
-// di-invoke siapapun (tidak ideal untuk production).
 const BITESHIP_WEBHOOK_SECRET = Deno.env.get("BITESHIP_WEBHOOK_SECRET");
 
 const corsHeaders = {
@@ -61,20 +55,6 @@ function json(obj: unknown, status = 200) {
 }
 
 /**
- * Map Biteship event_type ke internal biteship_status
- * Reference: Biteship webhook docs
- */
-function mapBiteshipStatus(eventType: string): string | null {
-  // Biteship event types (typical — verifikasi di Biteship dashboard):
-  if (eventType.includes("confirmed")) return "confirmed";
-  if (eventType.includes("processing")) return "processing";
-  if (eventType.includes("shipping") || eventType.includes("in_transit")) return "shipping";
-  if (eventType.includes("delivered")) return "delivered";
-  if (eventType.includes("cancelled") || eventType.includes("cancel")) return "cancelled";
-  return null;
-}
-
-/**
  * ⭐ Map Biteship status ke EGLUX internal order status
  *
  * Source: https://biteship.com/en/docs/api/trackings/status (15 status, camelCase)
@@ -84,15 +64,7 @@ function mapBiteshipStatus(eventType: string): string | null {
  *        ↓          ↓           ↓          ↓          ↓           ↓
  *    cancelled  cancelled  cancelled  cancelled  cancelled  cancelled
  *
- * Edge cases:
- *   - onHold: paket ditahan sementara (masalah dokumen, alamat, dst.) — tetap "shipping"
- *   - returnInTransit: dikembalikan ke pengirim — tetap "processing" (perlu follow-up)
- *   - returned: berhasil dikembalikan — "cancelled"
- *   - rejected: ditolak penerima — "cancelled"
- *   - courierNotFound: gak ada kurir — "cancelled"
- *   - disposed: disposal selesai — "cancelled"
- *
- * EGLUX orders.status flow (dari orders-schema-reference.md):
+ * EGLUX orders.status flow:
  *   pending → processing → shipping → completed
  *      ↓         ↓           ↓
  *   cancelled  cancelled  cancelled
@@ -119,13 +91,18 @@ function mapBiteshipToEgluxStatus(biteshipStatus: string): string | null {
     case "rejected":
     case "courierNotFound":
     case "disposed":
-      return "cancelled";
-    // returnInTransit: paket dikembalikan ke pengirim — anggap cancelled
     case "returnInTransit":
       return "cancelled";
     default:
       return null;
   }
+}
+
+/**
+ * Cek apakah string adalah UUID v4 (format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)
+ */
+function isUUID(str: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str || "");
 }
 
 serve(async (req: Request) => {
@@ -134,16 +111,9 @@ serve(async (req: Request) => {
   }
 
   // ⚠️ BITESHIP INSTALLATION VALIDATION:
-  // Saat Boss setup webhook di Biteship dashboard, Biteship kirim verification request
+  // Saat setup webhook di Biteship dashboard, Biteship kirim verification request
   // dengan EMPTY BODY atau non-JSON content. Function HARUS return 200 OK supaya
-  // installation sukses. Setelah installation, validation boleh di-applied.
-  //
-  // Strategy:
-  //   - GET / HEAD: return 200 OK (health check)
-  //   - POST dengan empty body: return 200 OK (installation verification)
-  //   - POST dengan non-JSON body: return 200 OK (defensive — jangan fail)
-  //   - POST dengan JSON body: process normally
-
+  // installation sukses.
   if (req.method === "GET" || req.method === "HEAD") {
     return json({ success: true, message: "biteship-webhook ready" }, 200);
   }
@@ -159,7 +129,7 @@ serve(async (req: Request) => {
     return json({ success: true, message: "OK — installation verification accepted" }, 200);
   }
 
-  // Parse body secara defensive — return 200 OK walau JSON invalid
+  // Parse body secara defensive
   let body: any = null;
   let rawText = "";
   try {
@@ -169,18 +139,14 @@ serve(async (req: Request) => {
       return json({ success: true, message: "OK — installation verification accepted" }, 200);
     }
     body = JSON.parse(rawText);
+    // ⭐ Log raw body untuk debugging (lihat di Supabase Dashboard → Logs)
+    console.log("[biteship-webhook] 📥 Raw body:", rawText.substring(0, 2000));
   } catch (err) {
-    // Jangan fail — Biteship mungkin kirim format lain saat installation
     console.warn("[biteship-webhook] Body bukan JSON valid, returning 200 OK for safety:", err?.message);
     return json({ success: true, message: "OK — accepted (non-JSON body)" }, 200);
   }
 
   // ── SIGNATURE VERIFICATION (kalau BITESHIP_WEBHOOK_SECRET di-set) ──
-  // Cara pakai:
-  //   1. Set BITESHIP_WEBHOOK_SECRET di Supabase Edge Function env vars
-  //   2. Add custom header di Biteship webhook config: X-Webhook-Secret: <secret>
-  //   3. Function akan verify header ini cocok dengan env var
-  // Kalau secret gak di-set (dev mode), skip check (akan log warning).
   if (BITESHIP_WEBHOOK_SECRET) {
     const providedSecret = req.headers.get("x-webhook-secret") || req.headers.get("x-biteship-signature");
     if (providedSecret !== BITESHIP_WEBHOOK_SECRET) {
@@ -191,25 +157,24 @@ serve(async (req: Request) => {
     console.warn("[biteship-webhook] BITESHIP_WEBHOOK_SECRET not set — webhook unauthenticated (dev mode)");
   }
 
-  // Validasi minimal — kalau body ada tapi tidak punya field yang expected,
-  // tetap return 200 OK (Biteship bisa kirim webhook dengan shape berbeda dari asumsi kita)
+  // Validasi minimal
   if (!body || (typeof body !== "object")) {
     console.warn("[biteship-webhook] Body is not an object, returning 200 OK");
     return json({ success: true, message: "OK — accepted (non-object body)" }, 200);
   }
 
-  // ⚠️ BITESHIP HANYA ADA 3 EVENTS (verified by Boss):
-  //   - order.status    → trigger saat status berubah (confirmed/processing/shipping/delivered/cancelled)
-  //   - order.price     → trigger saat harga berubah (skip — tidak relevan untuk operasional)
+  // ⭐ BITESHIP HANYA ADA 3 EVENTS:
+  //   - order.status    → trigger saat status berubah
   //   - order.waybill_id → trigger saat waybill/label tersedia
+  //   - order.price     → trigger saat harga berubah (skip)
   //
-  // Payload shape (per Biteship docs):
+  // Payload shape:
   // {
   //   "event": "order.status" | "order.price" | "order.waybill_id",
   //   "data": {
   //     "id": "biteship_order_id",
   //     "reference_id": "EGLUX order_id (UUID)",
-  //     "courier": { "code": "jne", "service": "REG", "tracking_id": "JNE123456", "waybill_id": "..." },
+  //     "courier": { "code": "jne", "service": "REG", "tracking_id": "...", "waybill_id": "..." },
   //     "waybill_url": "https://...",
   //     "pickup_code": "...",
   //     "status": "confirmed" | "processing" | "shipping" | "delivered" | "cancelled",
@@ -220,37 +185,34 @@ serve(async (req: Request) => {
   const eventType: string = body?.event || "";
   const data: any = body?.data || {};
 
-  // reference_id = order_id EGLUX (yang kita pass saat create-biteship-order)
-  const orderId = data.reference_id;
+  // ⭐ FIX #1: Field priority untuk orderId (EGLUX UUID):
+  //   1. data.reference_id    → standard Biteship field
+  //   2. data.metadata.reference_id → kalau Biteship nested di metadata
+  //   3. data.id              → Biteship order ID (fallback, BUKAN EGLUX UUID)
+  //
+  // Bug sebelumnya: kalau reference_id gak ada di payload, orderId = undefined
+  // → update .eq("id", undefined) = 0 rows affected → status gak update!
+  const orderId = data.reference_id || data.metadata?.reference_id || data.id || null;
   const biteshipOrderId = data.id;
 
-  // ⚠️ FIELD PRIORITY untuk tracking number (nomor resi):
-  //   1. courier.waybill_id    → actual courier AWB / nomor resi (e.g., "WYB-1783418334923" untuk JNE)
-  //   2. courier.tracking_id   → Biteship internal ID (e.g., "yvbKGFqRxOEfhH42DDsCxny0") — fallback kalau waybill belum generated
+  // ⭐ FIELD PRIORITY untuk tracking number (nomor resi):
+  //   1. courier.waybill_id    → actual courier AWB / nomor resi
+  //   2. courier.tracking_id   → Biteship internal ID (fallback)
   //   3. courier.tracking_number → legacy field name (defensive)
-  //
-  // Customer butuh yang #1 (waybill_id) untuk tracking paket di website kurir.
-  // tracking_id cuma untuk internal Biteship debugging.
   const trackingNumber = data.courier?.waybill_id || data.courier?.tracking_id || data.courier?.tracking_number;
   const waybillUrl = data.waybill_url;
   const pickupCode = data.pickup_code;
 
-  // STATUS extraction logic untuk 3 events:
-  //   - order.status event → ambil dari data.status (Biteship kirim value baru)
-  //   - order.waybill_id event → status tetap, tapi waybill_url tersedia
-  //   - order.price event → skip, return 200 OK tapi tidak update apa-apa
+  // STATUS extraction logic
   let biteshipStatus: string | null = null;
 
   if (eventType === "order.status") {
-    // Status berubah — ambil value dari data.status
     biteshipStatus = data.status || null;
     console.log(`[biteship-webhook] order.status event → status=${biteshipStatus}`);
   } else if (eventType === "order.waybill_id") {
-    // Waybill tersedia — status tetap, tapi update waybill_url
-    biteshipStatus = data.status || null; // mungkin tetap current status
+    biteshipStatus = data.status || null;
     console.log(`[biteship-webhook] order.waybill_id event → waybill_url=${waybillUrl}`);
   } else if (eventType === "order.price") {
-    // Price change — skip update, return OK
     console.log(`[biteship-webhook] order.price event → skip (not relevant)`);
     return json({
       success: true,
@@ -259,47 +221,49 @@ serve(async (req: Request) => {
       message: "Price event received, no action taken",
     });
   } else {
-    // Unknown event — defensive, tetap coba ambil status
     biteshipStatus = data.status || null;
     console.warn(`[biteship-webhook] Unknown event: ${eventType}`);
   }
 
-  if (!orderId) {
-    console.error("[biteship-webhook] Missing reference_id (order_id)");
-    return json({ error: "Missing reference_id" }, 400);
-  }
-
-  console.log("[biteship-webhook] Received:", {
+  console.log("[biteship-webhook] 📋 Parsed payload:", {
     event: eventType,
     order_id: orderId,
     biteship_order_id: biteshipOrderId,
     tracking_number: trackingNumber,
     status: biteshipStatus,
     waybill_url: waybillUrl,
+    pickup_code: pickupCode,
   });
+
+  if (!orderId) {
+    console.error("[biteship-webhook] ❌ Missing order identifier (reference_id, id, atau biteship_order_id)");
+    return json({ error: "Missing order identifier" }, 400);
+  }
 
   // 1. Update orders table
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
   const updatePayload: Record<string, unknown> = {};
 
-  // Hanya update field yang punya value baru
   if (biteshipStatus) {
     updatePayload.biteship_status = biteshipStatus;
 
-    // ⭐ Mapping ke EGLUX internal status (orders.status)
-    // Tanpa ini, UI order history/lacak pesanan stuck di "Diproses"
-    // padahal Biteship sudah "shipping"/"delivered".
+    // ⭐ FIX: Mapping ke EGLUX internal status dengan verbose log
     const egluxStatus = mapBiteshipToEgluxStatus(biteshipStatus);
     if (egluxStatus) {
       updatePayload.status = egluxStatus;
+      console.log(`[biteship-webhook] 🔄 Status mapping: ${biteshipStatus} → ${egluxStatus}`);
+    } else {
+      console.warn(`[biteship-webhook] ⚠️ No mapping for biteshipStatus: ${biteshipStatus}`);
     }
+  } else {
+    console.warn("[biteship-webhook] ⚠️ biteshipStatus is null/empty — tidak ada status untuk update");
   }
   if (trackingNumber) updatePayload.tracking_number = trackingNumber;
   if (waybillUrl) updatePayload.biteship_waybill_url = waybillUrl;
   if (pickupCode) updatePayload.biteship_pickup_code = pickupCode;
 
-  // Kalau payload kosong (tidak ada field baru), return OK tanpa update
+  // Kalau payload kosong
   if (Object.keys(updatePayload).length === 0) {
     console.log("[biteship-webhook] No fields to update, returning OK");
     return json({
@@ -310,14 +274,32 @@ serve(async (req: Request) => {
     });
   }
 
-  const { error: updateError } = await supabase
-    .from("orders")
-    .update(updatePayload)
-    .eq("id", orderId);
+  // ⭐ FIX #2: Determine update strategy
+  //   - Kalau orderId adalah UUID → update by id (EGLUX orders.id)
+  //   - Kalau orderId adalah Biteship order ID (bukan UUID) → lookup via biteship_order_id
+  //
+  // Bug sebelumnya: kalau Biteship kirim `id` (Biteship order ID) di payload
+  // tapi `reference_id` kosong, update .eq("id", orderId) = 0 rows affected
+  // (karena Biteship ID bukan EGLUX UUID)
+  let updateQuery;
+  let lookupField: string;
+  if (isUUID(orderId)) {
+    lookupField = "id";
+    updateQuery = supabase.from("orders").update(updatePayload).eq("id", orderId);
+  } else if (biteshipOrderId) {
+    lookupField = "biteship_order_id";
+    updateQuery = supabase.from("orders").update(updatePayload).eq("biteship_order_id", biteshipOrderId);
+    console.log(`[biteship-webhook] orderId bukan UUID, lookup via biteship_order_id: ${biteshipOrderId}`);
+  } else {
+    console.error("[biteship-webhook] ❌ Tidak ada orderId atau biteshipOrderId untuk update");
+    return json({ error: "Missing order identifier" }, 400);
+  }
+
+  // ⭐ FIX #3: Pakai .select() supaya bisa cek rows affected
+  const { data: updateResult, error: updateError } = await updateQuery.select("id, status, biteship_status");
 
   if (updateError) {
-    console.error("[biteship-webhook] Failed to update order:", updateError);
-    // Tetap return 200 OK supaya Biteship tidak retry
+    console.error("[biteship-webhook] ❌ DB update failed:", updateError);
     return json({
       success: false,
       order_id: orderId,
@@ -326,26 +308,31 @@ serve(async (req: Request) => {
     }, 200);
   }
 
-  console.log("[biteship-webhook] ✓ Order updated:", orderId, "→", JSON.stringify(updatePayload));
+  // ⭐ FIX #4: Cek apakah ada row yang ter-update
+  if (!updateResult || updateResult.length === 0) {
+    console.error(`[biteship-webhook] ❌ No order found with ${lookupField}=${orderId} (0 rows affected)`);
+    return json({
+      success: false,
+      order_id: orderId,
+      lookup_field: lookupField,
+      error: `Order not found with ${lookupField}=${orderId}`,
+    }, 200);
+  }
 
-  // 2. TODO: Trigger WABA notification untuk status shipping/delivered
-  // Sekarang orders.status sudah sinkron dengan biteship_status lewat mapping di atas.
-  // Contoh: kalau mau kirim notif WA saat paket shipping/delivered:
-  // if (biteshipStatus === "shipping") {
-  //   await supabase.functions.invoke("send-waba-test", {
-  //     body: { order_id: orderId, event: "order_shipping" },
-  //   });
-  // }
-  // if (biteshipStatus === "delivered") {
-  //   await supabase.functions.invoke("send-waba-test", {
-  //     body: { order_id: orderId, event: "order_delivered" },
-  //   });
-  // }
+  const updatedOrder = updateResult[0];
+  console.log("[biteship-webhook] ✅ Order updated:", {
+    order_id: updatedOrder.id,
+    new_status: updatedOrder.status,
+    new_biteship_status: updatedOrder.biteship_status,
+    updated_fields: Object.keys(updatePayload),
+  });
 
   return json({
     success: true,
-    order_id: orderId,
+    order_id: updatedOrder.id,
     biteship_status: biteshipStatus,
+    eglux_status: updatedOrder.status,
     event: eventType,
+    updated_fields: Object.keys(updatePayload),
   });
 });
