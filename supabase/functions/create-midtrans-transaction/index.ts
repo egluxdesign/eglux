@@ -113,23 +113,54 @@ serve(async (req: Request) => {
     }
 
     // 3. Sanity check: gross_amount MUST equal order.total_amount
+    // ⚠️ Toleransi mismatch sampai Rp 100 untuk handle rounding error dari
+    // update-order-courier (subtotal + shipping_cost baru vs total_amount lama).
+    // Kalau mismatch > Rp 100, return 400 dengan debug info.
     const gross_amount = item_details.reduce((s, i) => s + i.price * i.quantity, 0);
     const expected_total = Math.round(Number(order.total_amount) || 0);
+    const mismatch = Math.abs(gross_amount - expected_total);
 
-    if (gross_amount !== expected_total) {
-      console.error("[midtrans] total mismatch", {
+    console.log("[midtrans] total check", {
+      gross_amount,
+      expected_total,
+      mismatch,
+      subtotal: order.subtotal,
+      shipping_cost: order.shipping_cost,
+      total_amount: order.total_amount,
+      courier_rate: order.courier_rate,
+    });
+
+    if (mismatch > 100) {
+      console.error("[midtrans] total mismatch > 100", {
         gross_amount,
         expected_total,
-        subtotal: order.subtotal,
-        shipping_cost: order.shipping_cost,
+        mismatch,
       });
       return json(
         {
-          error: "Total mismatch — order.total_amount tidak cocok dengan item_details + shipping",
-          debug: { gross_amount, expected_total, order_total: order.total_amount },
+          error: `Total mismatch (selisih Rp ${mismatch}). order.total_amount=${expected_total}, computed=${gross_amount}. Coba ubah kurir ulang via "Ubah Kurir" di rincian pesanan.`,
+          debug: {
+            gross_amount,
+            expected_total,
+            mismatch,
+            order_total: order.total_amount,
+            subtotal: order.subtotal,
+            shipping_cost: order.shipping_cost,
+            courier_rate: order.courier_rate,
+          },
         },
         400
       );
+    }
+
+    // Kalau mismatch kecil (<= Rp 100), pakai gross_amount yang dihitung dari item_details
+    // (lebih akurat) supaya Midtrans accept. Auto-fix order.total_amount juga.
+    if (mismatch > 0) {
+      console.warn(`[midtrans] Small mismatch (Rp ${mismatch}), auto-fixing order.total_amount to ${gross_amount}`);
+      await supabase
+        .from("orders")
+        .update({ total_amount: gross_amount })
+        .eq("id", order_id);
     }
 
     // 4. customer_details + billing/shipping address (Midtrans spec)
@@ -147,6 +178,22 @@ serve(async (req: Request) => {
       postal_code: order.shipping_postal_code || undefined,
       country_code: "IDN",
     };
+
+    // ⭐ Determine finish_redirect_url dari request origin
+    // Setelah user bayar di Midtrans Snap page (redirect mode), mereka akan
+    // di-redirect balik ke URL ini dengan query params: ?order_id=xxx&transaction_status=xxx
+    // Frontend (OrdersList) parse query params untuk show toast + realtime update status.
+    //
+    // Cara dapet origin: dari Origin header (browser set saat fetch cross-origin),
+    // fallback ke Referer header, fallback ke hardcoded production URL.
+    const requestOrigin =
+      req.headers.get("origin") ||
+      (req.headers.get("referer")
+        ? new URL(req.headers.get("referer") as string).origin
+        : null) ||
+      "https://eglux.vercel.app";
+    const finishRedirectUrl = `${requestOrigin}/orders`;
+    console.log("[create-midtrans-transaction] finish_redirect_url:", finishRedirectUrl);
 
     const payload = {
       transaction_details: { order_id, gross_amount },
@@ -166,6 +213,9 @@ serve(async (req: Request) => {
       //   enabled_payments: ["qris"],
       custom_field1: order.courier_code ? `${order.courier_code}/${order.courier_service}` : null,
       custom_field2: order.shipping_postal_code || null,
+      // ⭐ Redirect mode: setelah payment, user di-redirect balik ke /orders
+      // (Popup mode gak pakai field ini, tapi set tetap supaya konsisten)
+      finish_redirect_url: finishRedirectUrl,
     };
 
     // 5. POST to Midtrans Snap

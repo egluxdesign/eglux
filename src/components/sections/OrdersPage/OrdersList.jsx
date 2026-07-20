@@ -270,7 +270,19 @@ const OrderDetailPanel = ({ order: orderProp, onClose, onOrderUpdated }) => {
       );
 
       if (fnError || !data?.token) {
-        throw new Error(data?.error || fnError?.message || 'Gagal membuat transaksi pembayaran');
+        // ⭐ Extract error message yang lebih informatif dari edge function response
+        let errMsg = 'Gagal membuat transaksi pembayaran';
+        if (data?.error) {
+          errMsg = data.error;
+          // Kalau ada debug info, tampilkan juga
+          if (data.debug) {
+            console.error('[OrdersList] Debug info:', data.debug);
+            errMsg += ` (debug: ${JSON.stringify(data.debug)})`;
+          }
+        } else if (fnError?.message) {
+          errMsg = fnError.message;
+        }
+        throw new Error(errMsg);
       }
 
       // Close detail panel dulu supaya popup Snap gak ketutup di belakang panel
