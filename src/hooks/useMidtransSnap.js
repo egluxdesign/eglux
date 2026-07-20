@@ -15,26 +15,34 @@
 //   4. Production switch: Sandbox vs production URL bisa switch otomatis
 //      berdasarkan env var.
 //
+// ⭐ v2: Pakai centralized env dari src/lib/env.js (single source of truth).
+//       Error message lebih actionable — kasih instruksi cara fix, bukan
+//       "Midtrans client key not configured" yang mysterious.
+//
 // Pemakaian:
 //   const { snapReady, loadError, reload } = useMidtransSnap();
 //   if (snapReady) { window.snap.pay(token, callbacks); }
 //   else { // fallback ke redirect mode }
+//
+//   // Atau Promise-based (di event handler, tanpa hook):
+//   import { ensureSnapLoaded } from '../hooks/useMidtransSnap';
+//   await ensureSnapLoaded();
+//   window.snap.pay(token, callbacks);
 // ============================================================================
 
 import { useState, useEffect, useCallback } from 'react';
+import { env } from '../lib/env';
 
-// Snap.js URL — sandbox atau production
-const SNAP_JS_URL = import.meta.env.VITE_MIDTRANS_IS_PRODUCTION === 'true'
-  ? 'https://app.midtrans.com/snap/snap.js'
-  : 'https://app.sandbox.midtrans.com/snap/snap.js';
-
-// Client key dari env var
-const CLIENT_KEY = import.meta.env.VITE_MIDTRANS_CLIENT_KEY;
+// Snap.js URL + client key dari centralized env (sudah validated di startup)
+const SNAP_JS_URL = env.MIDTRANS_SNAP_JS_URL;
+const CLIENT_KEY = env.MIDTRANS_CLIENT_KEY;
+const IS_PRODUCTION = env.MIDTRANS_IS_PRODUCTION;
 
 // Singleton: track apakah snap.js sudah di-load (global, bukan per-component)
 let snapLoadPromise = null;
 let snapLoaded = false;
 let snapLoadFailed = false;
+let snapLoadError = null;
 
 /**
  * Load Snap.js dynamically dengan client key yang benar.
@@ -51,13 +59,26 @@ function loadSnapScript() {
     return snapLoadPromise;
   }
 
-  // Kalau sudah gagal sebelumnya, return rejected
-  if (snapLoadFailed) {
-    return Promise.reject(new Error('Snap.js previously failed to load'));
+  // Kalau sudah gagal sebelumnya, return rejected dengan error yang sama
+  if (snapLoadFailed && snapLoadError) {
+    return Promise.reject(snapLoadError);
   }
 
   snapLoadPromise = new Promise((resolve, reject) => {
-    // Cek apakah snap.js sudah ada (mungkin di-load dari index.html)
+    // ── Pre-flight check: client key ──
+    if (!CLIENT_KEY) {
+      const err = new Error(
+        'VITE_MIDTRANS_CLIENT_KEY belum di-set di file .env. ' +
+        'Copy .env.example ke .env lalu isi Client Key dari Midtrans Dashboard → Settings → Access Keys.'
+      );
+      snapLoadFailed = true;
+      snapLoadError = err;
+      console.error('[useMidtransSnap] Missing VITE_MIDTRANS_CLIENT_KEY');
+      reject(err);
+      return;
+    }
+
+    // Cek apakah snap.js sudah ada (mungkin di-load dari tempat lain)
     if (window.snap && typeof window.snap.pay === 'function') {
       snapLoaded = true;
       resolve();
@@ -71,31 +92,27 @@ function loadSnapScript() {
 
     if (existingScript) {
       // Script sudah ada tapi snap belum ready — mungkin masih loading
-      // Tunggu sampai load
       existingScript.addEventListener('load', () => {
         if (window.snap && typeof window.snap.pay === 'function') {
           snapLoaded = true;
           resolve();
         } else {
+          const err = new Error('Snap.js loaded but window.snap.pay is not a function');
           snapLoadFailed = true;
-          reject(new Error('Snap.js loaded but window.snap.pay is not a function'));
+          snapLoadError = err;
+          reject(err);
         }
       });
       existingScript.addEventListener('error', () => {
+        const err = new Error('Snap.js script failed to load (network error)');
         snapLoadFailed = true;
-        reject(new Error('Snap.js script failed to load'));
+        snapLoadError = err;
+        reject(err);
       });
       return;
     }
 
     // Dynamic create script tag dengan client key yang benar
-    if (!CLIENT_KEY) {
-      console.error('[useMidtransSnap] VITE_MIDTRANS_CLIENT_KEY not set in .env');
-      snapLoadFailed = true;
-      reject(new Error('Midtrans client key not configured'));
-      return;
-    }
-
     const script = document.createElement('script');
     script.type = 'text/javascript';
     script.src = SNAP_JS_URL;
@@ -106,19 +123,31 @@ function loadSnapScript() {
       // Verify snap object tersedia
       if (window.snap && typeof window.snap.pay === 'function') {
         snapLoaded = true;
-        console.log('[useMidtransSnap] ✓ Snap.js loaded successfully');
+        console.log(
+          `[useMidtransSnap] ✓ Snap.js loaded (${env.MIDTRANS_MODE_LABEL} mode)`
+        );
         resolve();
       } else {
+        const err = new Error(
+          'Snap.js script loaded but window.snap API not available. ' +
+          'Kemungkinan client key salah atau akun Midtrans bermasalah.'
+        );
         snapLoadFailed = true;
-        console.error('[useMidtransSnap] Snap.js loaded but window.snap.pay missing');
-        reject(new Error('Snap.js loaded but API not available'));
+        snapLoadError = err;
+        console.error('[useMidtransSnap] Snap.js loaded but API missing');
+        reject(err);
       }
     };
 
     script.onerror = () => {
+      const err = new Error(
+        `Gagal load Snap.js dari ${SNAP_JS_URL}. ` +
+        'Cek koneksi internet atau firewall yang mungkin block domain midtrans.com.'
+      );
       snapLoadFailed = true;
-      console.error('[useMidtransSnap] Failed to load Snap.js script');
-      reject(new Error('Failed to load Snap.js from Midtrans CDN'));
+      snapLoadError = err;
+      console.error('[useMidtransSnap] Script load failed:', SNAP_JS_URL);
+      reject(err);
     };
 
     document.head.appendChild(script);
@@ -149,7 +178,9 @@ export function useMidtransSnap() {
   const [snapReady, setSnapReady] = useState(
     snapLoaded && window.snap && typeof window.snap.pay === 'function'
   );
-  const [loadError, setLoadError] = useState(null);
+  const [loadError, setLoadError] = useState(
+    snapLoadFailed ? snapLoadError?.message : null
+  );
 
   useEffect(() => {
     let mounted = true;
@@ -180,6 +211,7 @@ export function useMidtransSnap() {
   const reload = useCallback(() => {
     snapLoadFailed = false;
     snapLoadPromise = null;
+    snapLoadError = null;
     setSnapReady(false);
     setLoadError(null);
   }, []);
