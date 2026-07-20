@@ -571,6 +571,14 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
       if (!currentOrderId) {
         currentOrderId = await saveOrderToSupabase();
         setOrderId(currentOrderId);
+
+        // ⭐ Clear cart SETELAH order berhasil dibuat (bukan setelah payment success)
+        // Alasan: order sudah masuk ke "Pesanan Saya" status pending.
+        // User bisa bayar kapan saja via tombol "Lanjutkan Pembayaran" di /orders.
+        // Kalau cart gak di-clear dan user close popup sebelum bayar, cart tetap
+        // berisi item yang sama → user bisa accidentally checkout duplicate order.
+        clearCart();
+        showToast('Pesanan dibuat! Selesaikan pembayaran sekarang atau nanti via menu Pesanan Saya.', 'info');
       }
 
       const { data, error: fnError } = await supabase.functions.invoke(
@@ -588,7 +596,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
       const isSnapReady = window.snap && typeof window.snap.pay === 'function';
 
       if (!isSnapReady) {
-        showToast('Sistem pembayaran belum siap. Refresh halaman lalu coba lagi.', 'error');
+        showToast('Sistem pembayaran belum siap. Order tersimpan — bayar nanti via Pesanan Saya.', 'warning');
         setSubmitting(false);
         return;
       }
@@ -597,22 +605,29 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
       window.snap.pay(data.token, {
         onSuccess: (result) => {
           console.log('[Midtrans] Payment success:', result.transaction_id);
-          clearCart();
+          // ⭐ Defensive: reset body scroll lock yang mungkin di-set oleh Snap popup
+          // (Snap popup set body overflow:hidden saat render, kadang gak ke-release
+          // otomatis setelah auto-close → web "stuck" sampai refresh)
+          document.body.style.overflow = '';
+          // Cart sudah di-clear saat order dibuat di atas
           onClose();
           showToast('Pembayaran berhasil! Terima kasih ✓', 'success');
         },
         onPending: () => {
+          document.body.style.overflow = '';
           onClose();
-          showToast('Menunggu pembayaran. Cek WA/email untuk instruksi.', 'info');
+          showToast('Menunggu pembayaran. Cek WA/email untuk instruksi, atau bayar via Pesanan Saya.', 'info');
         },
         onError: (result) => {
           console.error('[Midtrans] Payment error:', result);
+          document.body.style.overflow = '';
           onClose();
-          showToast('Pembayaran gagal. Coba metode lain.', 'error');
+          showToast('Pembayaran gagal. Bayar ulang via menu Pesanan Saya.', 'error');
         },
         onClose: () => {
+          document.body.style.overflow = '';
           onClose();
-          showToast('Kamu menutup halaman pembayaran. Order tersimpan — hubungi kami untuk bayar.', 'warning');
+          showToast('Order tersimpan. Bayar nanti via menu Pesanan Saya.', 'warning');
         },
       });
     } catch (err) {

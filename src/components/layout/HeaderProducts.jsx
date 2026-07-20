@@ -286,14 +286,6 @@ const UserMenu = () => {
               Profil Saya
             </button>
 
-            <button
-            onClick={() => { setDropdownOpen(false); setTicketModalOpen(true); }}
-              className="w-full flex items-center gap-3 px-4 py-2.5 text-[0.82rem] text-eglux-primary hover:bg-[#faf6ef] transition-colors cursor-pointer border-none bg-transparent text-left"
-              >
-            <IconTicket className="w-4 h-4" />
-              Tiket Bantuan
-            </button>
-
             {menuItems.map((item) => (
               <Link
                 key={item.href}
@@ -306,6 +298,14 @@ const UserMenu = () => {
               </Link>
             ))}
           </div>
+
+            <button
+            onClick={() => { setDropdownOpen(false); setTicketModalOpen(true); }}
+              className="w-full flex items-center gap-3 px-4 py-2.5 text-[0.82rem] text-eglux-primary hover:bg-[#faf6ef] transition-colors cursor-pointer border-none bg-transparent text-left"
+              >
+            <IconTicket className="w-4 h-4" />
+              Tiket Bantuan
+            </button>
 
           <div className="border-t border-[#eee] py-1">
             <button

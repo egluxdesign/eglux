@@ -45,7 +45,7 @@ export const useCartActions = () => {
 const CartPage = ({ children }) => {
   const { addItem, clearCart } = useCart();
   const { user } = useAuth();
-  const { toast, showToast }   = useToast();
+  const { toast, showToast, closeToast } = useToast();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -183,7 +183,7 @@ const CartPage = ({ children }) => {
         />
       )}
 
-      <Toast toast={toast} />
+      <Toast toast={toast} onClose={closeToast} />
     </CartActionsContext.Provider>
   );
 };

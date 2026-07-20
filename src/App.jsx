@@ -30,6 +30,9 @@ import AffiliatePage from './pages/AffiliatePage';
 import RegisterPage from './pages/RegisterPage';
 import AdminPage from './pages/AdminPage';
 import AdminProductsPage from './pages/AdminProductsPage';
+import OrdersPage from './pages/OrdersPage';
+import TrackOrderPage from './pages/TrackOrderPage';
+import OrderHistoryPage from './pages/OrderHistoryPage';
 
 // Protected route wrapper
 import ProtectedRoute from './components/ui/ProtectedRoute';
@@ -61,6 +64,13 @@ const App = () => {
               <Route path="/register" element={<RegisterPage />} />
               <Route path="/admin" element={<AdminPage />} />
 
+              {/* ── Account routes ──
+                  Terbuka untuk semua role yang sudah login (tidak pakai
+                  ProtectedRoute). OrdersPage/OrdersList sudah handle sendiri
+                  kasus user belum login (tampil pesan + link masuk). */}
+              <Route path="/orders" element={<OrdersPage />} />
+              <Route path="/track" element={<TrackOrderPage />} />
+              <Route path="/order-history" element={<OrderHistoryPage />} />
               {/* ── Protected admin route ──
                   Hanya bisa diakses oleh role: team_dev, master, admin. */}
               <Route

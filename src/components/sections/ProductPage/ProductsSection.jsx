@@ -219,6 +219,27 @@ const ProductsSection = ({ onOpenModal, initialFilter = 'all' }) => {
     setActiveFilter(f);
   }, []);
 
+  // ⭐ Auto-open product modal dari deep link ?open=<product_id>
+  // (link dari OrdersList "Klik produk" → buka modal produk terkait)
+  useEffect(() => {
+    if (!products.length || !onOpenModal) return;
+    const params = new URLSearchParams(window.location.search);
+    const openId = params.get('open');
+    if (!openId) return;
+    const match = products.find(p => p.id === openId);
+    if (match) {
+      onOpenModal(match);
+      // Clean up URL biar gak trigger lagi pas refresh
+      params.delete('open');
+      const newSearch = params.toString();
+      window.history.replaceState(
+        {},
+        '',
+        window.location.pathname + (newSearch ? `?${newSearch}` : '')
+      );
+    }
+  }, [products, onOpenModal]);
+
   const filtered = useMemo(
     () => filterProducts(products, activeFilter),
     [activeFilter, products]

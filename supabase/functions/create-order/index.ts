@@ -39,7 +39,6 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { requireAuthenticated, json, corsHeaders } from "../_shared/auth.ts";
-import { authenticate, requireAdmin } from "../_shared/auth.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -143,6 +142,7 @@ serve(async (req: Request) => {
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
     // 1. Insert customer (generate UUID)
+    // ⭐ Set user_id supaya orders bisa di-filter by user (untuk order history)
     const customerId = crypto.randomUUID();
     const { error: customerError } = await supabase.from("customers").insert({
       id: customerId,
@@ -150,6 +150,7 @@ serve(async (req: Request) => {
       phone: customer.phone.trim(),
       email: customer.email?.trim() || null,
       address: customer.address.trim(),
+      user_id: authResult.user!.id, // ⭐ link customer ke user yang login
     });
     if (customerError) {
       return json({ error: "Failed to insert customer", details: customerError.message }, 500);
