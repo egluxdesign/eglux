@@ -1,7 +1,7 @@
 {
   "rewrites": [
     {
-      "source": "/((?!assets/|static/|.*\\..*).*)",
+      "source": "/(.*)",
       "destination": "/"
     }
   ],
@@ -69,7 +69,7 @@
       "headers": [
         {
           "key": "Content-Security-Policy",
-          "value": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://app.sandbox.midtrans.com https://app.midtrans.com https://cdn.jsdelivr.net; frame-src 'self' https://app.sandbox.midtrans.com https://app.midtrans.com; child-src 'self' https://app.sandbox.midtrans.com https://app.midtrans.com; connect-src 'self' https://app.sandbox.midtrans.com https://app.midtrans.com https://api.sandbox.midtrans.com https://api.midtrans.com https://*.supabase.co https://*.gopay.sh wss:; img-src 'self' data: https: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; worker-src 'self' blob:; manifest-src 'self'; frame-ancestors 'self' https://app.sandbox.midtrans.com https://app.midtrans.com;"
+          "value": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://app.sandbox.midtrans.com https://app.midtrans.com https://snap-assets.sandbox.midtrans.com https://snap-assets.midtrans.com https://api.sandbox.midtrans.com https://api.midtrans.com https://pay.google.com https://gwk.gopayapi.com https://www.googletagmanager.com https://o.alicdn.com https://g.alicdn.com https://cdn.jsdelivr.net; object-src 'none'; base-uri 'self'; frame-src 'self' https://app.sandbox.midtrans.com https://app.midtrans.com https://snap-assets.sandbox.midtrans.com https://snap-assets.midtrans.com https://pay.google.com; child-src 'self' https://app.sandbox.midtrans.com https://app.midtrans.com; connect-src 'self' https://app.sandbox.midtrans.com https://app.midtrans.com https://api.sandbox.midtrans.com https://api.midtrans.com https://snap-assets.sandbox.midtrans.com https://snap-assets.midtrans.com https://*.supabase.co https://pay.google.com https://gwk.gopayapi.com wss:; img-src 'self' data: https: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; worker-src 'self' blob:; manifest-src 'self'; frame-ancestors 'self' https://app.sandbox.midtrans.com https://app.midtrans.com;"
         },
         {
           "key": "X-Content-Type-Options",
