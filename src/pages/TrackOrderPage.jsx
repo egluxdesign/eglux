@@ -419,7 +419,7 @@ const ShippingInfoCard = ({ order }) => {
         <div className="flex-1 min-w-0">
           <p className="text-sm font-bold text-eglux-primary">{statusInfo.label}</p>
           <p className="text-[0.7rem] text-gray-500">
-            Status Biteship: <code className="font-mono">{order?.biteship_status || '—'}</code>
+            Status: <code className="font-mono">{order?.biteship_status || '—'}</code>
           </p>
         </div>
       </div>
@@ -468,7 +468,7 @@ const ShippingInfoCard = ({ order }) => {
             <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
             <circle cx="12" cy="12" r="3" />
           </svg>
-          Lacak Paket di Biteship →
+          Lacak Paket →
         </a>
       ) : (
         <p className="text-[0.7rem] text-gray-400 text-center pt-1">
