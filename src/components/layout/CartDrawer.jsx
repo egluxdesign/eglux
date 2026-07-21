@@ -60,7 +60,8 @@ const IconBag = ({ className = 'w-16 h-16' }) => (
 );
 
 const CartDrawer = ({ isOpen, onClose, showToast }) => {
-  const { cart, totalQty, totalPrice, updateQty, removeItem } = useCart();
+  // ⭐ v3: pakai recomputeCartPrices untuk refresh prices saat drawer buka
+  const { cart, totalQty, totalPrice, updateQty, removeItem, recomputeCartPrices } = useCart();
   const { user } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -85,11 +86,15 @@ const CartDrawer = ({ isOpen, onClose, showToast }) => {
   useEffect(() => {
     if (isOpen) {
       document.body.style.overflow = 'hidden';
+      // ⭐ v3: Refresh cart prices saat drawer dibuka (discount mungkin expire/start)
+      if (cart.length > 0) {
+        recomputeCartPrices();
+      }
     } else {
       document.body.style.overflow = '';
     }
     return () => { document.body.style.overflow = ''; };
-  }, [isOpen]);
+  }, [isOpen, cart.length, recomputeCartPrices]);
 
   // ── Handler: tombol "Bayar Sekarang" ──
   // Cek auth DULU sebelum buka checkout modal.

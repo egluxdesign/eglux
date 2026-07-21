@@ -153,7 +153,8 @@ const selectStyles = {
 // (Phone input styling sekarang inline via Tailwind classes — see JSX below)
 
 const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
-  const { cart, totalPrice, clearCart } = useCart();
+  // ⭐ v3: pakai recomputeCartPrices untuk refresh prices saat checkout modal buka
+  const { cart, totalPrice, clearCart, recomputeCartPrices } = useCart();
   // ⭐ Redirect mode: gak perlu useMidtransSnap lagi (snap.js gak di-load)
   // User di-redirect ke Midtrans Snap page (full browser), bukan iframe popup.
   // Alasan: popup mode kena CSP error dari Midtrans sendiri (mereka kirim
@@ -650,6 +651,14 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
       sessionStorage.removeItem(CHECKOUT_INTENT_KEY);
     }
   }, [user]);
+
+  // ⭐ v3: Refresh cart prices saat checkout modal dibuka
+  // (defensive — discount mungkin expire antara cart open → checkout open)
+  useEffect(() => {
+    if (isOpen && cart.length > 0) {
+      recomputeCartPrices();
+    }
+  }, [isOpen, cart.length, recomputeCartPrices]);
 
   if (!isOpen) return null;
 
