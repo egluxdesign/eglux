@@ -306,8 +306,9 @@ const AdminProductsPage = () => {
   // Bulk select
   const [selectedProducts, setSelectedProducts] = useState(new Set());
   const [bulkEditMode, setBulkEditMode] = useState(false);
+  // ⭐ v3: Hapus base_price + weight_in_gram dari bulk edit (kolom udah di-drop)
   const [bulkValues, setBulkValues] = useState({
-    base_price: '', weight_in_gram: '', badge: '', is_active: '',
+    badge: '', is_active: '',
   });
 
   // Delete confirmation modal
@@ -342,11 +343,12 @@ const AdminProductsPage = () => {
       const { data, error } = await supabase
         .from('products')
         .select(`
-          id, name, slug, description, category, base_price, is_active, badge,
-          weight_in_gram, updated_at,
+          id, name, slug, description, category, is_active, badge,
+          updated_at,
           product_variants (
             id, name, attributes, price, stock, sku, is_active,
-            weight_in_gram, length_cm, width_cm, height_cm
+            weight_in_gram, length_cm, width_cm, height_cm,
+            discount_type, discount_value, discount_start_at, discount_end_at
           ),
           product_images ( id, url, position, is_primary, variant_id )
         `)
@@ -514,8 +516,7 @@ const AdminProductsPage = () => {
       if (!product) continue;
 
       const fields = {};
-      if (bulkValues.base_price !== '') fields.base_price = Number(bulkValues.base_price);
-      if (bulkValues.weight_in_gram !== '') fields.weight_in_gram = Number(bulkValues.weight_in_gram);
+      // ⭐ v3: Hapus base_price + weight_in_gram (kolom udah di-drop)
       if (bulkValues.badge !== '') fields.badge = bulkValues.badge === '(clear)' ? null : bulkValues.badge;
       if (bulkValues.is_active !== '') fields.is_active = bulkValues.is_active === 'true';
 
@@ -548,7 +549,7 @@ const AdminProductsPage = () => {
         await fetchProducts();
         setSelectedProducts(new Set());
         setBulkEditMode(false);
-        setBulkValues({ base_price: '', weight_in_gram: '', badge: '', is_active: '' });
+        setBulkValues({ badge: '', is_active: '' });
       }
     } catch (e) {
       showToast(`✗ Network error: ${e.message}`, 'error');
@@ -985,27 +986,8 @@ const AdminProductsPage = () => {
             </div>
 
             {bulkEditMode && (
-              <div className="grid grid-cols-4 gap-3 mt-3 pt-3 border-t border-blue-200">
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Base Price</label>
-                  <input
-                    type="number"
-                    value={bulkValues.base_price}
-                    onChange={(e) => setBulkValues({ ...bulkValues, base_price: e.target.value })}
-                    placeholder="e.g., 95000"
-                    className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-md"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Weight (g)</label>
-                  <input
-                    type="number"
-                    value={bulkValues.weight_in_gram}
-                    onChange={(e) => setBulkValues({ ...bulkValues, weight_in_gram: e.target.value })}
-                    placeholder="e.g., 800"
-                    className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-md"
-                  />
-                </div>
+              <div className="grid grid-cols-2 gap-3 mt-3 pt-3 border-t border-blue-200">
+                {/* ⭐ v3: Hapus Base Price + Weight dari bulk edit (kolom udah di-drop) */}
                 <div>
                   <label className="block text-xs font-medium text-gray-600 mb-1">Badge</label>
                   <select
@@ -1061,8 +1043,8 @@ const AdminProductsPage = () => {
                     <th className="px-3 py-2 w-8 text-left"><input type="checkbox" checked={selectedProducts.size === paginatedProducts.length && paginatedProducts.length > 0} onChange={toggleSelectAll} className="cursor-pointer" /></th>
                     <th className="px-3 py-2 text-left font-medium text-gray-700">Name</th>
                     <th className="px-3 py-2 text-left font-medium text-gray-700">Category</th>
-                    <th className="px-3 py-2 text-right font-medium text-gray-700">Base Price</th>
-                    <th className="px-3 py-2 text-right font-medium text-gray-700">Weight (g)</th>
+                    <th className="px-3 py-2 text-left font-medium text-gray-700">Price Range</th>
+                    <th className="px-3 py-2 text-left font-medium text-gray-700">Discounts</th>
                     <th className="px-3 py-2 text-left font-medium text-gray-700">Badge</th>
                     <th className="px-3 py-2 text-center font-medium text-gray-700">Active</th>
                     <th className="px-3 py-2 text-center font-medium text-gray-700">Variants</th>
@@ -1110,11 +1092,34 @@ const AdminProductsPage = () => {
                         <td className="px-3 py-2 text-gray-600">
                           {p.category || '—'}
                         </td>
-                        <td className="px-3 py-2 text-right text-gray-700">
-                          {formatPrice(p.base_price)}
+                        {/* ⭐ v3: Price Range (min - max dari variants) */}
+                        <td className="px-3 py-2 text-right text-gray-700 text-xs">
+                          {(() => {
+                            const variants = p.product_variants || [];
+                            const prices = variants
+                              .filter(v => v.is_active && Number(v.price) > 0)
+                              .map(v => Number(v.price));
+                            if (prices.length === 0) return <span className="text-gray-400">—</span>;
+                            const min = Math.min(...prices);
+                            const max = Math.max(...prices);
+                            if (min === max) return formatPrice(min);
+                            return <span>{formatPrice(min)} - {formatPrice(max)}</span>;
+                          })()}
                         </td>
-                        <td className="px-3 py-2 text-right text-gray-700">
-                          {p.weight_in_gram || '—'}
+                        {/* ⭐ v3: Discount badges per variant */}
+                        <td className="px-3 py-2 text-xs">
+                          {(() => {
+                            const variants = p.product_variants || [];
+                            const discounted = variants.filter(v => v.discount_type);
+                            if (discounted.length === 0) {
+                              return <span className="text-gray-400">—</span>;
+                            }
+                            return (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-red-100 text-red-700 rounded-full font-medium">
+                                🏷 {discounted.length} diskon
+                              </span>
+                            );
+                          })()}
                         </td>
                         <td className="px-3 py-2">
                           {p.badge ? (

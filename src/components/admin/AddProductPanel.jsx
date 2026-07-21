@@ -8,12 +8,20 @@
 //   - Form empty (mode create, bukan edit)
 //   - Submit → create-product edge function
 //   - Setelah product created → upload semua foto yang ada di local state
+//
+// Pemakaian:
+//   <AddProductPanel
+//     isOpen={showAddPanel}
+//     onClose={() => setShowAddPanel(false)}
+//     onCreated={fetchProducts}
+//   />
 // ============================================================================
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 // ── Helpers ──
 function slugify(text) {
@@ -31,24 +39,26 @@ function formatPrice(v) {
   return 'Rp ' + Number(v).toLocaleString('id-ID');
 }
 
+// ── Categories & Badges (sama dengan EditProductPanel) ──
 const CATEGORIES = ['kitchen', 'storage', 'homedecor', 'bathroom'];
 const BADGES = ['', 'Best Seller', 'Baru'];
 
 const AddProductPanel = ({ isOpen, onClose, onCreated }) => {
+  // ── Product form state (sama struktur dengan EditProductPanel) ──
+  // ⭐ v3: Hapus base_price + weight_in_gram (harga & berat ada di variant)
   const [formData, setFormData] = useState({
     name: '',
-    slug: '',
+    slug: '', // auto-generate, gak ditampilkan ke user
     category: '',
     description: '',
-    base_price: '',
-    weight_in_gram: '',
     badge: '',
     is_active: false,
   });
 
+  // ── Variants (array, support multiple — sama dengan EditProductPanel) ──
   const [variants, setVariants] = useState([
     {
-      id: 'new-1',
+      id: 'new-1', // temp ID untuk local state (sebelum di-submit ke DB)
       name: 'Default',
       price: '',
       stock: '',
@@ -62,9 +72,12 @@ const AddProductPanel = ({ isOpen, onClose, onCreated }) => {
     },
   ]);
 
+  // ── Photos: cover + per-variant ──
+  // Format: { id (temp), file, preview_url, variant_id (null=cover, atau variant temp ID) }
   const [pendingPhotos, setPendingPhotos] = useState([]);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
 
+  // ── Submit state ──
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState(null);
   const showToast = (msg, type = 'info') => {
@@ -72,11 +85,12 @@ const AddProductPanel = ({ isOpen, onClose, onCreated }) => {
     setTimeout(() => setToast(null), 4000);
   };
 
+  // ── Reset form saat panel close ──
   useEffect(() => {
     if (!isOpen) {
       setFormData({
         name: '', slug: '', category: '', description: '',
-        base_price: '', weight_in_gram: '', badge: '', is_active: false,
+        badge: '', is_active: false,
       });
       setVariants([{
         id: 'new-1', name: 'Default', price: '', stock: '',
@@ -88,12 +102,14 @@ const AddProductPanel = ({ isOpen, onClose, onCreated }) => {
     }
   }, [isOpen]);
 
+  // ── Auto-generate slug dari name (internal, gak ditampilkan ke user) ──
   useEffect(() => {
     if (formData.name) {
       setFormData((prev) => ({ ...prev, slug: slugify(prev.name) }));
     }
   }, [formData.name]);
 
+  // ── Form handlers (sama dengan EditProductPanel) ──
   const updateField = (field, value) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
   };
@@ -106,6 +122,7 @@ const AddProductPanel = ({ isOpen, onClose, onCreated }) => {
     );
   };
 
+  // ── Variant add/delete (local state, sebelum submit) ──
   const addVariant = () => {
     const newId = `new-${Date.now()}`;
     setVariants((prev) => [...prev, {
@@ -130,20 +147,23 @@ const AddProductPanel = ({ isOpen, onClose, onCreated }) => {
     }
     if (!confirm('Hapus varian ini?')) return;
     setVariants((prev) => prev.filter((v) => v.id !== variantId));
+    // Hapus foto pending untuk variant ini juga
     setPendingPhotos((prev) => prev.filter((p) => p.variant_id !== variantId));
   };
 
+  // ── Photo handlers (simpan ke local state, upload setelah product created) ──
   const addPhoto = (file, variantId = null) => {
     if (!file) return;
     const photo = {
       id: `photo-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       file,
       preview_url: URL.createObjectURL(file),
-      variant_id: variantId,
+      variant_id: variantId, // null = cover, atau variant temp ID
     };
     setPendingPhotos((prev) => [...prev, photo]);
   };
 
+  // ⭐ Bulk add photos (multiple files sekaligus)
   const addMultiplePhotos = (files, variantId = null) => {
     if (!files || files.length === 0) return;
     const newPhotos = Array.from(files).map((file) => ({
@@ -164,29 +184,24 @@ const AddProductPanel = ({ isOpen, onClose, onCreated }) => {
   };
 
   // ── Upload photos ke Storage setelah product created ──
-  // FIX: pakai session.access_token milik user (bukan ANON_KEY statis),
-  // supaya Edge Function bisa verifikasi identitas admin dengan benar.
   const uploadPendingPhotos = async (productId, variantIdMap) => {
+    // variantIdMap: { tempId: realUuid }
     if (pendingPhotos.length === 0) return;
-
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) {
-      showToast('Sesi login habis, foto tidak bisa diupload', 'error');
-      return;
-    }
 
     setUploadingPhoto(true);
     let uploaded = 0;
-    let firstPhoto = true;
+    let firstPhoto = true; // first cover photo = primary
 
     for (const photo of pendingPhotos) {
       try {
         const fd = new FormData();
         fd.append('file', photo.file);
         fd.append('product_id', productId);
+        // Variant photo: pakai real UUID dari map. Cover: variant_id kosong.
         if (photo.variant_id && variantIdMap[photo.variant_id]) {
           fd.append('variant_id', variantIdMap[photo.variant_id]);
         }
+        // First cover photo auto-primary
         if (!photo.variant_id && firstPhoto) {
           fd.append('is_primary', 'true');
           firstPhoto = false;
@@ -195,7 +210,7 @@ const AddProductPanel = ({ isOpen, onClose, onCreated }) => {
         const resp = await fetch(`${SUPABASE_URL}/functions/v1/upload-product-image`, {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${session.access_token}`,
+            'Authorization': `Bearer ${ANON_KEY}`,
           },
           body: fd,
         });
@@ -216,24 +231,22 @@ const AddProductPanel = ({ isOpen, onClose, onCreated }) => {
     }
   };
 
+  // ── Validation ──
   const validationErrors = useMemo(() => {
     const errs = [];
     if (!formData.name.trim()) errs.push('Nama produk wajib diisi');
     if (!formData.category.trim()) errs.push('Kategori wajib diisi');
-    if (!formData.base_price || Number(formData.base_price) < 0) errs.push('Harga dasar wajib diisi (≥ 0)');
-    if (!formData.weight_in_gram || Number(formData.weight_in_gram) < 0) errs.push('Berat default wajib diisi (≥ 0)');
+    // ⭐ v3: Hapus validasi base_price + weight_in_gram (gak ada lagi di product)
 
     for (let i = 0; i < variants.length; i++) {
       const v = variants[i];
       if (!v.name.trim()) errs.push(`Varian ${i + 1}: nama wajib diisi`);
       if (v.price === '' || Number(v.price) < 0) errs.push(`Varian ${i + 1}: harga wajib diisi (≥ 0)`);
       if (v.stock === '' || Number(v.stock) < 0) errs.push(`Varian ${i + 1}: stok wajib diisi (≥ 0)`);
-      if (Number(v.price) > Number(formData.base_price)) {
-        errs.push(`Varian ${i + 1}: harga tidak boleh > harga dasar`);
-      }
+      // ⭐ v3: Hapus cek harga varian > base_price (gak ada base_price lagi)
       if (v.is_active) {
-        const effectiveWeight = v.weight_in_gram || formData.weight_in_gram;
-        if (!effectiveWeight || Number(effectiveWeight) <= 0) {
+        // ⭐ v3: Weight wajib untuk variant active (gak ada fallback dari product lagi)
+        if (!v.weight_in_gram || Number(v.weight_in_gram) <= 0) {
           errs.push(`Varian ${i + 1}: varian aktif wajib punya berat > 0`);
         }
       }
@@ -241,6 +254,7 @@ const AddProductPanel = ({ isOpen, onClose, onCreated }) => {
     return errs;
   }, [formData, variants]);
 
+  // ── Submit handler ──
   const handleSave = async () => {
     if (validationErrors.length > 0) {
       showToast(validationErrors.join(' • '), 'error');
@@ -256,13 +270,13 @@ const AddProductPanel = ({ isOpen, onClose, onCreated }) => {
         return;
       }
 
+      // Step 1: Create product + variants
+      // ⭐ v3: Hapus base_price + weight_in_gram dari payload product
       const payload = {
         product: {
           name: formData.name.trim(),
           slug: formData.slug || slugify(formData.name),
           category: formData.category.trim(),
-          base_price: Number(formData.base_price),
-          weight_in_gram: Number(formData.weight_in_gram),
           badge: formData.badge || null,
           description: formData.description.trim() || null,
           is_active: formData.is_active,
@@ -295,6 +309,8 @@ const AddProductPanel = ({ isOpen, onClose, onCreated }) => {
         throw new Error(result.error || `HTTP ${resp.status}`);
       }
 
+      // Step 2: Upload pending photos (kalau ada)
+      // variant_id_map: { tempId: realUuid }
       const variantIdMap = {};
       if (result.variants) {
         result.variants.forEach((v, idx) => {
@@ -309,6 +325,7 @@ const AddProductPanel = ({ isOpen, onClose, onCreated }) => {
 
       showToast('✓ Produk berhasil dibuat', 'success');
       onCreated?.();
+      // Delay close supaya toast sempat tampil
       setTimeout(() => {
         onClose?.();
       }, 1200);
@@ -321,13 +338,20 @@ const AddProductPanel = ({ isOpen, onClose, onCreated }) => {
 
   if (!isOpen) return null;
 
+  // Helper: get photos for variant (atau cover)
   const getPhotos = (variantId = null) => pendingPhotos.filter((p) => p.variant_id === variantId);
 
   return (
     <>
-      <div className="fixed inset-0 bg-black/50 z-[3000]" onClick={onClose} />
+      {/* Overlay — match EditProductPanel */}
+      <div
+        className="fixed inset-0 bg-black/50 z-[3000]"
+        onClick={onClose}
+      />
 
+      {/* Panel — slide from right, match EditProductPanel styling */}
       <div className="fixed top-0 right-0 w-full md:w-[600px] h-screen bg-white z-[3001] overflow-y-auto shadow-2xl flex flex-col">
+        {/* Header — match EditProductPanel */}
         <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between z-10">
           <div>
             <h2 className="text-lg font-bold text-gray-900">+ Tambah Produk Baru</h2>
@@ -345,41 +369,16 @@ const AddProductPanel = ({ isOpen, onClose, onCreated }) => {
         </div>
 
         <div className="flex-1 px-6 py-6 space-y-8">
-          {/* === SECTION 1: PRODUCT PHOTOS (COVER) === */}
+          {/* === SECTION 1: PRODUCT PHOTOS (COVER) — match EditProductPanel === */}
           <section>
             <h3 className="text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
               📸 Foto Produk (Cover)
             </h3>
             <div className="flex flex-wrap gap-3">
               {getPhotos(null).map((photo, idx) => (
-                <div
-                  key={photo.id}
-                  className="relative group w-24 h-24 rounded-lg overflow-hidden border-2 border-gray-200 cursor-move"
-                  draggable
-                  onDragStart={(e) => {
-                    e.dataTransfer.setData('text/plain', String(idx));
-                    e.dataTransfer.effectAllowed = 'move';
-                  }}
-                  onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    const fromIdx = parseInt(e.dataTransfer.getData('text/plain'));
-                    if (isNaN(fromIdx) || fromIdx === idx) return;
-
-                    // Reorder cover photos lokal (belum ada di DB, jadi cukup
-                    // susun ulang array pendingPhotos — nggak perlu API call).
-                    const coverPhotos = getPhotos(null);
-                    const otherPhotos = pendingPhotos.filter((p) => p.variant_id !== null);
-                    const next = [...coverPhotos];
-                    const [moved] = next.splice(fromIdx, 1);
-                    next.splice(idx, 0, moved);
-
-                    // Cover pertama di array = otomatis jadi primary saat upload
-                    // (lihat logic `firstPhoto` di uploadPendingPhotos).
-                    setPendingPhotos([...next, ...otherPhotos]);
-                  }}
-                >
-                  <img src={photo.preview_url} alt="" className="w-full h-full object-cover pointer-events-none" />
+                <div key={photo.id} className="relative group w-24 h-24 rounded-lg overflow-hidden border-2 border-gray-200">
+                  <img src={photo.preview_url} alt="" className="w-full h-full object-cover" />
+                  {/* Star icon for first photo (primary/cover) */}
                   {idx === 0 && (
                     <div className="absolute top-1 left-1 w-5 h-5 bg-amber-500 rounded-full flex items-center justify-center">
                       <svg className="w-3 h-3 text-white" viewBox="0 0 24 24" fill="currentColor">
@@ -397,10 +396,8 @@ const AddProductPanel = ({ isOpen, onClose, onCreated }) => {
                   </div>
                 </div>
               ))}
-              <label
-                htmlFor="cover-photo-upload"
-                className="w-24 h-24 rounded-lg border-2 border-dashed border-gray-300 flex flex-col items-center justify-center cursor-pointer hover:border-blue-400 hover:bg-blue-50 transition-colors"
-              >
+              {/* Upload button — match EditProductPanel */}
+              <label className="w-24 h-24 rounded-lg border-2 border-dashed border-gray-300 flex flex-col items-center justify-center cursor-pointer hover:border-blue-400 hover:bg-blue-50 transition-colors">
                 {uploadingPhoto ? (
                   <span className="text-xs text-gray-400">⏳</span>
                 ) : (
@@ -410,8 +407,6 @@ const AddProductPanel = ({ isOpen, onClose, onCreated }) => {
                   </>
                 )}
                 <input
-                  id="cover-photo-upload"
-                  name="cover_photo"
                   type="file"
                   accept="image/*"
                   multiple
@@ -429,15 +424,14 @@ const AddProductPanel = ({ isOpen, onClose, onCreated }) => {
             </p>
           </section>
 
-          {/* === SECTION 2: PRODUCT INFO === */}
+          {/* === SECTION 2: PRODUCT INFO — match EditProductPanel === */}
           <section>
             <h3 className="text-sm font-bold text-gray-900 mb-3">📝 Informasi Produk</h3>
             <div className="space-y-4">
+              {/* Name */}
               <div>
-                <label htmlFor="product-name" className="block text-xs font-medium text-gray-600 mb-1">Nama Produk</label>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Nama Produk</label>
                 <input
-                  id="product-name"
-                  name="name"
                   type="text"
                   value={formData.name}
                   onChange={(e) => updateField('name', e.target.value)}
@@ -446,12 +440,11 @@ const AddProductPanel = ({ isOpen, onClose, onCreated }) => {
                 />
               </div>
 
+              {/* Category + Badge */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label htmlFor="product-category" className="block text-xs font-medium text-gray-600 mb-1">Kategori</label>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Kategori</label>
                   <select
-                    id="product-category"
-                    name="category"
                     value={formData.category}
                     onChange={(e) => updateField('category', e.target.value)}
                     className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -463,10 +456,8 @@ const AddProductPanel = ({ isOpen, onClose, onCreated }) => {
                   </select>
                 </div>
                 <div>
-                  <label htmlFor="product-badge" className="block text-xs font-medium text-gray-600 mb-1">Badge</label>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Badge</label>
                   <select
-                    id="product-badge"
-                    name="badge"
                     value={formData.badge}
                     onChange={(e) => updateField('badge', e.target.value)}
                     className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -478,44 +469,10 @@ const AddProductPanel = ({ isOpen, onClose, onCreated }) => {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label htmlFor="product-base-price" className="block text-xs font-medium text-gray-600 mb-1">
-                    Harga Dasar (Rp) <span className="text-gray-400">— strike-through</span>
-                  </label>
-                  <input
-                    id="product-base-price"
-                    name="base_price"
-                    type="number"
-                    value={formData.base_price}
-                    onChange={(e) => updateField('base_price', e.target.value)}
-                    placeholder="95000"
-                    min="0"
-                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                <div>
-                  <label htmlFor="product-weight" className="block text-xs font-medium text-gray-600 mb-1">
-                    Berat Default (gram) <span className="text-gray-400">— fallback</span>
-                  </label>
-                  <input
-                    id="product-weight"
-                    name="weight_in_gram"
-                    type="number"
-                    value={formData.weight_in_gram}
-                    onChange={(e) => updateField('weight_in_gram', e.target.value)}
-                    placeholder="800"
-                    min="0"
-                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-              </div>
-
+              {/* Description (sebelumnya ada Base Price + Weight, tapi udah dihapus di v3) */}
               <div>
-                <label htmlFor="product-description" className="block text-xs font-medium text-gray-600 mb-1">Deskripsi</label>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Deskripsi</label>
                 <textarea
-                  id="product-description"
-                  name="description"
                   value={formData.description}
                   onChange={(e) => updateField('description', e.target.value)}
                   placeholder="Deskripsi produk (opsional)"
@@ -524,10 +481,10 @@ const AddProductPanel = ({ isOpen, onClose, onCreated }) => {
                 />
               </div>
 
+              {/* Active toggle — match EditProductPanel (toggle switch) */}
               <div className="flex items-center gap-2">
-                <label htmlFor="product-active-toggle" className="text-xs font-medium text-gray-600">Status:</label>
+                <label className="text-xs font-medium text-gray-600">Status:</label>
                 <button
-                  id="product-active-toggle"
                   onClick={() => updateField('is_active', !formData.is_active)}
                   className={`relative inline-flex h-5 w-10 items-center rounded-full transition-colors ${
                     formData.is_active ? 'bg-green-500' : 'bg-gray-300'
@@ -542,7 +499,7 @@ const AddProductPanel = ({ isOpen, onClose, onCreated }) => {
             </div>
           </section>
 
-          {/* === SECTION 3: VARIANTS === */}
+          {/* === SECTION 3: VARIANTS (card-based, match EditProductPanel) === */}
           <section>
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-bold text-gray-900">📦 Varian ({variants.length})</h3>
@@ -564,9 +521,11 @@ const AddProductPanel = ({ isOpen, onClose, onCreated }) => {
                   const variantPhotos = getPhotos(v.id);
                   return (
                     <div key={v.id} className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                      {/* Variant header — match EditProductPanel */}
                       <div className="flex items-center justify-between mb-3">
                         <span className="text-xs font-bold text-gray-700">Varian {idx + 1}</span>
                         <div className="flex items-center gap-2">
+                          {/* Active toggle */}
                           <button
                             onClick={() => updateVariant(v.id, 'is_active', !v.is_active)}
                             className={`relative inline-flex h-4 w-8 items-center rounded-full transition-colors ${
@@ -586,6 +545,7 @@ const AddProductPanel = ({ isOpen, onClose, onCreated }) => {
                         </div>
                       </div>
 
+                      {/* Variant photo — single only. If has photo, show with hapus. If not, show upload. */}
                       <div className="flex gap-3">
                         <div className="flex-shrink-0">
                           {variantPhotos.length > 0 ? (
@@ -601,17 +561,12 @@ const AddProductPanel = ({ isOpen, onClose, onCreated }) => {
                               </div>
                             </div>
                           ) : (
-                            <label
-                              htmlFor={`variant-photo-${v.id}`}
-                              className="block w-20 h-20 rounded-lg overflow-hidden border-2 border-dashed border-gray-300 cursor-pointer hover:border-blue-400 relative"
-                            >
+                            <label className="block w-20 h-20 rounded-lg overflow-hidden border-2 border-dashed border-gray-300 cursor-pointer hover:border-blue-400 relative">
                               <div className="w-full h-full flex flex-col items-center justify-center bg-white">
                                 <span className="text-xl text-gray-300">📷</span>
                                 <span className="text-[0.55rem] text-gray-400 mt-0.5">Upload</span>
                               </div>
                               <input
-                                id={`variant-photo-${v.id}`}
-                                name={`variant_photo_${v.id}`}
                                 type="file"
                                 accept="image/*"
                                 className="hidden"
@@ -625,12 +580,11 @@ const AddProductPanel = ({ isOpen, onClose, onCreated }) => {
                           )}
                         </div>
 
+                        {/* Fields — match EditProductPanel */}
                         <div className="flex-1 grid grid-cols-2 gap-2">
                           <div className="col-span-2">
-                            <label htmlFor={`variant-name-${v.id}`} className="block text-[0.65rem] font-medium text-gray-500 mb-0.5">Nama Varian</label>
+                            <label className="block text-[0.65rem] font-medium text-gray-500 mb-0.5">Nama Varian</label>
                             <input
-                              id={`variant-name-${v.id}`}
-                              name={`variant_name_${v.id}`}
                               type="text"
                               value={v.name || ''}
                               onChange={(e) => updateVariant(v.id, 'name', e.target.value)}
@@ -639,10 +593,8 @@ const AddProductPanel = ({ isOpen, onClose, onCreated }) => {
                             />
                           </div>
                           <div>
-                            <label htmlFor={`variant-price-${v.id}`} className="block text-[0.65rem] font-medium text-gray-500 mb-0.5">Harga (Rp)</label>
+                            <label className="block text-[0.65rem] font-medium text-gray-500 mb-0.5">Harga (Rp)</label>
                             <input
-                              id={`variant-price-${v.id}`}
-                              name={`variant_price_${v.id}`}
                               type="number"
                               value={v.price}
                               onChange={(e) => updateVariant(v.id, 'price', e.target.value)}
@@ -652,10 +604,8 @@ const AddProductPanel = ({ isOpen, onClose, onCreated }) => {
                             />
                           </div>
                           <div>
-                            <label htmlFor={`variant-stock-${v.id}`} className="block text-[0.65rem] font-medium text-gray-500 mb-0.5">Stok</label>
+                            <label className="block text-[0.65rem] font-medium text-gray-500 mb-0.5">Stok</label>
                             <input
-                              id={`variant-stock-${v.id}`}
-                              name={`variant_stock_${v.id}`}
                               type="number"
                               value={v.stock}
                               onChange={(e) => updateVariant(v.id, 'stock', e.target.value)}
@@ -665,10 +615,8 @@ const AddProductPanel = ({ isOpen, onClose, onCreated }) => {
                             />
                           </div>
                           <div>
-                            <label htmlFor={`variant-weight-${v.id}`} className="block text-[0.65rem] font-medium text-gray-500 mb-0.5">Berat (gram)</label>
+                            <label className="block text-[0.65rem] font-medium text-gray-500 mb-0.5">Berat (gram)</label>
                             <input
-                              id={`variant-weight-${v.id}`}
-                              name={`variant_weight_${v.id}`}
                               type="number"
                               value={v.weight_in_gram || ''}
                               onChange={(e) => updateVariant(v.id, 'weight_in_gram', e.target.value)}
@@ -678,10 +626,8 @@ const AddProductPanel = ({ isOpen, onClose, onCreated }) => {
                             />
                           </div>
                           <div>
-                            <label htmlFor={`variant-sku-${v.id}`} className="block text-[0.65rem] font-medium text-gray-500 mb-0.5">SKU</label>
+                            <label className="block text-[0.65rem] font-medium text-gray-500 mb-0.5">SKU</label>
                             <input
-                              id={`variant-sku-${v.id}`}
-                              name={`variant_sku_${v.id}`}
                               type="text"
                               value={v.sku || ''}
                               onChange={(e) => updateVariant(v.id, 'sku', e.target.value)}
@@ -690,13 +636,11 @@ const AddProductPanel = ({ isOpen, onClose, onCreated }) => {
                             />
                           </div>
                           <div className="col-span-2">
-                            <label htmlFor={`variant-length-${v.id}`} className="block text-[0.65rem] font-medium text-gray-500 mb-0.5">
+                            <label className="block text-[0.65rem] font-medium text-gray-500 mb-0.5">
                               Dimensi (cm) — opsional, untuk volumetric Biteship
                             </label>
                             <div className="flex items-center gap-1">
                               <input
-                                id={`variant-length-${v.id}`}
-                                name={`variant_length_${v.id}`}
                                 type="number"
                                 value={v.length_cm || ''}
                                 onChange={(e) => updateVariant(v.id, 'length_cm', e.target.value)}
@@ -707,8 +651,6 @@ const AddProductPanel = ({ isOpen, onClose, onCreated }) => {
                               />
                               <span className="text-gray-400">×</span>
                               <input
-                                id={`variant-width-${v.id}`}
-                                name={`variant_width_${v.id}`}
                                 type="number"
                                 value={v.width_cm || ''}
                                 onChange={(e) => updateVariant(v.id, 'width_cm', e.target.value)}
@@ -719,8 +661,6 @@ const AddProductPanel = ({ isOpen, onClose, onCreated }) => {
                               />
                               <span className="text-gray-400">×</span>
                               <input
-                                id={`variant-height-${v.id}`}
-                                name={`variant_height_${v.id}`}
                                 type="number"
                                 value={v.height_cm || ''}
                                 onChange={(e) => updateVariant(v.id, 'height_cm', e.target.value)}
@@ -734,22 +674,11 @@ const AddProductPanel = ({ isOpen, onClose, onCreated }) => {
                         </div>
                       </div>
 
+                      {/* Variant preview price — v3: simple display (gak ada base_price lagi) */}
                       <div className="mt-3 pt-3 border-t border-gray-200 flex items-center justify-between">
                         <span className="text-xs text-gray-500">
-                          {v.price && formData.base_price && Number(v.price) < Number(formData.base_price) ? (
-                            <>
-                              <span className="line-through text-gray-400">{formatPrice(formData.base_price)}</span>
-                              {' → '}
-                              <span className="font-bold text-eglux-secondary">{formatPrice(v.price)}</span>
-                              {' '}
-                              <span className="text-red-500">
-                                -{Math.round(((formData.base_price - v.price) / formData.base_price) * 100)}%
-                              </span>
-                            </>
-                          ) : v.price && formData.base_price && Number(v.price) === Number(formData.base_price) ? (
+                          {v.price ? (
                             <span className="font-bold text-eglux-secondary">{formatPrice(v.price)}</span>
-                          ) : v.price && formData.base_price && Number(v.price) > Number(formData.base_price) ? (
-                            <span className="text-red-400">⚠ Harga varian lebih mahal dari base price!</span>
                           ) : (
                             <span className="text-gray-400">Isi harga varian</span>
                           )}
@@ -767,6 +696,7 @@ const AddProductPanel = ({ isOpen, onClose, onCreated }) => {
             )}
           </section>
 
+          {/* Validation errors preview (kalau ada) */}
           {validationErrors.length > 0 && (
             <div className="bg-amber-50 border border-amber-200 rounded-md p-3">
               <p className="text-xs font-medium text-amber-700 mb-1">⚠ Lengkapi data berikut:</p>
@@ -782,6 +712,7 @@ const AddProductPanel = ({ isOpen, onClose, onCreated }) => {
           )}
         </div>
 
+        {/* Footer (sticky) — match EditProductPanel */}
         <div className="sticky bottom-0 bg-white border-t border-gray-200 px-6 py-4 flex justify-end gap-3">
           <button
             onClick={onClose}
@@ -800,6 +731,7 @@ const AddProductPanel = ({ isOpen, onClose, onCreated }) => {
         </div>
       </div>
 
+      {/* Toast — match EditProductPanel */}
       {toast && (
         <div className={`fixed bottom-4 left-1/2 -translate-x-1/2 z-[3100] px-4 py-2 rounded-md shadow-lg text-sm font-medium ${
           toast.type === 'success' ? 'bg-green-600 text-white' :

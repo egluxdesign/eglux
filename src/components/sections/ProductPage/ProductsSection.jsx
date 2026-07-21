@@ -40,24 +40,15 @@ const filterProducts = (products, filterValue) => {
 
 // ── Product Card (Shopee/Tokopedia pattern) ───────────────────
 const ProductCardFull = ({ product, onOpenModal }) => {
-  // Defensive: compute minVariantPrice dari variants kalau field undefined
-  const variants = product?.variants || [];
-  const activeVariants = variants.filter((v) => v.is_active);
-  const variantPrices = activeVariants
-    .map((v) => Number(v.price))
-    .filter((p) => p > 0);
+  // ⭐ v3: Pakai pre-computed fields dari useProducts (discount-aware)
+  const minVariantPrice = product?.minVariantPrice ?? null;
+  const minOriginalPrice = product?.minOriginalPrice ?? null;
+  const hasActiveVariant = product?.hasActiveVariant ?? false;
+  const hasActiveDiscount = product?.hasActiveDiscount ?? false;
+  const maxDiscountPercent = product?.maxDiscountPercent ?? 0;
 
-  const minVariantPrice = product?.minVariantPrice ??
-    (variantPrices.length > 0 ? Math.min(...variantPrices) : null);
-  const hasActiveVariant = product?.hasActiveVariant ?? activeVariants.length > 0;
-
-  const basePrice = Number(product?.price) || Number(product?.base_price) || 0;
-
-  // Compute discount
-  const hasDiscount = hasActiveVariant && minVariantPrice && basePrice > minVariantPrice;
-  const discountPercent = hasDiscount
-    ? Math.round(((basePrice - minVariantPrice) / basePrice) * 100)
-    : 0;
+  // Discount aktif kalau ada variant dengan discount > 0%
+  const hasDiscount = hasActiveDiscount && maxDiscountPercent > 0;
 
   return (
     <article
@@ -86,11 +77,11 @@ const ProductCardFull = ({ product, onOpenModal }) => {
           </span>
         )}
 
-        {/* Discount % badge — top right (only if ada diskon) */}
+        {/* Discount % badge — top right (only if ada diskon aktif) */}
         {hasDiscount && (
           <span className="absolute top-4 right-4 bg-red-500 text-white
                            text-[0.72rem] font-bold py-1 px-2 rounded-full shadow-sm">
-            -{discountPercent}%
+            -{maxDiscountPercent}%
           </span>
         )}
       </div>
@@ -102,7 +93,7 @@ const ProductCardFull = ({ product, onOpenModal }) => {
         </h4>
         <p className="text-[0.85rem] text-[#666] mb-3 capitalize">{product.category}</p>
 
-        {/* === PRICE BLOCK (Shopee/Tokopedia pattern) === */}
+        {/* === PRICE BLOCK (v3: discount-aware) === */}
         <div className="mb-2">
           {hasActiveVariant && minVariantPrice ? (
             <>
@@ -111,11 +102,11 @@ const ProductCardFull = ({ product, onOpenModal }) => {
                 Mulai dari
               </p>
 
-              {/* Strike base + min variant price inline */}
+              {/* Strike original price + discounted price inline */}
               <div className="flex items-baseline gap-2 flex-wrap">
-                {hasDiscount && (
+                {hasDiscount && minOriginalPrice && minOriginalPrice > minVariantPrice && (
                   <span className="text-[0.78rem] text-[#999] line-through">
-                    {formatPrice(basePrice)}
+                    {formatPrice(minOriginalPrice)}
                   </span>
                 )}
                 <span className="text-[1.15rem] font-bold text-eglux-secondary">
@@ -123,12 +114,6 @@ const ProductCardFull = ({ product, onOpenModal }) => {
                 </span>
               </div>
             </>
-          ) : basePrice > 0 ? (
-            /* Fallback: tampilkan base price kalau no active variant */
-            <p className="flex items-center gap-1.5 text-[1.1rem] font-bold text-eglux-secondary">
-              <CartIcon />
-              {formatPrice(basePrice)}
-            </p>
           ) : (
             <p className="text-[0.95rem] font-semibold text-[#999]">
               Hubungi CS

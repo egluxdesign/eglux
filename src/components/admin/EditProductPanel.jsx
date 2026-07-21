@@ -2,12 +2,20 @@
 // ============================================================================
 // Shopee/Tokopedia-style Product Edit Panel
 // ============================================================================
+// Slide-in panel dari kanan. Form-based dengan sections:
+//   1. Product Photos (grid upload, set primary, delete)
+//   2. Product Info (name, category, description, badge, status)
+//   3. Variants (card-based: photo + name + price + stock + weight + sku + dim)
+//   4. Save button (batch update semua perubahan sekaligus)
+// ============================================================================
 
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../../lib/supabaseClient';
+import DiscountModal from './DiscountModal';
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 
+// ⭐ Helper: get current session JWT for auth-gated edge function calls
 const getSessionToken = async () => {
   const { data: { session } } = await supabase.auth.getSession();
   return session?.access_token || '';
@@ -22,38 +30,50 @@ const CATEGORIES = ['kitchen', 'storage', 'homedecor', 'bathroom'];
 const BADGES = ['', 'Best Seller', 'Baru'];
 
 const EditProductPanel = ({ product, onClose, onSaved }) => {
+  // Product form state
+  // ⭐ v3: Hapus base_price + weight_in_gram (harga & berat ada di variant)
   const [formData, setFormData] = useState({
     name: '', slug: '', category: '', description: '',
-    base_price: 0, weight_in_gram: 0, badge: '', is_active: true,
+    badge: '', is_active: true,
   });
 
+  // Variants state (array of variant objects with editable fields)
   const [variants, setVariants] = useState([]);
   const [productImages, setProductImages] = useState([]);
 
+  // UI state
   const [saving, setSaving] = useState(false);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [toast, setToast] = useState(null);
-  const [initialized, setInitialized] = useState(false);
+  const [initialized, setInitialized] = useState(false); // prevent form reset on parent refresh
+  // ⭐ State untuk DiscountModal
+  const [discountVariant, setDiscountVariant] = useState(null); // variant object yang mau di-set discount-nya
   const showToast = (msg, type = 'info') => {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 3000);
   };
 
+  // ============================================================================
+  // LOCAL REFRESH: fetch fresh images + variants untuk produk ini (tanpa reset form)
+  // Bug fix: pakai spread operator supaya React detect state change (new array reference)
+  // ============================================================================
   const refreshLocalData = useCallback(async () => {
     if (!product) return;
     try {
       const { data } = await supabase
         .from('products')
         .select(`
-          product_variants (id, name, attributes, price, stock, sku, is_active, weight_in_gram, length_cm, width_cm, height_cm),
+          product_variants (id, name, attributes, price, stock, sku, is_active, weight_in_gram, length_cm, width_cm, height_cm, discount_type, discount_value, discount_start_at, discount_end_at),
           product_images (id, url, position, is_primary, variant_id)
         `)
         .eq('id', product.id)
         .single();
 
       if (data) {
+        // Preserve _changed flag untuk variants yang sedang di-edit (jangan overwrite kalau user lagi edit)
         setVariants((prevVariants) => {
           const newVariants = (data.product_variants || []).map((v) => {
+            // Cek apakah variant ini sudah ada di state (preserve _changed flag)
             const existing = prevVariants.find((pv) => pv.id === v.id);
             return {
               ...v,
@@ -63,14 +83,17 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
               length_cm: v.length_cm || '',
               width_cm: v.width_cm || '',
               height_cm: v.height_cm || '',
+              // Preserve _changed flag kalau variant sudah ada di state
               _changed: existing?._changed || false,
             };
           });
+          // Tambahkan variant baru yang belum ada di DB (e.g., baru di-add tapi belum di-save)
           const dbIds = new Set((data.product_variants || []).map((v) => v.id));
           const unsavedNewVariants = prevVariants.filter((pv) => !dbIds.has(pv.id));
           return [...newVariants, ...unsavedNewVariants];
         });
 
+        // Force new array reference supaya React re-render
         setProductImages([...(data.product_images || [])]);
       }
     } catch (e) {
@@ -78,15 +101,18 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
     }
   }, [product]);
 
+  // ============================================================================
+  // INIT: populate form saat panel buka (reset initialized setiap kali product berubah)
+  // ============================================================================
   useEffect(() => {
     if (!product) return;
+    // Reset form setiap kali product berubah (bukan cuma first time)
+    // ⭐ v3: Hapus base_price + weight_in_gram dari form state
     setFormData({
       name: product.name || '',
       slug: product.slug || '',
       category: product.category || '',
       description: product.description || '',
-      base_price: product.base_price || 0,
-      weight_in_gram: product.weight_in_gram || 0,
       badge: product.badge || '',
       is_active: product.is_active ?? true,
     });
@@ -105,6 +131,9 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
     setProductImages(product.product_images || []);
   }, [product]);
 
+  // ============================================================================
+  // FORM HANDLERS
+  // ============================================================================
   const updateField = (field, value) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
   };
@@ -117,6 +146,9 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
     );
   };
 
+  // ============================================================================
+  // PHOTO UPLOAD (product + variant, via edge function to bypass RLS)
+  // ============================================================================
   const uploadPhoto = async (file, variantId = null) => {
     if (!file) return;
 
@@ -140,6 +172,7 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
         throw new Error(result.error || 'Upload gagal');
       }
 
+      // Optimistic update: tambah foto ke local state langsung (no refresh, no form reset)
       const newImage = {
         id: result.image_id,
         url: result.url,
@@ -148,20 +181,15 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
         position: 0,
       };
       setProductImages((prev) => [...prev, newImage]);
-      onSaved();
+      onSaved(); // refresh parent background only
       return result;
     } catch (e) {
       showToast(`✗ Upload gagal: ${e.message}`, 'error');
       return null;
-    } finally {
-      // FIX: sebelumnya tidak ada finally, jadi uploadingPhoto nyangkut
-      // true selamanya setelah upload pertama — bikin semua input file
-      // lain jadi disabled permanen. Sekarang selalu di-reset di sini,
-      // baik upload sukses maupun gagal.
-      setUploadingPhoto(false);
     }
   };
 
+  // ⭐ Bulk upload: multiple files sekaligus
   const uploadMultiplePhotos = async (files, variantId = null) => {
     if (!files || files.length === 0) return;
 
@@ -198,6 +226,7 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
       const result = await resp.json();
       if (!resp.ok) throw new Error(result.error);
 
+      // Optimistic update: update is_primary di local state langsung
       setProductImages((prev) =>
         prev.map((img) => ({
           ...img,
@@ -229,6 +258,7 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
       const result = await resp.json();
       if (!resp.ok) throw new Error(result.error);
 
+      // Optimistic update: hapus foto dari local state langsung
       setProductImages((prev) => prev.filter((img) => img.id !== imageId));
       showToast('✓ Foto dihapus', 'success');
       onSaved();
@@ -237,6 +267,9 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
     }
   };
 
+  // ============================================================================
+  // ADD VARIANT (prompt + immediate DB insert → dapat UUID asli)
+  // ============================================================================
   const addVariant = async () => {
     const name = prompt('Nama variant baru (e.g., "Ukuran L"):');
     if (!name) return;
@@ -260,6 +293,7 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
       const result = await resp.json();
       if (!resp.ok) throw new Error(result.error);
 
+      // Optimistic update: tambah variant ke local state langsung
       setVariants((prev) => [...prev, {
         ...result.variant,
         price: result.variant.price || 0,
@@ -277,15 +311,20 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
     }
   };
 
+  // ============================================================================
+  // DELETE VARIANT
+  // ============================================================================
   const deleteVariant = async (variantId, variantName) => {
     if (!confirm(`Hapus variant "${variantName || 'Varian Baru'}"? Stok dan data variant akan hilang.`)) return;
 
+    // Variant baru (belum tersimpan di DB) → hapus dari local state saja, no API call
     if (variantId.startsWith('new-')) {
       setVariants((prev) => prev.filter((v) => v.id !== variantId));
       showToast('✓ Varian baru dihapus', 'success');
       return;
     }
 
+    // Variant existing (sudah di DB) → hapus dari DB + local state
     try {
       const resp = await fetch(`${SUPABASE_URL}/functions/v1/manage-product-asset`, {
         method: 'POST',
@@ -301,28 +340,33 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
       const result = await resp.json();
       if (!resp.ok) throw new Error(result.error);
 
+      // Hapus dari local state langsung (optimistic update, no refresh needed)
       setVariants((prev) => prev.filter((v) => v.id !== variantId));
       showToast('✓ Variant dihapus', 'success');
-      onSaved();
+      onSaved(); // refresh parent background (tabel admin)
     } catch (e) {
       showToast(`✗ Gagal: ${e.message}`, 'error');
     }
   };
 
+  // ============================================================================
+  // SAVE ALL CHANGES (batch update)
+  // ============================================================================
   const handleSave = async () => {
     setSaving(true);
     const updates = [];
-    const newVariants = [];
+    const newVariants = []; // Variants yang belum punya ID (perlu INSERT, bukan UPDATE)
 
+    // Product update
+    // ⭐ v3: Hapus base_price + weight_in_gram dari product fields
     const productFields = {
       name: formData.name,
       category: formData.category,
       description: formData.description,
-      base_price: Number(formData.base_price),
-      weight_in_gram: Number(formData.weight_in_gram),
       badge: formData.badge || null,
       is_active: formData.is_active,
     };
+
 
     updates.push({
       type: 'product',
@@ -330,6 +374,7 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
       fields: productFields,
     });
 
+    // Variant updates (only changed ones)
     for (const v of variants) {
       if (!v._changed) continue;
 
@@ -339,6 +384,8 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
         price: Number(v.price),
         stock: parseInt(v.stock, 10),
         weight_in_gram: v.weight_in_gram ? parseInt(v.weight_in_gram, 10) : null,
+        // SKU: empty string → null (PostgreSQL UNIQUE constraint allow multiple NULLs
+        // tapi reject multiple empty strings). Trim whitespace dulu juga.
         sku: v.sku?.trim() || null,
         length_cm: v.length_cm ? parseFloat(v.length_cm) : null,
         width_cm: v.width_cm ? parseFloat(v.width_cm) : null,
@@ -347,8 +394,10 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
       };
 
       if (isNew) {
+        // Variant baru → INSERT (perlu product_id). Kumpulkan dulu, insert setelah product update sukses.
         newVariants.push({ ...variantFields, _tempId: v.id, _originalIndex: variants.indexOf(v) });
       } else {
+        // Variant existing → UPDATE
         updates.push({
           type: 'variant',
           id: v.id,
@@ -357,9 +406,13 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
       }
     }
 
-    let newVariantIds = {};
+    // ⚠️ Validasi: kalau ada variant baru, kita perlu INSERT via supabase client langsung
+    // (edge function bulk-update-products hanya support UPDATE, bukan INSERT).
+    // Untuk simplicity, insert dulu variant baru, baru bulk-update sisanya.
+    let newVariantIds = {}; // map _tempId → real UUID
     if (newVariants.length > 0) {
       try {
+        // Ambil product_id dari slug
         const { data: prodData, error: prodErr } = await supabase
           .from('products')
           .select('id')
@@ -371,6 +424,7 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
           return;
         }
 
+        // Insert semua variant baru
         for (const nv of newVariants) {
           const { _tempId, _originalIndex, ...insertFields } = nv;
           const { data: inserted, error: insertErr } = await supabase
@@ -403,6 +457,7 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
       });
       const result = await resp.json();
 
+      // Filter hasil: hanya yang error
       const failedResults = result.results?.filter(r => !r.success) || [];
 
       if (result.error_count === 0 && result.success_count > 0) {
@@ -414,14 +469,17 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
         refreshLocalData(); onSaved();
         setTimeout(() => onClose(), 800);
       } else if (result.error_count > 0) {
+        // Tampilkan error spesifik per item, bukan cuma count
         const errorMsgs = failedResults.map(r => `${r.type} "${r.identifier}": ${r.error}`).join('\n');
         showToast(`✗ ${result.error_count} error. Lihat detail di console.`, 'error');
         console.error('Save errors (detailed):', failedResults);
         console.error('Error messages:\n' + errorMsgs);
+        // Juga alert user biar gampang copy
         if (typeof window !== 'undefined') {
           console.table(failedResults.map(r => ({ type: r.type, identifier: r.identifier, error: r.error })));
         }
       } else {
+        // No changes to save via bulk-update, but mungkin ada new variants yang sukses insert
         if (Object.keys(newVariantIds).length > 0) {
           showToast(`✓ ${Object.keys(newVariantIds).length} variant baru tersimpan`, 'success');
           refreshLocalData(); onSaved();
@@ -438,15 +496,24 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
     }
   };
 
+  // ============================================================================
+  // RENDER
+  // ============================================================================
   if (!product) return null;
 
   const coverImages = productImages.filter((img) => !img.variant_id);
 
   return (
     <>
-      <div className="fixed inset-0 bg-black/50 z-[3000]" onClick={onClose} />
+      {/* Overlay */}
+      <div
+        className="fixed inset-0 bg-black/50 z-[3000]"
+        onClick={onClose}
+      />
 
+      {/* Panel — slide from right */}
       <div className="fixed top-0 right-0 w-full md:w-[600px] h-screen bg-white z-[3001] overflow-y-auto shadow-2xl flex flex-col">
+        {/* Header — tanpa tombol Simpan/Batal (hanya di bawah) */}
         <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between z-10">
           <div>
             <h2 className="text-lg font-bold text-gray-900">Edit Produk</h2>
@@ -462,7 +529,7 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
         </div>
 
         <div className="flex-1 px-6 py-6 space-y-8">
-          {/* === SECTION 1: PRODUCT PHOTOS (Cover) === */}
+          {/* === SECTION 1: PRODUCT PHOTOS (Cover) — drag to reorder, star for primary === */}
           <section>
             <h3 className="text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
               📸 Foto Produk (Cover)
@@ -482,14 +549,18 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
                     e.preventDefault();
                     const fromIdx = parseInt(e.dataTransfer.getData('text/plain'));
                     if (isNaN(fromIdx) || fromIdx === idx) return;
+                    // Reorder coverImages locally
                     const next = [...coverImages];
                     const [moved] = next.splice(fromIdx, 1);
                     next.splice(idx, 0, moved);
+                    // First photo = primary
                     next.forEach((im, i) => im.is_primary = i === 0);
+                    // Update local state
                     setProductImages(prev => {
                       const variants = prev.filter(p => p.variant_id);
                       return [...next.map((im, i) => ({ ...im, is_primary: i === 0 })), ...variants];
                     });
+                    // Update DB: set first photo as primary
                     const primaryImg = next[0];
                     if (primaryImg) {
                       try {
@@ -504,6 +575,7 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
                   }}
                 >
                   <img src={img.url} alt="" className="w-full h-full object-cover pointer-events-none" />
+                  {/* Star icon for primary (first photo) */}
                   {img.is_primary && (
                     <div className="absolute top-1 left-1 w-5 h-5 bg-amber-500 rounded-full flex items-center justify-center">
                       <svg className="w-3 h-3 text-white" viewBox="0 0 24 24" fill="currentColor">
@@ -511,6 +583,7 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
                       </svg>
                     </div>
                   )}
+                  {/* Hover: Hapus only */}
                   <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
                     <button
                       onClick={() => deletePhoto(img.id, img.url)}
@@ -521,10 +594,8 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
                   </div>
                 </div>
               ))}
-              <label
-                htmlFor="edit-cover-photo-upload"
-                className="w-24 h-24 rounded-lg border-2 border-dashed border-gray-300 flex flex-col items-center justify-center cursor-pointer hover:border-blue-400 hover:bg-blue-50 transition-colors"
-              >
+              {/* Upload button — multiple files */}
+              <label className="w-24 h-24 rounded-lg border-2 border-dashed border-gray-300 flex flex-col items-center justify-center cursor-pointer hover:border-blue-400 hover:bg-blue-50 transition-colors">
                 {uploadingPhoto ? (
                   <span className="text-xs text-gray-400">⏳</span>
                 ) : (
@@ -534,8 +605,6 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
                   </>
                 )}
                 <input
-                  id="edit-cover-photo-upload"
-                  name="cover_photo"
                   type="file"
                   accept="image/*"
                   multiple
@@ -554,11 +623,10 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
           <section>
             <h3 className="text-sm font-bold text-gray-900 mb-3">📝 Informasi Produk</h3>
             <div className="space-y-4">
+              {/* Name */}
               <div>
-                <label htmlFor="edit-product-name" className="block text-xs font-medium text-gray-600 mb-1">Nama Produk</label>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Nama Produk</label>
                 <input
-                  id="edit-product-name"
-                  name="name"
                   type="text"
                   value={formData.name}
                   onChange={(e) => updateField('name', e.target.value)}
@@ -566,12 +634,11 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
                 />
               </div>
 
+              {/* Category + Badge */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label htmlFor="edit-product-category" className="block text-xs font-medium text-gray-600 mb-1">Kategori</label>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Kategori</label>
                   <select
-                    id="edit-product-category"
-                    name="category"
                     value={formData.category}
                     onChange={(e) => updateField('category', e.target.value)}
                     className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -583,10 +650,8 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
                   </select>
                 </div>
                 <div>
-                  <label htmlFor="edit-product-badge" className="block text-xs font-medium text-gray-600 mb-1">Badge</label>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Badge</label>
                   <select
-                    id="edit-product-badge"
-                    name="badge"
                     value={formData.badge}
                     onChange={(e) => updateField('badge', e.target.value)}
                     className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -598,40 +663,10 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label htmlFor="edit-product-base-price" className="block text-xs font-medium text-gray-600 mb-1">
-                    Harga Dasar (Rp) <span className="text-gray-400">— strike-through</span>
-                  </label>
-                  <input
-                    id="edit-product-base-price"
-                    name="base_price"
-                    type="number"
-                    value={formData.base_price}
-                    onChange={(e) => updateField('base_price', e.target.value)}
-                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                <div>
-                  <label htmlFor="edit-product-weight" className="block text-xs font-medium text-gray-600 mb-1">
-                    Berat Default (gram) <span className="text-gray-400">— fallback</span>
-                  </label>
-                  <input
-                    id="edit-product-weight"
-                    name="weight_in_gram"
-                    type="number"
-                    value={formData.weight_in_gram}
-                    onChange={(e) => updateField('weight_in_gram', e.target.value)}
-                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-              </div>
-
+              {/* Description (sebelumnya ada Base Price + Weight, tapi udah dihapus di v3) */}
               <div>
-                <label htmlFor="edit-product-description" className="block text-xs font-medium text-gray-600 mb-1">Deskripsi</label>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Deskripsi</label>
                 <textarea
-                  id="edit-product-description"
-                  name="description"
                   value={formData.description}
                   onChange={(e) => updateField('description', e.target.value)}
                   rows={3}
@@ -639,10 +674,10 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
                 />
               </div>
 
+              {/* Active toggle */}
               <div className="flex items-center gap-2">
-                <label htmlFor="edit-product-active-toggle" className="text-xs font-medium text-gray-600">Status:</label>
+                <label className="text-xs font-medium text-gray-600">Status:</label>
                 <button
-                  id="edit-product-active-toggle"
                   onClick={() => updateField('is_active', !formData.is_active)}
                   className={`relative inline-flex h-5 w-10 items-center rounded-full transition-colors ${
                     formData.is_active ? 'bg-green-500' : 'bg-gray-300'
@@ -657,7 +692,7 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
             </div>
           </section>
 
-          {/* === SECTION 3: VARIANTS === */}
+          {/* === SECTION 3: VARIANTS (card-based, Shopee pattern) === */}
           <section>
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-bold text-gray-900">📦 Varian ({variants.length})</h3>
@@ -679,9 +714,11 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
                   const variantImages = productImages.filter((img) => img.variant_id === v.id);
                   return (
                     <div key={v.id} className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                      {/* Variant header */}
                       <div className="flex items-center justify-between mb-3">
                         <span className="text-xs font-bold text-gray-700">Varian {idx + 1}</span>
                         <div className="flex items-center gap-2">
+                          {/* Active toggle */}
                           <button
                             onClick={() => updateVariant(v.id, 'is_active', !v.is_active)}
                             className={`relative inline-flex h-4 w-8 items-center rounded-full transition-colors ${
@@ -701,7 +738,9 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
                         </div>
                       </div>
 
+                      {/* Variant photo thumbnail + fields */}
                       <div className="flex gap-3">
+                        {/* Photo — show variant photo with hover hapus, or upload button */}
                         <div className="flex-shrink-0">
                           {variantImages.length > 0 ? (
                             <div className="relative group w-20 h-20 rounded-lg overflow-hidden border-2 border-gray-200">
@@ -716,17 +755,12 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
                               </div>
                             </div>
                           ) : (
-                            <label
-                              htmlFor={`edit-variant-photo-${v.id}`}
-                              className="block w-20 h-20 rounded-lg overflow-hidden border-2 border-dashed border-gray-300 cursor-pointer hover:border-blue-400 relative"
-                            >
+                            <label className="block w-20 h-20 rounded-lg overflow-hidden border-2 border-dashed border-gray-300 cursor-pointer hover:border-blue-400 relative">
                               <div className="w-full h-full flex flex-col items-center justify-center bg-white">
                                 <span className="text-xl text-gray-300">📷</span>
                                 <span className="text-[0.55rem] text-gray-400 mt-0.5">Upload</span>
                               </div>
                               <input
-                                id={`edit-variant-photo-${v.id}`}
-                                name={`variant_photo_${v.id}`}
                                 type="file"
                                 accept="image/*"
                                 className="hidden"
@@ -740,12 +774,11 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
                           )}
                         </div>
 
+                        {/* Fields */}
                         <div className="flex-1 grid grid-cols-2 gap-2">
                           <div className="col-span-2">
-                            <label htmlFor={`edit-variant-name-${v.id}`} className="block text-[0.65rem] font-medium text-gray-500 mb-0.5">Nama Varian</label>
+                            <label className="block text-[0.65rem] font-medium text-gray-500 mb-0.5">Nama Varian</label>
                             <input
-                              id={`edit-variant-name-${v.id}`}
-                              name={`variant_name_${v.id}`}
                               type="text"
                               value={v.name || ''}
                               onChange={(e) => updateVariant(v.id, 'name', e.target.value)}
@@ -753,10 +786,8 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
                             />
                           </div>
                           <div>
-                            <label htmlFor={`edit-variant-price-${v.id}`} className="block text-[0.65rem] font-medium text-gray-500 mb-0.5">Harga (Rp)</label>
+                            <label className="block text-[0.65rem] font-medium text-gray-500 mb-0.5">Harga (Rp)</label>
                             <input
-                              id={`edit-variant-price-${v.id}`}
-                              name={`variant_price_${v.id}`}
                               type="number"
                               value={v.price}
                               onChange={(e) => updateVariant(v.id, 'price', e.target.value)}
@@ -764,10 +795,8 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
                             />
                           </div>
                           <div>
-                            <label htmlFor={`edit-variant-stock-${v.id}`} className="block text-[0.65rem] font-medium text-gray-500 mb-0.5">Stok</label>
+                            <label className="block text-[0.65rem] font-medium text-gray-500 mb-0.5">Stok</label>
                             <input
-                              id={`edit-variant-stock-${v.id}`}
-                              name={`variant_stock_${v.id}`}
                               type="number"
                               value={v.stock}
                               onChange={(e) => updateVariant(v.id, 'stock', e.target.value)}
@@ -775,10 +804,8 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
                             />
                           </div>
                           <div>
-                            <label htmlFor={`edit-variant-weight-${v.id}`} className="block text-[0.65rem] font-medium text-gray-500 mb-0.5">Berat (gram)</label>
+                            <label className="block text-[0.65rem] font-medium text-gray-500 mb-0.5">Berat (gram)</label>
                             <input
-                              id={`edit-variant-weight-${v.id}`}
-                              name={`variant_weight_${v.id}`}
                               type="number"
                               value={v.weight_in_gram || ''}
                               onChange={(e) => updateVariant(v.id, 'weight_in_gram', e.target.value)}
@@ -787,10 +814,8 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
                             />
                           </div>
                           <div>
-                            <label htmlFor={`edit-variant-sku-${v.id}`} className="block text-[0.65rem] font-medium text-gray-500 mb-0.5">SKU</label>
+                            <label className="block text-[0.65rem] font-medium text-gray-500 mb-0.5">SKU</label>
                             <input
-                              id={`edit-variant-sku-${v.id}`}
-                              name={`variant_sku_${v.id}`}
                               type="text"
                               value={v.sku || ''}
                               onChange={(e) => updateVariant(v.id, 'sku', e.target.value)}
@@ -798,13 +823,11 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
                             />
                           </div>
                           <div className="col-span-2">
-                            <label htmlFor={`edit-variant-length-${v.id}`} className="block text-[0.65rem] font-medium text-gray-500 mb-0.5">
+                            <label className="block text-[0.65rem] font-medium text-gray-500 mb-0.5">
                               Dimensi (cm) — opsional, untuk volumetric Biteship
                             </label>
                             <div className="flex items-center gap-1">
                               <input
-                                id={`edit-variant-length-${v.id}`}
-                                name={`variant_length_${v.id}`}
                                 type="number"
                                 value={v.length_cm || ''}
                                 onChange={(e) => updateVariant(v.id, 'length_cm', e.target.value)}
@@ -813,8 +836,6 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
                               />
                               <span className="text-gray-400">×</span>
                               <input
-                                id={`edit-variant-width-${v.id}`}
-                                name={`variant_width_${v.id}`}
                                 type="number"
                                 value={v.width_cm || ''}
                                 onChange={(e) => updateVariant(v.id, 'width_cm', e.target.value)}
@@ -823,8 +844,6 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
                               />
                               <span className="text-gray-400">×</span>
                               <input
-                                id={`edit-variant-height-${v.id}`}
-                                name={`variant_height_${v.id}`}
                                 type="number"
                                 value={v.height_cm || ''}
                                 onChange={(e) => updateVariant(v.id, 'height_cm', e.target.value)}
@@ -836,29 +855,46 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
                         </div>
                       </div>
 
-                      <div className="mt-3 pt-3 border-t border-gray-200 flex items-center justify-between">
-                        <span className="text-xs text-gray-500">
-                          {Number(v.price) < Number(formData.base_price) ? (
-                            <>
-                              <span className="line-through text-gray-400">{formatPrice(formData.base_price)}</span>
-                              {' → '}
+                      {/* Variant preview price + discount info + Set Discount button (v3) */}
+                      <div className="mt-3 pt-3 border-t border-gray-200 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-gray-500">
+                            {v.price ? (
                               <span className="font-bold text-eglux-secondary">{formatPrice(v.price)}</span>
-                              {' '}
-                              <span className="text-red-500">
-                                -{Math.round(((formData.base_price - v.price) / formData.base_price) * 100)}%
+                            ) : (
+                              <span className="text-gray-400">Isi harga varian</span>
+                            )}
+                          </span>
+                          <span className={`text-[0.65rem] px-2 py-0.5 rounded-full ${
+                            v.is_active ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-500'
+                          }`}>
+                            {v.is_active ? '● Active' : '○ Inactive'}
+                          </span>
+                        </div>
+                        {/* ⭐ v3: Discount badge + Set Discount button (hanya untuk variant yang sudah di-save ke DB) */}
+                        {v.id && !String(v.id).startsWith('new-') && (
+                          <div className="flex items-center justify-between gap-2">
+                            {/* Discount info atau empty */}
+                            {v.discount_type ? (
+                              <span className="text-[0.65rem] px-2 py-0.5 rounded-full bg-red-100 text-red-700 font-semibold">
+                                🏷 Diskon aktif
+                                {v.discount_start_at && v.discount_end_at && (
+                                  <span className="text-red-500 ml-1">
+                                    ({new Date(v.discount_start_at).toLocaleDateString('id-ID', {day:'2-digit',month:'short'})} - {new Date(v.discount_end_at).toLocaleDateString('id-ID', {day:'2-digit',month:'short'})})
+                                  </span>
+                                )}
                               </span>
-                            </>
-                          ) : Number(v.price) === Number(formData.base_price) ? (
-                            <span className="font-bold text-eglux-secondary">{formatPrice(v.price)}</span>
-                          ) : (
-                            <span className="text-red-400">⚠ Harga varian lebih mahal dari base price!</span>
-                          )}
-                        </span>
-                        <span className={`text-[0.65rem] px-2 py-0.5 rounded-full ${
-                          v.is_active ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-500'
-                        }`}>
-                          {v.is_active ? '● Active' : '○ Inactive'}
-                        </span>
+                            ) : (
+                              <span className="text-[0.65rem] text-gray-400">Tanpa diskon</span>
+                            )}
+                            <button
+                              onClick={() => setDiscountVariant(v)}
+                              className="text-[0.65rem] px-2 py-1 text-eglux-secondary border border-eglux-secondary/30 rounded hover:bg-eglux-secondary/5 cursor-pointer"
+                            >
+                              {v.discount_type ? 'Edit Diskon' : 'Set Diskon'}
+                            </button>
+                          </div>
+                        )}
                       </div>
                     </div>
                   );
@@ -868,6 +904,7 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
           </section>
         </div>
 
+        {/* Footer (sticky) */}
         <div className="sticky bottom-0 bg-white border-t border-gray-200 px-6 py-4 flex justify-end gap-3">
           <button
             onClick={onClose}
@@ -885,6 +922,7 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
         </div>
       </div>
 
+      {/* Toast */}
       {toast && (
         <div className={`fixed bottom-4 left-1/2 -translate-x-1/2 z-[3100] px-4 py-2 rounded-md shadow-lg text-sm font-medium ${
           toast.type === 'success' ? 'bg-green-600 text-white' :
@@ -893,6 +931,19 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
         }`}>
           {toast.msg}
         </div>
+      )}
+
+      {/* ⭐ v3: DiscountModal */}
+      {discountVariant && (
+        <DiscountModal
+          variant={discountVariant}
+          onClose={() => setDiscountVariant(null)}
+          onSaved={() => {
+            setDiscountVariant(null);
+            refreshLocalData();
+            onSaved();
+          }}
+        />
       )}
     </>
   );

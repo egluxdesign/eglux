@@ -1,13 +1,14 @@
 // src/hooks/useProducts.js
 // ============================================================================
-// [v2] Updated for variant-as-source-of-truth model
+// [v3] Updated: variant-as-source-of-truth + discount support
 // ============================================================================
 // Changes:
-//   - Sort by updated_at DESC (Boss request: produk baru di-update muncul atas)
-//   - Fetch variant weight + dimensions (weight_in_gram, length_cm, width_cm, height_cm)
-//   - Compute minVariantPrice per product (for ProductCardFull display)
-//   - Filter: only include products yang punya ≥1 ACTIVE variant
-//     (produk dengan semua variant inactive → hide dari catalog)
+//   - Hapus base_price + weight_in_gram dari products (lihat SQL 028)
+//   - Fetch discount fields per variant (discount_type, discount_value,
+//     discount_start_at, discount_end_at)
+//   - Compute discount price per variant (currentPrice, originalPrice,
+//     discountPercent) — discount cuma aktif kalau dalam schedule
+//   - Compute minDiscountPrice per product (untuk ProductCardFull display)
 // ============================================================================
 
 import { useState, useEffect } from 'react';
@@ -24,6 +25,63 @@ const toLabel = (category) =>
   CATEGORY_LABELS[category] ??
   category.charAt(0).toUpperCase() + category.slice(1);
 
+// ⭐ Helper: compute discount price berdasarkan type + value + schedule
+// Return: { isActive, currentPrice, originalPrice, discountPercent }
+function computeVariantDiscount(variant) {
+  const originalPrice = Number(variant?.price) || 0;
+
+  if (!variant?.discount_type || !variant?.discount_value) {
+    return {
+      isActive: false,
+      currentPrice: originalPrice,
+      originalPrice,
+      discountPercent: 0,
+    };
+  }
+
+  // Cek schedule: discount cuma aktif kalau NOW() dalam range
+  const now = new Date();
+  const startAt = variant.discount_start_at ? new Date(variant.discount_start_at) : null;
+  const endAt = variant.discount_end_at ? new Date(variant.discount_end_at) : null;
+
+  if (startAt && now < startAt) {
+    // Belum mulai
+    return { isActive: false, currentPrice: originalPrice, originalPrice, discountPercent: 0 };
+  }
+  if (endAt && now > endAt) {
+    // Sudah expired
+    return { isActive: false, currentPrice: originalPrice, originalPrice, discountPercent: 0 };
+  }
+
+  const value = Number(variant.discount_value);
+  let currentPrice = originalPrice;
+
+  switch (variant.discount_type) {
+    case 'percentage':
+      currentPrice = Math.max(0, Math.round(originalPrice - (originalPrice * value / 100)));
+      break;
+    case 'nominal':
+      currentPrice = Math.max(0, originalPrice - value);
+      break;
+    case 'final_price':
+      currentPrice = Math.max(0, value);
+      break;
+    default:
+      currentPrice = originalPrice;
+  }
+
+  const discountPercent = originalPrice > currentPrice
+    ? Math.round(((originalPrice - currentPrice) / originalPrice) * 100)
+    : 0;
+
+  return {
+    isActive: discountPercent > 0,
+    currentPrice,
+    originalPrice,
+    discountPercent,
+  };
+}
+
 const useProducts = () => {
   const [products,      setProducts]      = useState([]);
   const [filterButtons, setFilterButtons] = useState([{ label: 'Semua', value: 'all' }]);
@@ -32,18 +90,18 @@ const useProducts = () => {
 
   useEffect(() => {
     const load = async () => {
-      // Fetch produk + foto + varian sekaligus
-      // Sort by updated_at DESC (produk baru di-update muncul atas)
-      // [Bug fix] Include products.weight_in_gram untuk fallback kalau variant weight NULL
+      // ⭐ v3: Hapus base_price + weight_in_gram dari products select
+      // Tambah discount_* fields di product_variants
       const { data, error: productsError } = await supabase
         .from('products')
         .select(`
-          id, name, slug, description, category, base_price, badge, is_active,
-          created_at, updated_at, weight_in_gram,
+          id, name, slug, description, category, badge, is_active,
+          created_at, updated_at,
           product_images ( id, url, position, is_primary, variant_id ),
           product_variants (
             id, name, attributes, price, stock, sku, is_active,
-            weight_in_gram, length_cm, width_cm, height_cm
+            weight_in_gram, length_cm, width_cm, height_cm,
+            discount_type, discount_value, discount_start_at, discount_end_at
           )
         `)
         .eq('is_active', true)
@@ -67,13 +125,31 @@ const useProducts = () => {
           const allVariants = p.product_variants || [];
           const activeVariants = allVariants.filter((v) => v.is_active);
 
-          // Compute min price dari active variants (price > 0)
-          const variantPrices = activeVariants
-            .map((v) => Number(v.price))
-            .filter((price) => price > 0);
-          const minVariantPrice = variantPrices.length > 0 ? Math.min(...variantPrices) : null;
+          // ⭐ v3: Compute discount per variant
+          const variantsWithDiscount = activeVariants.map((v) => ({
+            ...v,
+            ...computeVariantDiscount(v),
+          }));
 
-          // Sort variants by price ascending (cheapest first)
+          // Compute min CURRENT price (discount-aware) dari active variants
+          const currentPrices = variantsWithDiscount
+            .map((v) => v.currentPrice)
+            .filter((price) => price > 0);
+          const minCurrentPrice = currentPrices.length > 0 ? Math.min(...currentPrices) : null;
+
+          // Compute min ORIGINAL price (untuk strike-through display)
+          const originalPrices = variantsWithDiscount
+            .map((v) => v.originalPrice)
+            .filter((price) => price > 0);
+          const minOriginalPrice = originalPrices.length > 0 ? Math.min(...originalPrices) : null;
+
+          // Cek apakah ada variant dengan discount aktif
+          const hasActiveDiscount = variantsWithDiscount.some((v) => v.isActive);
+
+          // Compute max discount percent (untuk badge di card)
+          const maxDiscountPercent = Math.max(0, ...variantsWithDiscount.map((v) => v.discountPercent));
+
+          // Sort variants by current price ascending (cheapest first)
           const sortedVariants = [...allVariants].sort((a, b) => {
             const priceA = Number(a.price) || 0;
             const priceB = Number(b.price) || 0;
@@ -86,15 +162,15 @@ const useProducts = () => {
             slug:     p.slug,
             desc:     p.description,
             category: p.category,
-            price:    Number(p.base_price),     // base_price = display anchor (struck-through)
             badge:    p.badge,
             image:    primaryImage?.url || '',
             images:   p.product_images || [],
             variants: sortedVariants,
-            // [Bug fix] Include product weight untuk fallback di CartContext
-            weight_in_gram: p.weight_in_gram,   // fallback kalau variant weight NULL
-            // New fields for display logic
-            minVariantPrice,                    // harga termurah variant (null kalau tidak ada active variant)
+            // v3: discount-aware fields untuk display
+            minVariantPrice: minCurrentPrice,    // harga termurah variant (sudah dikurangi discount)
+            minOriginalPrice: minOriginalPrice,   // harga termurah variant (sebelum discount)
+            hasActiveDiscount,                    // ada variant dengan discount aktif?
+            maxDiscountPercent,                   // persen diskon terbesar (untuk badge)
             hasActiveVariant: activeVariants.length > 0,
             variantCount: allVariants.length,
             activeVariantCount: activeVariants.length,
@@ -102,7 +178,6 @@ const useProducts = () => {
           };
         })
         // Filter: hanya tampilkan produk yang punya ≥1 active variant
-        // (produk dengan semua variant inactive → hide dari catalog)
         .filter((p) => p.hasActiveVariant);
 
       // Bangun filter buttons dari kategori yang benar-benar ada di database
@@ -125,7 +200,8 @@ const useProducts = () => {
     load();
   }, []);
 
-  return { products, filterButtons, loading, error };
+  // Export helper supaya bisa dipakai di komponen lain (ProductModal, CartContext)
+  return { products, filterButtons, loading, error, computeVariantDiscount };
 };
 
 export default useProducts;
