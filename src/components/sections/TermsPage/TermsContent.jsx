@@ -11,15 +11,15 @@ const TermsContent = () => (
           <p>
             Syarat & Ketentuan ini mengatur penggunaan situs EGLUX (eglux.co.id) dan seluruh
             produk atau layanan yang ditawarkan oleh EGLUX. Dengan mengakses situs ini, membuat
-            akun, atau melakukan pembelian, kamu setuju untuk terikat pada syarat dan ketentuan
-            ini. Jika kamu tidak setuju, mohon untuk tidak menggunakan situs ini.
+            akun, atau melakukan pembelian, anda setuju untuk terikat pada syarat dan ketentuan
+            ini. Jika anda tidak setuju, mohon untuk tidak menggunakan situs ini.
           </p>
           <p>Syarat & Ketentuan ini tunduk pada hukum yang berlaku di Republik Indonesia.</p>
         </div>
 
         <div>
           <h2 className="text-lg font-bold text-eglux-primary mb-2">Penggunaan Situs</h2>
-          <p>Situs EGLUX ditujukan untuk keperluan informasi produk, pembuatan akun, dan pembelian produk rumah tangga & dapur. Kamu setuju untuk tidak:</p>
+          <p>Situs EGLUX ditujukan untuk keperluan informasi produk, pembuatan akun, dan pembelian produk rumah tangga & dapur. Anda setuju untuk tidak:</p>
           <ul className="list-disc ml-5 space-y-1 mt-2">
             <li>Menggunakan situs untuk tujuan yang melanggar hukum atau peraturan yang berlaku</li>
             <li>Mencoba mengakses bagian mana pun dari sistem atau infrastruktur kami tanpa izin</li>
@@ -32,9 +32,9 @@ const TermsContent = () => (
         <div>
           <h2 className="text-lg font-bold text-eglux-primary mb-2">Akun Pengguna</h2>
           <p>
-            Untuk melakukan pemesanan, kamu mungkin perlu membuat akun. Kamu bertanggung jawab
-            untuk menjaga kerahasiaan kredensial login kamu dan seluruh aktivitas yang terjadi
-            di bawah akun kamu. Segera hubungi kami jika kamu menduga ada penggunaan akun yang
+            Untuk melakukan pemesanan, anda mungkin perlu membuat akun. Anda bertanggung jawab
+            untuk menjaga kerahasiaan kredensial login anda dan seluruh aktivitas yang terjadi
+            di bawah akun anda. Segera hubungi kami jika anda menduga ada penggunaan akun yang
             tidak sah.
           </p>
         </div>
@@ -59,7 +59,7 @@ const TermsContent = () => (
           <p>
             Pembayaran diproses melalui mitra pembayaran resmi kami, Midtrans, yang mendukung
             berbagai metode pembayaran (kartu kredit/debit, e-wallet, QRIS, transfer bank, dan
-            lainnya). EGLUX tidak menyimpan detail kartu pembayaran kamu secara langsung —
+            lainnya). EGLUX tidak menyimpan detail kartu pembayaran anda secara langsung —
             seluruh data sensitif pembayaran diproses dan diamankan oleh Midtrans sesuai
             standar keamanan industri.
           </p>
@@ -80,7 +80,7 @@ const TermsContent = () => (
           <h2 className="text-lg font-bold text-eglux-primary mb-2">Pengembalian & Refund</h2>
           <p>
             Kebijakan pengembalian barang dan refund diatur secara terpisah. Silakan hubungi
-            tim Customer Care kami melalui fitur Tiket Bantuan di akun kamu, atau email ke{' '}
+            tim Customer Care kami melalui fitur Tiket Bantuan di akun anda, atau email ke{' '}
             <a href="mailto:contact@eglux.co.id" className="text-eglux-secondary underline">contact@eglux.co.id</a>{' '}
             untuk pengajuan retur atau komplain produk.
           </p>
@@ -91,7 +91,7 @@ const TermsContent = () => (
           <p>
             Seluruh konten di situs ini — termasuk identitas merek, desain produk, fotografi,
             teks, dan perangkat lunak — merupakan kekayaan intelektual EGLUX atau pemberi
-            lisensinya. Tidak ada bagian dari situs ini yang memberikan lisensi kepada kamu
+            lisensinya. Tidak ada bagian dari situs ini yang memberikan lisensi kepada anda
             untuk menggunakan konten tersebut kecuali dinyatakan secara eksplisit.
           </p>
         </div>
@@ -110,7 +110,7 @@ const TermsContent = () => (
           <h2 className="text-lg font-bold text-eglux-primary mb-2">Tautan Pihak Ketiga</h2>
           <p>
             Situs ini mungkin berisi tautan ke situs pihak ketiga. Tautan ini disediakan hanya
-            untuk kemudahan kamu. EGLUX tidak memiliki kendali atas, dan tidak bertanggung
+            untuk kemudahan anda. EGLUX tidak memiliki kendali atas, dan tidak bertanggung
             jawab terhadap, konten atau praktik dari situs pihak ketiga mana pun.
           </p>
         </div>
@@ -120,7 +120,7 @@ const TermsContent = () => (
           <p>
             Kami dapat memperbarui Syarat & Ketentuan ini dari waktu ke waktu. Perubahan
             berlaku efektif sejak dipublikasikan di halaman ini. Penggunaan situs yang
-            berkelanjutan setelah perubahan dipublikasikan merupakan bentuk persetujuan kamu
+            berkelanjutan setelah perubahan dipublikasikan merupakan bentuk persetujuan anda
             terhadap ketentuan yang telah direvisi.
           </p>
         </div>

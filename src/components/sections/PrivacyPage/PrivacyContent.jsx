@@ -16,39 +16,39 @@ const PrivacyContent = () => (
           </p>
         </div>
 
-        <div>
+        {/* <div>
           <h2 className="text-lg font-bold text-eglux-primary mb-2">Data yang Kami Kumpulkan</h2>
-          <p>Saat kamu membuat akun, berbelanja, atau menghubungi kami, kami dapat mengumpulkan:</p>
+          <p>Saat anda membuat akun, berbelanja, atau menghubungi kami, kami dapat mengumpulkan:</p>
           <ul className="list-disc ml-5 space-y-1 mt-2">
             <li>Nama lengkap, alamat email, dan nomor WhatsApp</li>
             <li>Alamat pengiriman untuk keperluan pengiriman pesanan</li>
             <li>Riwayat pesanan, termasuk produk yang dibeli dan status pembayaran</li>
             <li>Informasi pembayaran diproses oleh mitra pembayaran kami (Midtrans) — EGLUX tidak
-              menyimpan detail kartu kredit/debit kamu secara langsung</li>
-            <li>Foto/video lampiran yang kamu kirim saat mengajukan tiket bantuan</li>
+              menyimpan detail kartu kredit/debit anda secara langsung</li>
+            <li>Foto/video lampiran yang anda kirim saat mengajukan tiket bantuan</li>
             <li>Informasi teknis standar (alamat IP, jenis browser) untuk keperluan keamanan
               dan perbaikan layanan</li>
           </ul>
-        </div>
+        </div> */}
 
         <div>
-          <h2 className="text-lg font-bold text-eglux-primary mb-2">Bagaimana Kami Menggunakan Data Kamu</h2>
+          <h2 className="text-lg font-bold text-eglux-primary mb-2">Bagaimana Kami Menggunakan Data Anda</h2>
           <p>Data yang kami kumpulkan digunakan untuk:</p>
           <ul className="list-disc ml-5 space-y-1 mt-2">
-            <li>Memproses dan mengirimkan pesanan kamu</li>
+            <li>Memproses dan mengirimkan pesanan anda</li>
             <li>Mengirim notifikasi status pesanan melalui email dan/atau WhatsApp</li>
-            <li>Merespons pertanyaan dan tiket bantuan yang kamu ajukan</li>
-            <li>Mengirim newsletter dan penawaran promosi (hanya jika kamu berlangganan)</li>
+            <li>Merespons pertanyaan dan tiket bantuan yang anda ajukan</li>
+            <li>Mengirim newsletter dan penawaran promosi (hanya jika anda berlangganan)</li>
             <li>Meningkatkan kualitas produk dan layanan kami</li>
             <li>Memenuhi kewajiban hukum yang berlaku</li>
           </ul>
           <p className="mt-2">
-            Kami tidak menjual data pribadi kamu, dan tidak membagikannya ke pihak ketiga untuk
+            Kami tidak menjual data pribadi anda, dan tidak membagikannya ke pihak ketiga untuk
             keperluan pemasaran di luar yang disebutkan dalam kebijakan ini.
           </p>
         </div>
 
-        <div>
+        {/* <div>
           <h2 className="text-lg font-bold text-eglux-primary mb-2">Pihak Ketiga yang Kami Gunakan</h2>
           <p>Untuk menjalankan layanan kami, EGLUX bekerja sama dengan penyedia layanan berikut:</p>
           <ul className="list-disc ml-5 space-y-1 mt-2">
@@ -62,33 +62,33 @@ const PrivacyContent = () => (
             Setiap mitra di atas hanya menerima data yang diperlukan untuk menjalankan fungsinya
             masing-masing, dan tunduk pada kebijakan privasi mereka sendiri.
           </p>
-        </div>
+        </div> */}
 
         <div>
           <h2 className="text-lg font-bold text-eglux-primary mb-2">Cookies</h2>
           <p>
-            Situs kami menggunakan cookies untuk menjaga sesi login kamu tetap aktif dan
-            memastikan keranjang belanja tersimpan dengan baik. Kamu dapat mengatur preferensi
-            cookies melalui pengaturan browser kamu.
+            Situs kami menggunakan cookies untuk menjaga sesi login anda tetap aktif dan
+            memastikan keranjang belanja tersimpan dengan baik. Anda dapat mengatur preferensi
+            cookies melalui pengaturan browser anda.
           </p>
         </div>
 
         <div>
           <h2 className="text-lg font-bold text-eglux-primary mb-2">Penyimpanan Data</h2>
           <p>
-            Kami menyimpan data pribadi kamu selama akun kamu aktif, atau selama diperlukan
+            Kami menyimpan data pribadi anda selama akun anda aktif, atau selama diperlukan
             untuk memenuhi tujuan yang dijelaskan dalam kebijakan ini, termasuk kewajiban
             perpajakan dan hukum yang berlaku di Indonesia.
           </p>
         </div>
 
         <div>
-          <h2 className="text-lg font-bold text-eglux-primary mb-2">Hak Kamu</h2>
-          <p>Sesuai dengan Undang-Undang Perlindungan Data Pribadi (UU PDP) Republik Indonesia, kamu berhak untuk:</p>
+          <h2 className="text-lg font-bold text-eglux-primary mb-2">Hak Anda</h2>
+          <p>Sesuai dengan Undang-Undang Perlindungan Data Pribadi (UU PDP) Republik Indonesia, anda berhak untuk:</p>
           <ul className="list-disc ml-5 space-y-1 mt-2">
-            <li>Mengakses data pribadi yang kami simpan tentang kamu</li>
+            <li>Mengakses data pribadi yang kami simpan tentang anda</li>
             <li>Meminta koreksi data yang tidak akurat</li>
-            <li>Meminta penghapusan data pribadi kamu (dengan pengecualian data yang wajib
+            <li>Meminta penghapusan data pribadi anda (dengan pengecualian data yang wajib
               disimpan untuk kepatuhan hukum, seperti riwayat transaksi)</li>
             <li>Menarik persetujuan atas pemrosesan data kapan saja</li>
             <li>Berhenti berlangganan newsletter kapan saja melalui link di setiap email</li>
@@ -103,7 +103,7 @@ const PrivacyContent = () => (
           <h2 className="text-lg font-bold text-eglux-primary mb-2">Keamanan Data</h2>
           <p>
             Kami menerapkan langkah-langkah teknis dan organisasional yang wajar untuk
-            melindungi data pribadi kamu dari akses tidak sah, kehilangan, atau
+            melindungi data pribadi anda dari akses tidak sah, kehilangan, atau
             penyalahgunaan. Namun, tidak ada transmisi data melalui internet yang sepenuhnya
             aman, dan kami tidak dapat menjamin keamanan mutlak.
           </p>
