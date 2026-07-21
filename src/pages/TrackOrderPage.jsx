@@ -1,18 +1,21 @@
 // src/pages/TrackOrderPage.jsx
 // ============================================================================
-// Lacak Pesanan — Shopee/Biteship style
+// Lacak Pesanan — Simple version (no Tracking API call)
 // ============================================================================
 // Behavior:
 //   - Default view: list orders (hanya yang status 'processing' / 'shipping' /
 //     'completed' — yaitu yang sudah dibayar, Biteship order sudah dibuat).
-//     Pending (belum bayar) dan cancelled gak ditampilkan (gak ada tracking).
-//   - Klik order → masuk DETAIL view: hanya 1 order itu yang tampil + Biteship
-//     tracking detail (timeline, courier/driver, origin→destination).
+//   - Klik order → masuk DETAIL view: hanya 1 order itu yang tampil +
+//     ShippingInfoCard dengan info dari DB + tombol "Lacak Paket di Biteship"
+//     yang direct ke biteship_waybill_url dari DB.
 //   - Tombol "← Kembali" di detail view untuk balik ke list.
+//
+// ⭐ GAK ADA Tracking API call (yang berbayar)!
+//    Semua info diambil dari DB: biteship_status, biteship_waybill_url,
+//    tracking_number, courier_code, dst. — yang sudah di-update via webhook.
 //
 // Deep link:
 //   /track?order=<id> → auto-buka detail view untuk order tersebut
-//   (dipakai dari OrdersList "Lacak Pesanan" button)
 // ============================================================================
 
 import { useState, useEffect, useCallback } from 'react';
@@ -24,29 +27,35 @@ import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabaseClient';
 import { rupiah } from '../context/CartContext';
 
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
-
 // ⭐ Hanya order dengan status ini yang ditampilkan (sudah dibayar → punya tracking)
 const TRACKABLE_STATUSES = ['processing', 'shipping', 'completed'];
 
-// ── Biteship status labels (Indonesian) ──
-// ⭐ Source: https://biteship.com/en/docs/api/trackings/status
-// Biteship pakai camelCase (bukan snake_case). 15 status total.
-const TRACKING_STATUS = {
-  confirmed:       { label: 'Pesanan Dikonfirmasi',  color: 'text-blue-600',   dot: 'bg-blue-500' },
-  allocated:       { label: 'Kurir Dialokasikan',    color: 'text-blue-600',   dot: 'bg-blue-500' },
-  pickingUp:       { label: 'Kurir Menuju Lokasi',   color: 'text-amber-600',  dot: 'bg-amber-500' },
-  picked:          { label: 'Paket Diambil',         color: 'text-amber-600',  dot: 'bg-amber-500' },
-  inTransit:       { label: 'Dalam Perjalanan',      color: 'text-purple-600', dot: 'bg-purple-500' },
-  droppingOff:     { label: 'Menuju Penerima',       color: 'text-purple-600', dot: 'bg-purple-500' },
+// ── Biteship status labels (Indonesian) — snake_case + camelCase ──
+const SHIPPING_STATUS_LABEL = {
+  // Pre-pickup
+  confirmed: { label: 'Pesanan Dikonfirmasi', color: 'text-blue-600', dot: 'bg-blue-500' },
+  allocated: { label: 'Kurir Dialokasikan', color: 'text-blue-600', dot: 'bg-blue-500' },
+  picking_up: { label: 'Kurir Menuju Lokasi', color: 'text-amber-600', dot: 'bg-amber-500' },
+  pickingUp: { label: 'Kurir Menuju Lokasi', color: 'text-amber-600', dot: 'bg-amber-500' },
+  // In transit
+  picked: { label: 'Paket Diambil', color: 'text-amber-600', dot: 'bg-amber-500' },
+  in_transit: { label: 'Dalam Perjalanan', color: 'text-purple-600', dot: 'bg-purple-500' },
+  inTransit: { label: 'Dalam Perjalanan', color: 'text-purple-600', dot: 'bg-purple-500' },
+  dropping_off: { label: 'Menuju Penerima', color: 'text-purple-600', dot: 'bg-purple-500' },
+  droppingOff: { label: 'Menuju Penerima', color: 'text-purple-600', dot: 'bg-purple-500' },
+  on_hold: { label: 'Ditahan', color: 'text-gray-600', dot: 'bg-gray-500' },
+  onHold: { label: 'Ditahan', color: 'text-gray-600', dot: 'bg-gray-500' },
+  // Delivered
+  delivered: { label: 'Tiba di Tujuan', color: 'text-green-600', dot: 'bg-green-500' },
+  // Cancelled-like
+  cancelled: { label: 'Dibatalkan', color: 'text-red-500', dot: 'bg-red-400' },
+  returned: { label: 'Dikembalikan', color: 'text-orange-600', dot: 'bg-orange-500' },
+  rejected: { label: 'Ditolak', color: 'text-red-500', dot: 'bg-red-400' },
+  courier_not_found: { label: 'Kurir Tidak Tersedia', color: 'text-red-500', dot: 'bg-red-400' },
+  courierNotFound: { label: 'Kurir Tidak Tersedia', color: 'text-red-500', dot: 'bg-red-400' },
+  disposed: { label: 'Disposal', color: 'text-gray-600', dot: 'bg-gray-500' },
+  return_in_transit: { label: 'Dikembalikan ke Pengirim', color: 'text-orange-600', dot: 'bg-orange-500' },
   returnInTransit: { label: 'Dikembalikan ke Pengirim', color: 'text-orange-600', dot: 'bg-orange-500' },
-  onHold:          { label: 'Ditahan',               color: 'text-gray-600',   dot: 'bg-gray-500' },
-  delivered:       { label: 'Tiba di Tujuan',        color: 'text-green-600',  dot: 'bg-green-500' },
-  rejected:        { label: 'Ditolak',               color: 'text-red-500',    dot: 'bg-red-400' },
-  courierNotFound: { label: 'Kurir Tidak Tersedia',  color: 'text-red-500',    dot: 'bg-red-400' },
-  returned:        { label: 'Dikembalikan',          color: 'text-orange-600', dot: 'bg-orange-500' },
-  cancelled:       { label: 'Dibatalkan',            color: 'text-red-500',    dot: 'bg-red-400' },
-  disposed:        { label: 'Disposal',              color: 'text-gray-600',   dot: 'bg-gray-500' },
 };
 
 // ── Order status badge ──
@@ -77,18 +86,7 @@ const TrackOrderPage = () => {
   const { openCart } = useCartActions();
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
-
-  // ⭐ activeOrder: kalau ada → render DETAIL view (hanya 1 order ini)
-  //   null → render LIST view
   const [activeOrder, setActiveOrder] = useState(null);
-  const [trackingData, setTrackingData] = useState(null);
-  const [trackingLoading, setTrackingLoading] = useState(false);
-  const [trackingError, setTrackingError] = useState(null);
-
-  // ⭐ State untuk sync manual (fallback kalau webhook gak jalan)
-  const [syncing, setSyncing] = useState(false);
-  const [syncMessage, setSyncMessage] = useState(null);
-
   const [searchParams, setSearchParams] = useSearchParams();
 
   // ── Fetch list orders milik user (filter: hanya trackable statuses) ──
@@ -146,15 +144,9 @@ const TrackOrderPage = () => {
       .channel('track-order-realtime')
       .on(
         'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'orders',
-        },
+        { event: 'UPDATE', schema: 'public', table: 'orders' },
         (payload) => {
           const updated = payload.new;
-
-          // Update list orders
           setOrders((prev) => {
             const existing = prev.find(o => o.id === updated.id);
             if (!existing) return prev;
@@ -162,24 +154,16 @@ const TrackOrderPage = () => {
             return prev.map(o => o.id === updated.id ? patched : o);
           });
 
-          // Kalau order yang sedang di-detail view berubah → refresh tracking
+          // Kalau order yang sedang di-detail view berubah → update activeOrder
           if (activeOrder && activeOrder.id === updated.id) {
             setActiveOrder((prev) => prev ? { ...prev, ...updated } : prev);
-            // Refetch tracking untuk dapat timeline terbaru dari Biteship
-            fetchTracking(updated.id);
           }
         }
       )
       .on(
         'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'orders',
-        },
-        () => {
-          fetchOrders();
-        }
+        { event: 'INSERT', schema: 'public', table: 'orders' },
+        () => { fetchOrders(); }
       )
       .subscribe();
 
@@ -189,108 +173,21 @@ const TrackOrderPage = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, activeOrder]);
 
-  // ── Fetch Biteship tracking detail (dipanggil saat user klik 1 order) ──
-  const fetchTracking = async (orderId) => {
-    setTrackingLoading(true);
-    setTrackingError(null);
-    setTrackingData(null);
-
-    try {
-      const { data, error: invokeError } = await supabase.functions.invoke(
-        'get-biteship-tracking',
-        { body: { order_id: orderId } }
-      );
-
-      if (invokeError) {
-        throw new Error(invokeError.message || 'Gagal menghubungi server');
-      }
-      if (!data) {
-        throw new Error('Response kosong dari server');
-      }
-      setTrackingData(data);
-    } catch (e) {
-      console.error('[TrackOrder] tracking error:', e);
-      const msg = e.message?.includes('Failed to fetch') || e.message?.includes('CORS')
-        ? 'Gagal terhubung ke server. Coba lagi beberapa saat.'
-        : e.message;
-      setTrackingError(msg);
-    } finally {
-      setTrackingLoading(false);
-    }
-  };
-
-  // ── Klik order di list → buka detail view + fetch tracking ──
+  // ── Klik order di list → buka detail view ──
   const handleOpenDetail = (order) => {
     setActiveOrder(order);
-    setTrackingData(null);
-    setTrackingError(null);
-    setSyncMessage(null);
-    fetchTracking(order.id);
-  };
-
-  // ⭐ Sync Status Manual: fetch dari Biteship API → update DB → refresh tracking
-  // (Fallback kalau webhook Biteship gak kirim event ke edge function kita)
-  const handleSyncStatus = async () => {
-    if (!activeOrder) return;
-    setSyncing(true);
-    setSyncMessage(null);
-
-    try {
-      const { data, error: invokeError } = await supabase.functions.invoke(
-        'sync-biteship-status',
-        { body: { order_id: activeOrder.id } }
-      );
-
-      if (invokeError) {
-        throw new Error(invokeError.message || 'Gagal menghubungi server');
-      }
-      if (!data?.success) {
-        throw new Error(data?.error || 'Gagal sync status dari Biteship');
-      }
-
-      // Update activeOrder state dengan data baru
-      const updatedOrder = {
-        ...activeOrder,
-        status: data.new_eglux_status || activeOrder.status,
-        biteship_status: data.new_biteship_status || activeOrder.biteship_status,
-        tracking_number: data.tracking_number || activeOrder.tracking_number,
-      };
-      setActiveOrder(updatedOrder);
-
-      // Refresh tracking detail
-      await fetchTracking(activeOrder.id);
-
-      // Refresh list orders juga
-      fetchOrders();
-
-      setSyncMessage(
-        `✓ Status di-sync dari Biteship: ${data.new_biteship_status || 'tidak berubah'} ` +
-        `→ ${data.new_eglux_status || 'tidak berubah'}`
-      );
-    } catch (e) {
-      console.error('[TrackOrder] sync error:', e);
-      const msg = e.message?.includes('Failed to fetch') || e.message?.includes('CORS')
-        ? 'Gagal terhubung ke server. Pastikan edge function "sync-biteship-status" sudah di-deploy.'
-        : e.message;
-      setSyncMessage(`❌ ${msg}`);
-    } finally {
-      setSyncing(false);
-    }
   };
 
   // ── Kembali ke list view ──
   const handleBackToList = () => {
     setActiveOrder(null);
-    setTrackingData(null);
-    setTrackingError(null);
-    // Clean up URL query param
     if (searchParams.get('order')) {
       searchParams.delete('order');
       setSearchParams(searchParams, { replace: true });
     }
   };
 
-  // ⭐ Auto-open detail dari query param ?order=<id> (deep link dari OrdersPage)
+  // ⭐ Auto-open detail dari query param ?order=<id>
   useEffect(() => {
     if (!orders.length || activeOrder) return;
     const orderId = searchParams.get('order');
@@ -298,7 +195,6 @@ const TrackOrderPage = () => {
     const match = orders.find(o => o.id === orderId);
     if (match) {
       handleOpenDetail(match);
-      // Clean up URL biar gak trigger lagi pas refresh
       searchParams.delete('order');
       setSearchParams(searchParams, { replace: true });
     }
@@ -322,14 +218,12 @@ const TrackOrderPage = () => {
   }
 
   // ========================================================================
-  // DETAIL VIEW: hanya 1 order yang di-klik + tracking detail
+  // DETAIL VIEW: hanya 1 order yang di-klik + ShippingInfoCard
   // ========================================================================
   if (activeOrder) {
     const order = activeOrder;
     const items = order.items || [];
     const badge = ORDER_BADGE[order.status] || { text: order.status, cls: 'bg-gray-100 text-gray-600' };
-    const tracking = trackingData?.tracking;
-    const orderInfo = trackingData?.order;
 
     return (
       <>
@@ -347,36 +241,12 @@ const TrackOrderPage = () => {
               </svg>
               Kembali
             </button>
-            {/* ⭐ Sync Status button — manual sync dari Biteship API */}
-            <button
-              onClick={handleSyncStatus}
-              disabled={syncing}
-              className="flex items-center gap-1.5 text-xs text-eglux-primary font-semibold bg-eglux-accent hover:bg-eglux-accent/80 px-3 py-1.5 rounded-lg transition-colors cursor-pointer border-none disabled:opacity-50 ml-auto"
-            >
-              <svg className={`w-3.5 h-3.5 ${syncing ? 'animate-spin' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="23 4 23 10 17 10" />
-                <polyline points="1 20 1 14 7 14" />
-                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
-              </svg>
-              {syncing ? 'Syncing...' : 'Sync Status'}
-            </button>
             <Link to="/orders" className="text-xs text-eglux-secondary font-medium hover:underline whitespace-nowrap">
               ← Lihat Rincian Pesanan
             </Link>
           </div>
           <h1 className="text-2xl font-bold text-eglux-primary mb-1">Lacak Pesanan</h1>
           <p className="text-sm text-gray-500 mb-6">Status pengiriman order #{shortId(order.id)}</p>
-
-          {/* Sync message (success/error) */}
-          {syncMessage && (
-            <div className={`mb-4 p-3 rounded-lg text-xs font-medium ${
-              syncMessage.startsWith('✓')
-                ? 'bg-green-50 border border-green-200 text-green-700'
-                : 'bg-red-50 border border-red-200 text-red-600'
-            }`}>
-              {syncMessage}
-            </div>
-          )}
 
           {/* Order header card */}
           <div className="bg-white border border-gray-200 rounded-xl p-4 mb-4">
@@ -405,39 +275,8 @@ const TrackOrderPage = () => {
             </div>
           </div>
 
-          {/* Tracking detail */}
-          {trackingLoading && (
-            <div className="bg-white border border-gray-200 rounded-xl p-6 flex justify-center">
-              <div className="w-8 h-8 border-3 border-eglux-secondary border-t-transparent rounded-full animate-spin" />
-            </div>
-          )}
-
-          {trackingError && (
-            <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-600 text-center">
-              ⚠ {trackingError}
-              <button
-                onClick={() => fetchTracking(order.id)}
-                className="block mx-auto mt-3 px-4 py-1.5 bg-red-600 text-white rounded-lg text-xs font-semibold hover:bg-red-700 cursor-pointer border-none"
-              >
-                Coba Lagi
-              </button>
-            </div>
-          )}
-
-          {trackingData && !tracking && (
-            <div className="space-y-4">
-              <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-center">
-                <p className="text-sm text-amber-700">{trackingData.message || 'Tracking detail via API belum tersedia'}</p>
-              </div>
-            </div>
-          )}
-
           {/* ⭐ Shipping info card dari DB (gratis, pakai biteship_waybill_url + biteship_status) */}
           <ShippingInfoCard order={order} />
-
-          {tracking && (
-            <TrackingDetail tracking={tracking} order={order} orderInfo={orderInfo} />
-          )}
         </div>
 
         <Footer />
@@ -551,140 +390,6 @@ const TrackOrderPage = () => {
 };
 
 // ============================================================================
-// TrackingDetail — render Biteship tracking info (timeline, courier, route)
-// ============================================================================
-const TrackingDetail = ({ tracking, order, orderInfo }) => {
-  const history = tracking.history || [];
-  const courier = tracking.courier || {};
-  const origin = tracking.origin || {};
-  const destination = tracking.destination || {};
-  const currentStatus = TRACKING_STATUS[tracking.status] || {
-    label: tracking.status, color: 'text-gray-600', dot: 'bg-gray-400',
-  };
-
-  return (
-    <div className="space-y-4">
-      {/* Current status banner */}
-      <div className="flex items-center gap-3 bg-eglux-accent rounded-xl p-4">
-        <div className={`w-3 h-3 rounded-full ${currentStatus.dot}`} />
-        <div className="flex-1">
-          <p className="text-sm font-bold text-eglux-primary">{currentStatus.label}</p>
-          {tracking.waybill_id && (
-            <p className="text-xs text-gray-500 font-mono">Resi: {tracking.waybill_id}</p>
-          )}
-        </div>
-        {tracking.link && (
-          <a
-            href={tracking.link}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-xs text-eglux-secondary font-medium hover:underline"
-          >
-            Lacak di Kurir →
-          </a>
-        )}
-      </div>
-
-      {/* Courier / Driver info (Biteship style) */}
-      {courier.company && (
-        <div className="bg-white border border-gray-200 rounded-xl p-4">
-          <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-3">Info Kurir</p>
-          <div className="flex items-center gap-3">
-            {courier.driver_photo_url ? (
-              <img src={courier.driver_photo_url} alt="Driver" className="w-12 h-12 rounded-full object-cover" />
-            ) : (
-              <div className="w-12 h-12 rounded-full bg-eglux-accent flex items-center justify-center text-lg font-bold text-eglux-secondary uppercase">
-                {courier.company.charAt(0)}
-              </div>
-            )}
-            <div className="flex-1">
-              <p className="text-sm font-semibold text-gray-900 uppercase">{courier.company}</p>
-              {courier.driver_name && <p className="text-xs text-gray-500">{courier.driver_name}</p>}
-              {courier.driver_plate_number && <p className="text-xs text-gray-400">Plat: {courier.driver_plate_number}</p>}
-            </div>
-            {courier.driver_phone && (
-              <a
-                href={`tel:${courier.driver_phone}`}
-                className="w-9 h-9 rounded-full bg-green-50 flex items-center justify-center text-green-600 hover:bg-green-100"
-              >
-                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72 12.84 12.84 0 00.7 2.81 2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45 12.84 12.84 0 002.81.7A2 2 0 0122 16.92z" />
-                </svg>
-              </a>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Origin → Destination */}
-      <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-3">
-        <div className="flex gap-3">
-          <div className="flex flex-col items-center pt-1">
-            <div className="w-3 h-3 rounded-full bg-gray-300 border-2 border-white shadow" />
-            <div className="w-0.5 flex-1 bg-gray-200 min-h-[20px]" />
-          </div>
-          <div className="flex-1 pb-2">
-            <p className="text-[0.65rem] text-gray-400 uppercase tracking-wide">Pengirim</p>
-            <p className="text-xs font-medium text-gray-700">{origin.contact_name || 'EGLUX'}</p>
-            <p className="text-xs text-gray-400">{origin.address || 'Gudang EGLUX'}</p>
-          </div>
-        </div>
-        <div className="flex gap-3">
-          <div className="flex flex-col items-center pt-1">
-            <div className="w-3 h-3 rounded-full bg-eglux-secondary border-2 border-white shadow" />
-          </div>
-          <div className="flex-1">
-            <p className="text-[0.65rem] text-gray-400 uppercase tracking-wide">Penerima</p>
-            <p className="text-xs font-medium text-gray-700">
-              {destination.contact_name || orderInfo?.customer?.name || order?.customer?.name || '—'}
-            </p>
-            <p className="text-xs text-gray-400">
-              {destination.address || orderInfo?.shipping_address || '—'}
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {/* Tracking History Timeline (Biteship dashboard style) */}
-      <div className="bg-white border border-gray-200 rounded-xl p-4">
-        <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-4">Riwayat Pengiriman</p>
-        {history.length === 0 ? (
-          <p className="text-xs text-gray-400 text-center py-4">Belum ada riwayat pengiriman</p>
-        ) : (
-          <div className="space-y-0">
-            {history.slice().reverse().map((event, idx) => {
-              const statusInfo = TRACKING_STATUS[event.status] || {
-                label: event.status, color: 'text-gray-600', dot: 'bg-gray-400',
-              };
-              const isLast = idx === history.length - 1;
-              return (
-                <div key={idx} className="flex gap-3">
-                  <div className="flex flex-col items-center">
-                    <div className={`w-3 h-3 rounded-full ${isLast ? statusInfo.dot : 'bg-gray-300'} ${isLast ? 'ring-4 ring-eglux-secondary/20' : ''} flex-shrink-0 mt-1`} />
-                    {!isLast && <div className="w-0.5 flex-1 bg-gray-200 min-h-[32px]" />}
-                  </div>
-                  <div className={`flex-1 ${isLast ? '' : 'pb-4'}`}>
-                    <p className={`text-xs font-semibold ${isLast ? statusInfo.color : 'text-gray-600'}`}>
-                      {statusInfo.label}
-                    </p>
-                    {event.note && (
-                      <p className="text-xs text-gray-400 mt-0.5 leading-relaxed">{event.note}</p>
-                    )}
-                    <p className="text-[0.65rem] text-gray-300 mt-1">{formatDateTime(event.updated_at)}</p>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      <Footer />
-    </>
-  );
-};
-
-// ============================================================================
 // ShippingInfoCard — Info pengiriman dari DB (gratis, no Tracking API call)
 // ============================================================================
 // Pakai:
@@ -697,33 +402,6 @@ const TrackingDetail = ({ tracking, order, orderInfo }) => {
 // Tracking API gak available/berbayar. User bisa klik link untuk lacak
 // paket langsung di Biteship tracking page.
 // ============================================================================
-const SHIPPING_STATUS_LABEL = {
-  // Pre-pickup
-  confirmed: { label: 'Pesanan Dikonfirmasi', color: 'text-blue-600', dot: 'bg-blue-500' },
-  allocated: { label: 'Kurir Dialokasikan', color: 'text-blue-600', dot: 'bg-blue-500' },
-  picking_up: { label: 'Kurir Menuju Lokasi', color: 'text-amber-600', dot: 'bg-amber-500' },
-  pickingUp: { label: 'Kurir Menuju Lokasi', color: 'text-amber-600', dot: 'bg-amber-500' },
-  // In transit
-  picked: { label: 'Paket Diambil', color: 'text-amber-600', dot: 'bg-amber-500' },
-  in_transit: { label: 'Dalam Perjalanan', color: 'text-purple-600', dot: 'bg-purple-500' },
-  inTransit: { label: 'Dalam Perjalanan', color: 'text-purple-600', dot: 'bg-purple-500' },
-  dropping_off: { label: 'Menuju Penerima', color: 'text-purple-600', dot: 'bg-purple-500' },
-  droppingOff: { label: 'Menuju Penerima', color: 'text-purple-600', dot: 'bg-purple-500' },
-  on_hold: { label: 'Ditahan', color: 'text-gray-600', dot: 'bg-gray-500' },
-  onHold: { label: 'Ditahan', color: 'text-gray-600', dot: 'bg-gray-500' },
-  // Delivered
-  delivered: { label: 'Tiba di Tujuan', color: 'text-green-600', dot: 'bg-green-500' },
-  // Cancelled-like
-  cancelled: { label: 'Dibatalkan', color: 'text-red-500', dot: 'bg-red-400' },
-  returned: { label: 'Dikembalikan', color: 'text-orange-600', dot: 'bg-orange-500' },
-  rejected: { label: 'Ditolak', color: 'text-red-500', dot: 'bg-red-400' },
-  courier_not_found: { label: 'Kurir Tidak Tersedia', color: 'text-red-500', dot: 'bg-red-400' },
-  courierNotFound: { label: 'Kurir Tidak Tersedia', color: 'text-red-500', dot: 'bg-red-400' },
-  disposed: { label: 'Disposal', color: 'text-gray-600', dot: 'bg-gray-500' },
-  return_in_transit: { label: 'Dikembalikan ke Pengirim', color: 'text-orange-600', dot: 'bg-orange-500' },
-  returnInTransit: { label: 'Dikembalikan ke Pengirim', color: 'text-orange-600', dot: 'bg-orange-500' },
-};
-
 const ShippingInfoCard = ({ order }) => {
   const statusInfo = SHIPPING_STATUS_LABEL[order?.biteship_status] || {
     label: order?.biteship_status || 'Menunggu',
@@ -779,26 +457,22 @@ const ShippingInfoCard = ({ order }) => {
       </div>
 
       {/* Tracking link button (pakai biteship_waybill_url dari DB - gratis!) */}
-      {order?.biteship_waybill_url && (
+      {order?.biteship_waybill_url ? (
         <a
           href={order.biteship_waybill_url}
           target="_blank"
           rel="noopener noreferrer"
-          className="block w-full px-4 py-2.5 bg-eglux-primary text-white rounded-lg text-xs font-semibold hover:opacity-90 transition-opacity text-center no-underline mt-2"
+          className="block w-full px-4 py-2.5 bg-eglux-primary text-white rounded-lg text-xs font-semibold hover:opacity-90 transition-opacity text-center no-underline mt-2 flex items-center justify-center gap-2"
         >
+          <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+            <circle cx="12" cy="12" r="3" />
+          </svg>
           Lacak Paket di Biteship →
         </a>
-      )}
-
-      {/* Hint kalau belum ada waybill_url */}
-      {!order?.biteship_waybill_url && order?.biteship_status && (
+      ) : (
         <p className="text-[0.7rem] text-gray-400 text-center pt-1">
           Link tracking akan tersedia setelah kurir confirmed pickup
-        </p>
-      )}
-      {!order?.biteship_status && (
-        <p className="text-[0.7rem] text-gray-400 text-center pt-1">
-          Status pengiriman akan muncul setelah Biteship confirmed order
         </p>
       )}
     </div>

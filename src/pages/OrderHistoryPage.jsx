@@ -236,9 +236,16 @@ const HistoryDetailPanel = ({ order, onClose, onRefund }) => {
   const statusCfg = STATUS_BADGE[order.status] || { banner: 'bg-gray-500' };
   const canTrack = order.biteship_order_id || order.tracking_number || order.biteship_status;
 
+  // ⭐ Lacak Pesanan: direct ke biteship_waybill_url (kalau ada), fallback ke /track page
   const handleTrackOrder = () => {
-    onClose();
-    navigate(`/track?order=${order.id}`);
+    if (order.biteship_waybill_url) {
+      // Direct ke Biteship tracking page (gratis, no API call)
+      window.open(order.biteship_waybill_url, '_blank', 'noopener,noreferrer');
+    } else {
+      // Fallback: buka track order page (untuk lihat status dari DB)
+      onClose();
+      navigate(`/track?order=${order.id}`);
+    }
   };
 
   const handleProductClick = (e, productId) => {
@@ -514,6 +521,7 @@ const OrderHistoryPage = () => {
         shipping_address, shipping_city, shipping_postal_code,
         created_at, notes,
         tracking_number, biteship_order_id, biteship_status,
+        biteship_waybill_url, biteship_pickup_code,
         payment_method,
         midtrans_payment_type, midtrans_payment_code, midtrans_settlement_time,
         midtrans_transaction_status,
