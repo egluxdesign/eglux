@@ -1,20 +1,4 @@
-// src/hooks/useProducts.js
-// ============================================================================
-// [v3] Updated: variant-as-source-of-truth + discount support
-// ============================================================================
-// Changes:
-//   - Hapus base_price + weight_in_gram dari products (lihat SQL 028)
-//   - Fetch discount fields per variant (discount_type, discount_value,
-//     discount_start_at, discount_end_at)
-//   - Compute discount price per variant (currentPrice, originalPrice,
-//     discountPercent) — discount cuma aktif kalau dalam schedule
-//   - Compute minDiscountPrice per product (untuk ProductCardFull display)
-// ============================================================================
-
-import { useState, useEffect } from 'react';
-import { supabase } from '../lib/supabaseClient';
-
-const CATEGORY_LABELS = {
+BELS = {
   kitchen:   'Kitchen',
   storage:   'Storage',
   homedecor: 'Home Decor',
@@ -125,7 +109,9 @@ const useProducts = () => {
           const allVariants = p.product_variants || [];
           const activeVariants = allVariants.filter((v) => v.is_active);
 
-          // ⭐ v3: Compute discount per variant
+          // ⭐ v3: Compute discount per variant (active variants only)
+          // Hasil: variantsWithDiscount punya field: currentPrice, originalPrice, isActive, discountPercent
+          // PLUS field original: id, name, price, stock, weight_in_gram, discount_type, dst.
           const variantsWithDiscount = activeVariants.map((v) => ({
             ...v,
             ...computeVariantDiscount(v),
@@ -149,10 +135,11 @@ const useProducts = () => {
           // Compute max discount percent (untuk badge di card)
           const maxDiscountPercent = Math.max(0, ...variantsWithDiscount.map((v) => v.discountPercent));
 
-          // Sort variants by current price ascending (cheapest first)
-          const sortedVariants = [...allVariants].sort((a, b) => {
-            const priceA = Number(a.price) || 0;
-            const priceB = Number(b.price) || 0;
+          // ⭐ v3 FIX: Sort variantsWithDiscount (BUKAN allVariants) by CURRENT price ascending
+          // Supaya ProductModal dapat variant dengan field currentPrice/originalPrice/discountPercent
+          const sortedVariants = [...variantsWithDiscount].sort((a, b) => {
+            const priceA = Number(a.currentPrice) || 0;
+            const priceB = Number(b.currentPrice) || 0;
             return priceA - priceB;
           });
 
@@ -165,6 +152,7 @@ const useProducts = () => {
             badge:    p.badge,
             image:    primaryImage?.url || '',
             images:   p.product_images || [],
+            // ⭐ v3 FIX: variants = sortedVariants (dengan field discount_*)
             variants: sortedVariants,
             // v3: discount-aware fields untuk display
             minVariantPrice: minCurrentPrice,    // harga termurah variant (sudah dikurangi discount)

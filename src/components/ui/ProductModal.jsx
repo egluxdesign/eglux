@@ -270,7 +270,10 @@ const ProductModal = ({ product, onClose, onAddToCart }) => {
                     const vStock = parseInt(v.stock, 10) || 0;
                     const vOutOfStock = vStock === 0 && v.stock !== null && v.stock !== undefined;
                     const showStock = vStock > 0 && vStock < 20;
-                    const vPrice = Number(v.price) || 0;
+                    // ⭐ v3: Pakai currentPrice (discount-aware) kalau ada, fallback ke price
+                    const vDisplayPrice = v.currentPrice || Number(v.price) || 0;
+                    const vOriginalPrice = v.originalPrice || Number(v.price) || 0;
+                    const vHasDiscount = v.isActive && vOriginalPrice > vDisplayPrice;
 
                     return (
                       <button
@@ -284,8 +287,16 @@ const ProductModal = ({ product, onClose, onAddToCart }) => {
                           ${vOutOfStock ? 'opacity-40 cursor-not-allowed' : ''}`}
                       >
                         <span className="block font-semibold leading-tight">{v.name}</span>
+                        {/* ⭐ v3: Tampilkan harga diskon (strike original + discounted) */}
                         <span className={`block text-[0.72rem] mt-0.5 ${isSelected ? 'text-eglux-secondary' : 'text-[#999]'}`}>
-                          {vPrice > 0 ? rupiah(vPrice) : 'Hubungi CS'}
+                          {vDisplayPrice > 0 ? (
+                            vHasDiscount ? (
+                              <>
+                                <span className="line-through text-[0.6rem] mr-1 opacity-70">{rupiah(vOriginalPrice)}</span>
+                                {rupiah(vDisplayPrice)}
+                              </>
+                            ) : rupiah(vDisplayPrice)
+                          ) : 'Hubungi CS'}
                         </span>
                         {showStock && (
                           <span className="block text-[0.65rem] text-[#bbb] mt-0.5">
