@@ -1,17 +1,24 @@
 // src/hooks/useProducts.js
 // ============================================================================
-// [v3] Updated: variant-as-source-of-truth + discount support
+// [v3] Variant-as-source-of-truth + discount support + auto-refresh
 // ============================================================================
-// Changes:
+// Features:
 //   - Hapus base_price + weight_in_gram dari products (lihat SQL 028)
 //   - Fetch discount fields per variant (discount_type, discount_value,
 //     discount_start_at, discount_end_at)
 //   - Compute discount price per variant (currentPrice, originalPrice,
 //     discountPercent) — discount cuma aktif kalau dalam schedule
 //   - Compute minDiscountPrice per product (untuk ProductCardFull display)
+//
+// ⭐ v3 Auto-refresh:
+//   Product prices (especially discount prices) auto-refresh tanpa user refresh page:
+//     - Setiap 60 detik (periodic refresh via setInterval)
+//     - Saat tab browser dapat focus lagi (visibilitychange event)
+//     - Manual via refreshProducts() function
+//   Berguna saat discount expire/mulai saat user sedang browsing catalog.
 // ============================================================================
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '../lib/supabaseClient';
 
 const CATEGORY_LABELS = {
@@ -24,6 +31,8 @@ const CATEGORY_LABELS = {
 const toLabel = (category) =>
   CATEGORY_LABELS[category] ??
   category.charAt(0).toUpperCase() + category.slice(1);
+
+const REFRESH_INTERVAL_MS = 60 * 1000; // 60 detik
 
 // ⭐ Helper: compute discount price berdasarkan type + value + schedule
 // Return: { isActive, currentPrice, originalPrice, discountPercent }
@@ -45,11 +54,9 @@ function computeVariantDiscount(variant) {
   const endAt = variant.discount_end_at ? new Date(variant.discount_end_at) : null;
 
   if (startAt && now < startAt) {
-    // Belum mulai
     return { isActive: false, currentPrice: originalPrice, originalPrice, discountPercent: 0 };
   }
   if (endAt && now > endAt) {
-    // Sudah expired
     return { isActive: false, currentPrice: originalPrice, originalPrice, discountPercent: 0 };
   }
 
@@ -88,10 +95,18 @@ const useProducts = () => {
   const [loading,       setLoading]       = useState(true);
   const [error,         setError]         = useState(null);
 
-  useEffect(() => {
-    const load = async () => {
-      // ⭐ v3: Hapus base_price + weight_in_gram dari products select
-      // Tambah discount_* fields di product_variants
+  // ⭐ v3: Ref untuk prevent concurrent refresh
+  const isRefreshingRef = useRef(false);
+
+  // ⭐ v3: Extract load function jadi useCallback (reusable untuk periodic refresh)
+  // isInitial = true → set loading=true (first load). false → silent refresh (gak show loading).
+  const refreshProducts = useCallback(async (isInitial = false) => {
+    if (isRefreshingRef.current) return;
+    isRefreshingRef.current = true;
+
+    if (isInitial) setLoading(true);
+
+    try {
       const { data, error: productsError } = await supabase
         .from('products')
         .select(`
@@ -110,49 +125,38 @@ const useProducts = () => {
       if (productsError) {
         setError(productsError);
         setLoading(false);
+        isRefreshingRef.current = false;
         return;
       }
 
       // Bentuk ulang data produk
       const shaped = data
         .map((p) => {
-          // Filter gambar: AMBIL GAMBAR YANG BUKAN MILIK VARIAN
           const nonVariantImages = (p.product_images || []).filter((img) => !img.variant_id);
           const primaryImage =
             nonVariantImages.find((img) => img.is_primary) || nonVariantImages[0] || (p.product_images || [])[0];
 
-          // Filter variant yang active saja untuk display
           const allVariants = p.product_variants || [];
           const activeVariants = allVariants.filter((v) => v.is_active);
 
-          // ⭐ v3: Compute discount per variant (active variants only)
-          // Hasil: variantsWithDiscount punya field: currentPrice, originalPrice, isActive, discountPercent
-          // PLUS field original: id, name, price, stock, weight_in_gram, discount_type, dst.
           const variantsWithDiscount = activeVariants.map((v) => ({
             ...v,
             ...computeVariantDiscount(v),
           }));
 
-          // Compute min CURRENT price (discount-aware) dari active variants
           const currentPrices = variantsWithDiscount
             .map((v) => v.currentPrice)
             .filter((price) => price > 0);
           const minCurrentPrice = currentPrices.length > 0 ? Math.min(...currentPrices) : null;
 
-          // Compute min ORIGINAL price (untuk strike-through display)
           const originalPrices = variantsWithDiscount
             .map((v) => v.originalPrice)
             .filter((price) => price > 0);
           const minOriginalPrice = originalPrices.length > 0 ? Math.min(...originalPrices) : null;
 
-          // Cek apakah ada variant dengan discount aktif
           const hasActiveDiscount = variantsWithDiscount.some((v) => v.isActive);
-
-          // Compute max discount percent (untuk badge di card)
           const maxDiscountPercent = Math.max(0, ...variantsWithDiscount.map((v) => v.discountPercent));
 
-          // ⭐ v3 FIX: Sort variantsWithDiscount (BUKAN allVariants) by CURRENT price ascending
-          // Supaya ProductModal dapat variant dengan field currentPrice/originalPrice/discountPercent
           const sortedVariants = [...variantsWithDiscount].sort((a, b) => {
             const priceA = Number(a.currentPrice) || 0;
             const priceB = Number(b.currentPrice) || 0;
@@ -168,23 +172,19 @@ const useProducts = () => {
             badge:    p.badge,
             image:    primaryImage?.url || '',
             images:   p.product_images || [],
-            // ⭐ v3 FIX: variants = sortedVariants (dengan field discount_*)
             variants: sortedVariants,
-            // v3: discount-aware fields untuk display
-            minVariantPrice: minCurrentPrice,    // harga termurah variant (sudah dikurangi discount)
-            minOriginalPrice: minOriginalPrice,   // harga termurah variant (sebelum discount)
-            hasActiveDiscount,                    // ada variant dengan discount aktif?
-            maxDiscountPercent,                   // persen diskon terbesar (untuk badge)
+            minVariantPrice: minCurrentPrice,
+            minOriginalPrice: minOriginalPrice,
+            hasActiveDiscount,
+            maxDiscountPercent,
             hasActiveVariant: activeVariants.length > 0,
             variantCount: allVariants.length,
             activeVariantCount: activeVariants.length,
             updated_at: p.updated_at,
           };
         })
-        // Filter: hanya tampilkan produk yang punya ≥1 active variant
         .filter((p) => p.hasActiveVariant);
 
-      // Bangun filter buttons dari kategori yang benar-benar ada di database
       const uniqueCategories = [...new Set(shaped.map((p) => p.category).filter(Boolean))];
       const knownOrder = Object.keys(CATEGORY_LABELS);
       const sorted = [
@@ -199,13 +199,43 @@ const useProducts = () => {
       setProducts(shaped);
       setFilterButtons(buttons);
       setLoading(false);
-    };
-
-    load();
+    } catch (e) {
+      console.error('[useProducts] refresh error:', e);
+      if (isInitial) setLoading(false);
+    } finally {
+      isRefreshingRef.current = false;
+    }
   }, []);
 
-  // Export helper supaya bisa dipakai di komponen lain (ProductModal, CartContext)
-  return { products, filterButtons, loading, error, computeVariantDiscount };
+  // ⭐ v3: Initial load on mount
+  useEffect(() => {
+    refreshProducts(true);
+  }, [refreshProducts]);
+
+  // ⭐ v3: Periodic refresh (setiap 60 detik) — cek discount expire/start
+  useEffect(() => {
+    const intervalId = setInterval(() => {
+      refreshProducts(false);
+    }, REFRESH_INTERVAL_MS);
+
+    return () => clearInterval(intervalId);
+  }, [refreshProducts]);
+
+  // ⭐ v3: Refresh saat tab browser dapat focus (visibilitychange)
+  // User pindah tab → balik → discount mungkin expire/start selama di tab lain
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        refreshProducts(false);
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [refreshProducts]);
+
+  // Export helper + refreshProducts supaya bisa dipakai di komponen lain
+  return { products, filterButtons, loading, error, computeVariantDiscount, refreshProducts };
 };
 
 export default useProducts;
