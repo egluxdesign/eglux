@@ -154,7 +154,13 @@ const selectStyles = {
 
 const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
   const { cart, totalPrice, clearCart } = useCart();
-  const { snapReady, loadError } = useMidtransSnap();
+  // ⭐ Redirect mode: gak perlu useMidtransSnap lagi (snap.js gak di-load)
+  // User di-redirect ke Midtrans Snap page (full browser), bukan iframe popup.
+  // Alasan: popup mode kena CSP error dari Midtrans sendiri (mereka kirim
+  // CSP strict untuk popup page mereka, tapi inline script mereka sendiri
+  // melanggar CSP itu — bug Midtrans yang gak bisa kita fix).
+  const snapReady = true; // always ready — gak perlu load snap.js
+  const loadError = null;
   const { user, profile, isPro } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -702,43 +708,119 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
         </div>
 
         <div className="px-4 md:px-6 pb-6 pt-5 space-y-6">
-          {/* === Order Summary === */}
+          {/* === Order Summary (v3: transparent breakdown) === */}
           <section className="bg-eglux-accent rounded-xl p-4 text-[0.85rem]">
             <h4 className="text-[0.78rem] uppercase tracking-[1px] text-[#666] mb-2 font-semibold flex items-center gap-1.5">
               <Package className="w-3.5 h-3.5" />Ringkasan Pesanan
             </h4>
-            {cart.map((item) => (
-              <div key={item.id} className="flex justify-between mb-1 text-eglux-primary font-medium">
-                <span className="flex-1 mr-2 truncate">
-                  {item.name.slice(0, 38)}
-                  {item.name.length > 38 ? '…' : ''}
-                  <br />
-                  <small className="text-[#666] font-normal">
-                    {item.variantName ?? '-'} × {item.qty}
-                    {item.weight_in_gram ? ` · ${item.weight_in_gram}g` : ''}
-                  </small>
-                </span>
-                <span className="whitespace-nowrap">
-                  {item.price ? rupiah(item.price * item.qty) : '—'}
-                </span>
-              </div>
-            ))}
-            <div className="flex justify-between mt-2 pt-2 border-t border-[#ddd] text-[0.82rem]">
-              <span className="text-gray-600">Subtotal</span>
-              <span className="font-medium text-eglux-primary">{rupiah(totalPrice)}</span>
-            </div>
-            {selectedShipping && (
-              <div className="flex justify-between mt-1 text-[0.82rem]">
-                <span className="text-gray-600">
-                  Ongkir ({selectedShipping.courier} {selectedShipping.service})
-                </span>
-                <span className="font-medium text-eglux-primary">{rupiah(selectedShipping.price)}</span>
-              </div>
-            )}
-            <div className="flex justify-between border-t border-[#ddd] mt-2 pt-2">
-              <span className="font-bold text-eglux-primary text-[0.85rem]">Total</span>
-              <span className="font-bold text-eglux-secondary text-[0.95rem]">{rupiah(grandTotal)}</span>
-            </div>
+
+            {/* Item list — tampilkan harga asli (strike) + harga diskon per item */}
+            {cart.map((item) => {
+              const itemHasDiscount = item.isDiscounted && item.originalPrice > item.price;
+              const itemOriginalSubtotal = (item.originalPrice || item.price) * item.qty;
+              const itemDiscountedSubtotal = item.price * item.qty;
+              const itemDiscountAmount = itemHasDiscount ? (itemOriginalSubtotal - itemDiscountedSubtotal) : 0;
+              return (
+                <div key={item.id} className="mb-2">
+                  <div className="flex justify-between text-eglux-primary font-medium">
+                    <span className="flex-1 mr-2 truncate">
+                      {item.name.slice(0, 38)}
+                      {item.name.length > 38 ? '…' : ''}
+                      <br />
+                      <small className="text-[#666] font-normal">
+                        {item.variantName ?? '-'} × {item.qty}
+                        {item.weight_in_gram ? ` · ${item.weight_in_gram}g` : ''}
+                      </small>
+                    </span>
+                    <span className="whitespace-nowrap text-right">
+                      {item.price ? rupiah(item.price * item.qty) : '—'}
+                      {itemHasDiscount && (
+                        <br />
+                      )}
+                      {itemHasDiscount && (
+                        <small className="text-[0.65rem] text-gray-400 line-through font-normal">
+                          {rupiah(itemOriginalSubtotal)}
+                        </small>
+                      )}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+
+            {/* === Breakdown transparan === */}
+            {/* 1. Subtotal Produk (harga asli, sebelum diskon) */}
+            {(() => {
+              const originalSubtotal = cart.reduce(
+                (s, i) => s + ((i.originalPrice || i.price) * i.qty), 0
+              );
+              const discountedSubtotal = cart.reduce(
+                (s, i) => s + (i.price * i.qty), 0
+              );
+              const totalDiscount = originalSubtotal - discountedSubtotal;
+              const hasAnyDiscount = totalDiscount > 0;
+              const shippingCost = selectedShipping?.price || 0;
+              // Reserve untuk tax/admin fee (kalau ada di masa depan)
+              const taxFee = 0;
+              const grandTotalV3 = discountedSubtotal + shippingCost + taxFee;
+
+              return (
+                <>
+                  {/* Subtotal harga asli */}
+                  <div className="flex justify-between mt-2 pt-2 border-t border-[#ddd] text-[0.82rem]">
+                    <span className="text-gray-600">Subtotal Produk ({cart.reduce((s,i)=>s+i.qty,0)} item)</span>
+                    <span className="font-medium text-eglux-primary">{rupiah(originalSubtotal)}</span>
+                  </div>
+
+                  {/* Diskon (potongan) — tampilkan kalau ada */}
+                  {hasAnyDiscount && (
+                    <div className="flex justify-between mt-1 text-[0.82rem]">
+                      <span className="text-green-600">↓ Diskon</span>
+                      <span className="font-medium text-green-600">− {rupiah(totalDiscount)}</span>
+                    </div>
+                  )}
+
+                  {/* Subtotal setelah diskon */}
+                  {hasAnyDiscount && (
+                    <div className="flex justify-between mt-1 text-[0.82rem]">
+                      <span className="text-gray-600">Subtotal Setelah Diskon</span>
+                      <span className="font-medium text-eglux-primary">{rupiah(discountedSubtotal)}</span>
+                    </div>
+                  )}
+
+                  {/* Ongkir */}
+                  {selectedShipping && (
+                    <div className="flex justify-between mt-1 text-[0.82rem]">
+                      <span className="text-gray-600">
+                        Ongkir ({selectedShipping.courier} {selectedShipping.service})
+                      </span>
+                      <span className="font-medium text-eglux-primary">{rupiah(shippingCost)}</span>
+                    </div>
+                  )}
+
+                  {/* Tax / Admin Fee (reserve untuk masa depan) */}
+                  {taxFee > 0 && (
+                    <div className="flex justify-between mt-1 text-[0.82rem]">
+                      <span className="text-gray-600">Biaya Admin / Tax</span>
+                      <span className="font-medium text-eglux-primary">{rupiah(taxFee)}</span>
+                    </div>
+                  )}
+
+                  {/* Grand Total */}
+                  <div className="flex justify-between border-t border-[#ddd] mt-2 pt-2">
+                    <span className="font-bold text-eglux-primary text-[0.85rem]">Total Pembayaran</span>
+                    <span className="font-bold text-eglux-secondary text-[0.95rem]">{rupiah(grandTotalV3)}</span>
+                  </div>
+
+                  {/* Hint hemat */}
+                  {hasAnyDiscount && (
+                    <p className="text-[0.65rem] text-green-600 mt-1.5 text-right">
+                      🎉 Kamu hemat {rupiah(totalDiscount)} dari diskon!
+                    </p>
+                  )}
+                </>
+              );
+            })()}
           </section>
 
           {/* === Data Pembeli === */}

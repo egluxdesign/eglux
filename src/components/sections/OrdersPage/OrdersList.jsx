@@ -537,13 +537,36 @@ const OrderDetailPanel = ({ order: orderProp, onClose, onOrderUpdated }) => {
             </div>
           </div>
 
-          {/* Rincian Pembayaran (TRANSPARAN) */}
+          {/* Rincian Pembayaran (v3: transparent breakdown) */}
           <div className="bg-white border border-gray-200 rounded-xl p-4">
             <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-3">Rincian Pembayaran</p>
             <div className="space-y-2 text-sm">
-              {/* Subtotal item */}
+              {/* Item list dengan harga per item (transparan) */}
+              {items.length > 0 && (
+                <div className="space-y-1.5 pb-2 mb-1 border-b border-gray-100">
+                  {items.map((item, idx) => {
+                    const itemUnitPrice = Number(item.unit_price_snapshot) || 0;
+                    const itemQty = Number(item.quantity) || 1;
+                    const itemSubtotal = Number(item.subtotal) || (itemUnitPrice * itemQty);
+                    return (
+                      <div key={idx} className="flex justify-between text-xs">
+                        <span className="text-gray-600 flex-1 mr-2 truncate">
+                          {item.product_name_snapshot}
+                          {item.variant_name_snapshot && (
+                            <span className="text-gray-400"> · {item.variant_name_snapshot}</span>
+                          )}
+                          <span className="text-gray-400"> × {itemQty}</span>
+                        </span>
+                        <span className="text-gray-700 whitespace-nowrap">{rupiah(itemSubtotal)}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Subtotal item (harga final, setelah diskon kalau ada) */}
               <div className="flex justify-between">
-                <span className="text-gray-500">Subtotal ({items.length} produk)</span>
+                <span className="text-gray-500">Subtotal Produk ({items.length} item)</span>
                 <span className="text-gray-900">{rupiah(order.subtotal)}</span>
               </div>
 
@@ -565,15 +588,26 @@ const OrderDetailPanel = ({ order: orderProp, onClose, onOrderUpdated }) => {
               {/* Biaya lain kalau ada (courier_rate bisa beda dari shipping_cost kalau ada surcharge) */}
               {Number(order.courier_rate) > 0 && Number(order.courier_rate) !== Number(order.shipping_cost) && (
                 <div className="flex justify-between">
-                  <span className="text-gray-500">Biaya Kurir</span>
+                  <span className="text-gray-500">Biaya Kurir (Rate)</span>
                   <span className="text-gray-900">{rupiah(order.courier_rate)}</span>
                 </div>
               )}
 
+              {/* Tax / Admin Fee (reserve — kalau ada di masa depan, tampilkan di sini) */}
+              {/* TODO: kalau ada kolom tax_fee / admin_fee di orders table, tampilkan di sini */}
+
+              {/* Grand Total */}
               <div className="border-t border-gray-200 pt-2 mt-2 flex justify-between items-center">
-                <span className="font-semibold text-gray-900">Total Pesanan</span>
+                <span className="font-semibold text-gray-900">Total Pembayaran</span>
                 <span className="text-lg font-bold text-eglux-secondary">{rupiah(order.total_amount)}</span>
               </div>
+
+              {/* Verifikasi: subtotal + shipping = total (untuk transaparency check) */}
+              {Number(order.subtotal) + Number(order.shipping_cost) !== Number(order.total_amount) && (
+                <p className="text-[0.65rem] text-amber-600 mt-1">
+                  ℹ Total termasuk biaya lain (selisih: {rupiah(Number(order.total_amount) - Number(order.subtotal) - Number(order.shipping_cost))})
+                </p>
+              )}
             </div>
           </div>
 
