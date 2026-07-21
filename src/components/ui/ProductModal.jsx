@@ -101,8 +101,38 @@ const ProductModal = ({ product, onClose, onAddToCart }) => {
   if (!product) return null;
 
   // 8. LOGIC HARGA: selalu pakai variant price
-  const effectivePrice = Number(selectedVariant?.price) || 0;
-  const basePrice = Number(product.price) || 0;
+  // ⭐ v3: Discount-aware pricing — pakai computeVariantDiscount dari useProducts
+  // Jika variant punya discount aktif (dalam schedule), pakai currentPrice.
+  // effectivePrice = harga setelah discount, originalPrice = harga asli (untuk strike)
+  const _originalVariantPrice = Number(selectedVariant?.price) || 0;
+  const _discountInfo = (() => {
+    if (!selectedVariant) return { currentPrice: 0, originalPrice: 0, discountPercent: 0, isActive: false };
+    // Inline compute (same logic as useProducts.computeVariantDiscount)
+    if (!selectedVariant.discount_type || !selectedVariant.discount_value) {
+      return { currentPrice: _originalVariantPrice, originalPrice: _originalVariantPrice, discountPercent: 0, isActive: false };
+    }
+    const now = new Date();
+    const startAt = selectedVariant.discount_start_at ? new Date(selectedVariant.discount_start_at) : null;
+    const endAt = selectedVariant.discount_end_at ? new Date(selectedVariant.discount_end_at) : null;
+    if (startAt && now < startAt) return { currentPrice: _originalVariantPrice, originalPrice: _originalVariantPrice, discountPercent: 0, isActive: false };
+    if (endAt && now > endAt) return { currentPrice: _originalVariantPrice, originalPrice: _originalVariantPrice, discountPercent: 0, isActive: false };
+    const value = Number(selectedVariant.discount_value);
+    let currentPrice = _originalVariantPrice;
+    switch (selectedVariant.discount_type) {
+      case 'percentage': currentPrice = Math.max(0, Math.round(_originalVariantPrice - (_originalVariantPrice * value / 100))); break;
+      case 'nominal':    currentPrice = Math.max(0, _originalVariantPrice - value); break;
+      case 'final_price':currentPrice = Math.max(0, value); break;
+      default: currentPrice = _originalVariantPrice;
+    }
+    const discountPercent = _originalVariantPrice > currentPrice
+      ? Math.round(((_originalVariantPrice - currentPrice) / _originalVariantPrice) * 100)
+      : 0;
+    return { currentPrice, originalPrice: _originalVariantPrice, discountPercent, isActive: discountPercent > 0 };
+  })();
+  const effectivePrice = _discountInfo.currentPrice;
+  const basePrice = _discountInfo.originalPrice;       // = originalVariantPrice (for strike-through)
+  const isDiscounted = _discountInfo.isActive;
+  const discountPercent = _discountInfo.discountPercent;
   const subtotal = effectivePrice * qty;
   const selectedStock = selectedVariant ? parseInt(selectedVariant.stock, 10) || 0 : 0;
   // Hanya anggap out of stock kalau stock PASTI 0 (bukan null/undefined)
@@ -205,11 +235,11 @@ const ProductModal = ({ product, onClose, onAddToCart }) => {
             <h2 className="text-[1.1rem] font-bold text-eglux-primary mb-1 leading-snug">{product.name}</h2>
             <p className="text-[0.8rem] text-[#999] mb-3 uppercase tracking-[0.5px]">{product.category}</p>
 
-            {/* === PRICE DISPLAY === */}
+            {/* === PRICE DISPLAY (v3: discount-aware) === */}
             <div className="mb-4 pb-4 border-b border-[#eee]">
               {selectedVariant && effectivePrice > 0 ? (
                 <div className="flex items-baseline gap-2 flex-wrap">
-                  {basePrice > effectivePrice && (
+                  {isDiscounted && basePrice > effectivePrice && (
                     <span className="text-[0.85rem] text-[#999] line-through">
                       {rupiah(basePrice)}
                     </span>
@@ -217,9 +247,9 @@ const ProductModal = ({ product, onClose, onAddToCart }) => {
                   <span className="text-[1.5rem] font-bold text-eglux-secondary">
                     {rupiah(effectivePrice)}
                   </span>
-                  {basePrice > effectivePrice && (
+                  {isDiscounted && discountPercent > 0 && (
                     <span className="bg-red-500 text-white text-[0.65rem] font-bold py-0.5 px-1.5 rounded">
-                      -{Math.round(((basePrice - effectivePrice) / basePrice) * 100)}%
+                      -{discountPercent}%
                     </span>
                   )}
                 </div>
@@ -337,7 +367,16 @@ const ProductModal = ({ product, onClose, onAddToCart }) => {
           <button
             onClick={() => {
               if (selectedVariant && !isOutOfStock && effectivePrice > 0) {
-                onAddToCart(product, selectedVariant, qty);
+                // ⭐ v3: Pass variant dengan price = effectivePrice (discounted)
+                // supaya CartContext pakai harga diskon untuk total calculation
+                const variantWithDiscount = {
+                  ...selectedVariant,
+                  price: effectivePrice,           // harga setelah discount (yang dipakai untuk total)
+                  originalPrice: basePrice,         // harga asli (untuk strike-through display di cart)
+                  isDiscounted,                     // flag: apakah variant lagi diskon?
+                  discountPercent,                  // percent off (untuk badge)
+                };
+                onAddToCart(product, variantWithDiscount, qty);
                 onClose();
               }
             }}

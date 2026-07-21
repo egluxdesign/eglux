@@ -212,9 +212,24 @@ const CartDrawer = ({ isOpen, onClose, showToast }) => {
                     {item.variantName && (
                       <p className="text-[0.72rem] text-gray-500 mt-0.5">{item.variantName}</p>
                     )}
-                    <p className="text-[0.82rem] font-bold text-eglux-secondary mt-1">
-                      {rupiah(item.price)}
-                    </p>
+                    {/* ⭐ v3: Price display dengan strike original + discounted + badge */}
+                    <div className="flex items-baseline gap-1.5 mt-1 flex-wrap">
+                      {item.isDiscounted && item.originalPrice > item.price && (
+                        <>
+                          <span className="text-[0.7rem] text-gray-400 line-through">
+                            {rupiah(item.originalPrice)}
+                          </span>
+                          {item.discountPercent > 0 && (
+                            <span className="bg-red-500 text-white text-[0.55rem] font-bold py-0.5 px-1 rounded">
+                              -{item.discountPercent}%
+                            </span>
+                          )}
+                        </>
+                      )}
+                      <span className="text-[0.82rem] font-bold text-eglux-secondary">
+                        {rupiah(item.price)}
+                      </span>
+                    </div>
 
                     <div className="flex items-center justify-between mt-2">
                       {/* Qty stepper */}
