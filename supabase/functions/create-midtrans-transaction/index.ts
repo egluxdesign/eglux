@@ -34,6 +34,10 @@ const MIDTRANS_SNAP_URL =
   Deno.env.get("MIDTRANS_IS_PRODUCTION") === "true"
     ? "https://app.midtrans.com/snap/v1/transactions"
     : "https://app.sandbox.midtrans.com/snap/v1/transactions";
+const MIDTRANS_BASE_URL =
+  Deno.env.get("MIDTRANS_IS_PRODUCTION") === "true"
+    ? "https://api.midtrans.com"
+    : "https://api.sandbox.midtrans.com";
 const MIDTRANS_SERVER_KEY = Deno.env.get("MIDTRANS_SERVER_KEY")!;
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -81,6 +85,7 @@ serve(async (req: Request) => {
         id, total_amount, subtotal, shipping_cost,
         shipping_address, shipping_city, shipping_postal_code,
         courier_code, courier_service, notes,
+        payment_status, snap_token, midtrans_transaction_id,
         customer:customers(name, phone, email),
         items:order_items(product_name_snapshot, variant_name_snapshot, unit_price_snapshot, quantity)
       `)
@@ -88,6 +93,63 @@ serve(async (req: Request) => {
       .single();
 
     if (oe || !order) return json({ error: "Order not found", details: oe?.message }, 404);
+
+    // ⭐ ANTI-DOUBLE-PAYMENT CHECK: Cek status pembayaran order di DB
+    // Kalau payment_status = 'paid' → reject (pesanan sudah dibayar, gak perlu token baru)
+    // Kalau payment_status = 'unpaid' dan ada snap_token existing → cek Midtrans status:
+    //   - settlement/capture → reject (sudah dibayar, webhook mungkin belum update DB)
+    //   - pending → cancel dulu, lalu mint token baru (supaya user bisa pilih metode lain)
+    //   - deny/expire/cancel/failure → mint token baru
+    if (order.payment_status === "paid") {
+      return json({
+        error: "Pesanan sudah dibayar. Tidak perlu membuat transaksi baru.",
+        order_id,
+        payment_status: order.payment_status,
+      }, 400);
+    }
+
+    // Cek status di Midtrans kalau ada transaction existing
+    const existingSnapToken = (order as any).snap_token;
+    const existingTransactionId = (order as any).midtrans_transaction_id;
+    if (existingTransactionId || existingSnapToken) {
+      try {
+        const auth = btoa(`${MIDTRANS_SERVER_KEY}:`);
+        const statusResp = await fetch(`${MIDTRANS_BASE_URL}/v2/${order_id}/status`, {
+          method: "GET",
+          headers: { Authorization: `Basic ${auth}`, Accept: "application/json" },
+        });
+        if (statusResp.ok) {
+          const statusData = await statusResp.json();
+          const midtransStatus = statusData.transaction_status;
+          console.log("[create-midtrans-transaction] Midtrans existing status:", midtransStatus);
+
+          if (midtransStatus === "settlement" || midtransStatus === "capture") {
+            // Sudah dibayar di Midtrans tapi DB belum update → reject
+            return json({
+              error: "Pesanan sudah dibayar (Midtrans confirmed). Tunggu beberapa saat hingga status terupdate.",
+              order_id,
+              midtrans_status: midtransStatus,
+            }, 400);
+          }
+
+          if (midtransStatus === "pending") {
+            // Cancel dulu transaksi pending, supaya bisa mint token baru
+            console.log("[create-midtrans-transaction] Canceling pending transaction...");
+            try {
+              const cancelResp = await fetch(`${MIDTRANS_BASE_URL}/v2/${order_id}/cancel`, {
+                method: "POST",
+                headers: { Authorization: `Basic ${auth}`, Accept: "application/json" },
+              });
+              console.log("[create-midtrans-transaction] Cancel result:", cancelResp.status);
+            } catch (cancelErr) {
+              console.warn("[create-midtrans-transaction] Cancel failed (continue anyway):", cancelErr?.message);
+            }
+          }
+        }
+      } catch (statusErr) {
+        console.warn("[create-midtrans-transaction] Status check failed (continue anyway):", statusErr?.message);
+      }
+    }
 
     // 2. Build item_details (Midtrans requires id, name, price, quantity per item)
     const items = (order.items || []) as any[];

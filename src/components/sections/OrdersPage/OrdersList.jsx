@@ -289,17 +289,69 @@ const OrderDetailPanel = ({ order: orderProp, onClose, onOrderUpdated }) => {
       onClose();
 
       // ⭐ STEP 3: Open Midtrans Snap popup
+      // Setelah popup close (success/pending/close), start polling payment status
+      // untuk instant notification (gak nunggu webhook delay)
+      const startPaymentPolling = (orderId) => {
+        let pollCount = 0;
+        const maxPolls = 60; // 60 polls × 3 detik = 3 menit max
+        console.log('[OrdersList] Start polling payment status for', orderId);
+
+        const poll = async () => {
+          if (pollCount >= maxPolls) {
+            console.log('[OrdersList] Polling stopped (timeout)');
+            return;
+          }
+          pollCount++;
+
+          try {
+            const { data, error } = await supabase.functions.invoke(
+              'check-payment-status',
+              { body: { order_id: orderId } }
+            );
+
+            if (error) {
+              console.warn('[OrdersList] Poll error:', error.message);
+              return;
+            }
+
+            if (data?.payment_status === 'paid') {
+              console.log('[OrdersList] ✓ Payment confirmed via polling');
+              onOrderUpdated?.(); // refresh orders list
+              // Stop polling
+              return;
+            }
+            if (data?.payment_status === 'failed') {
+              console.log('[OrdersList] Payment failed via polling');
+              onOrderUpdated?.();
+              return;
+            }
+            // Still pending → continue polling
+            setTimeout(poll, 3000); // 3 detik
+          } catch (e) {
+            console.warn('[OrdersList] Poll exception:', e.message);
+            setTimeout(poll, 5000); // retry 5 detik kalau error
+          }
+        };
+
+        // Start pertama kali 3 detik setelah popup close
+        setTimeout(poll, 3000);
+      };
+
       window.snap.pay(data.token, {
-        onSuccess: () => {
+        onSuccess: (result) => {
           // ⭐ Defensive: reset body scroll lock yang mungkin di-set oleh Snap popup
           document.body.style.overflow = '';
           setPaying(false);
           onOrderUpdated?.();
+          // Polling tambahan untuk konfirmasi DB terupdate
+          startPaymentPolling(order.id);
         },
         onPending: () => {
           document.body.style.overflow = '';
           setPaying(false);
           onOrderUpdated?.();
+          // Polling untuk detect kalau user bayar nanti (QRIS async)
+          startPaymentPolling(order.id);
         },
         onError: () => {
           document.body.style.overflow = '';
@@ -309,6 +361,9 @@ const OrderDetailPanel = ({ order: orderProp, onClose, onOrderUpdated }) => {
           document.body.style.overflow = '';
           setPaying(false);
           onOrderUpdated?.();
+          // Polling untuk detect kalau user close popup tapi sebenernya udah bayar
+          // (QRIS bisa confirmed beberapa detik setelah user scan)
+          startPaymentPolling(order.id);
         },
       });
     } catch (e) {

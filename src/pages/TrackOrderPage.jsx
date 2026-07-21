@@ -99,7 +99,8 @@ const TrackOrderPage = () => {
       const selectFields = `
         id, status, payment_status, total_amount, created_at,
         tracking_number, biteship_order_id, biteship_status,
-        courier_code, courier_service,
+        biteship_waybill_url, biteship_pickup_code,
+        courier_code, courier_service, courier_duration,
         customer:customers!inner(email, name, phone),
         items:order_items(product_name_snapshot, variant_name_snapshot, quantity, unit_price_snapshot, subtotal)
       `;
@@ -426,20 +427,13 @@ const TrackOrderPage = () => {
           {trackingData && !tracking && (
             <div className="space-y-4">
               <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-center">
-                <p className="text-sm text-amber-700">{trackingData.message || 'Tracking belum tersedia'}</p>
-              </div>
-              <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-2 text-xs">
-                <div className="flex justify-between"><span className="text-gray-500">Status Pesanan</span><span className="font-medium text-gray-700">{orderInfo?.status || order.status}</span></div>
-                <div className="flex justify-between"><span className="text-gray-500">Pembayaran</span><span className="font-medium text-gray-700">{orderInfo?.payment_status || order.payment_status}</span></div>
-                {orderInfo?.courier_code && (
-                  <div className="flex justify-between"><span className="text-gray-500">Kurir</span><span className="font-medium text-gray-700 uppercase">{orderInfo.courier_code} {orderInfo.courier_service || ''}</span></div>
-                )}
-                {orderInfo?.tracking_number && (
-                  <div className="flex justify-between items-center gap-2"><span className="text-gray-500">No. Resi</span><span className="font-mono font-medium text-eglux-secondary">{orderInfo.tracking_number}</span></div>
-                )}
+                <p className="text-sm text-amber-700">{trackingData.message || 'Tracking detail via API belum tersedia'}</p>
               </div>
             </div>
           )}
+
+          {/* ⭐ Shipping info card dari DB (gratis, pakai biteship_waybill_url + biteship_status) */}
+          <ShippingInfoCard order={order} />
 
           {tracking && (
             <TrackingDetail tracking={tracking} order={order} orderInfo={orderInfo} />
@@ -684,6 +678,129 @@ const TrackingDetail = ({ tracking, order, orderInfo }) => {
           </div>
         )}
       </div>
+
+      <Footer />
+    </>
+  );
+};
+
+// ============================================================================
+// ShippingInfoCard — Info pengiriman dari DB (gratis, no Tracking API call)
+// ============================================================================
+// Pakai:
+//   - biteship_status (raw Biteship status, snake_case)
+//   - biteship_waybill_url (URL tracking Biteship, dari webhook courier_link)
+//   - tracking_number (nomor resi kurir asli, dari courier_waybill_id)
+//   - courier_code, courier_service, courier_duration
+//
+// Card ini SELALU tampil (selama order punya courier info), bahkan kalau
+// Tracking API gak available/berbayar. User bisa klik link untuk lacak
+// paket langsung di Biteship tracking page.
+// ============================================================================
+const SHIPPING_STATUS_LABEL = {
+  // Pre-pickup
+  confirmed: { label: 'Pesanan Dikonfirmasi', color: 'text-blue-600', dot: 'bg-blue-500' },
+  allocated: { label: 'Kurir Dialokasikan', color: 'text-blue-600', dot: 'bg-blue-500' },
+  picking_up: { label: 'Kurir Menuju Lokasi', color: 'text-amber-600', dot: 'bg-amber-500' },
+  pickingUp: { label: 'Kurir Menuju Lokasi', color: 'text-amber-600', dot: 'bg-amber-500' },
+  // In transit
+  picked: { label: 'Paket Diambil', color: 'text-amber-600', dot: 'bg-amber-500' },
+  in_transit: { label: 'Dalam Perjalanan', color: 'text-purple-600', dot: 'bg-purple-500' },
+  inTransit: { label: 'Dalam Perjalanan', color: 'text-purple-600', dot: 'bg-purple-500' },
+  dropping_off: { label: 'Menuju Penerima', color: 'text-purple-600', dot: 'bg-purple-500' },
+  droppingOff: { label: 'Menuju Penerima', color: 'text-purple-600', dot: 'bg-purple-500' },
+  on_hold: { label: 'Ditahan', color: 'text-gray-600', dot: 'bg-gray-500' },
+  onHold: { label: 'Ditahan', color: 'text-gray-600', dot: 'bg-gray-500' },
+  // Delivered
+  delivered: { label: 'Tiba di Tujuan', color: 'text-green-600', dot: 'bg-green-500' },
+  // Cancelled-like
+  cancelled: { label: 'Dibatalkan', color: 'text-red-500', dot: 'bg-red-400' },
+  returned: { label: 'Dikembalikan', color: 'text-orange-600', dot: 'bg-orange-500' },
+  rejected: { label: 'Ditolak', color: 'text-red-500', dot: 'bg-red-400' },
+  courier_not_found: { label: 'Kurir Tidak Tersedia', color: 'text-red-500', dot: 'bg-red-400' },
+  courierNotFound: { label: 'Kurir Tidak Tersedia', color: 'text-red-500', dot: 'bg-red-400' },
+  disposed: { label: 'Disposal', color: 'text-gray-600', dot: 'bg-gray-500' },
+  return_in_transit: { label: 'Dikembalikan ke Pengirim', color: 'text-orange-600', dot: 'bg-orange-500' },
+  returnInTransit: { label: 'Dikembalikan ke Pengirim', color: 'text-orange-600', dot: 'bg-orange-500' },
+};
+
+const ShippingInfoCard = ({ order }) => {
+  const statusInfo = SHIPPING_STATUS_LABEL[order?.biteship_status] || {
+    label: order?.biteship_status || 'Menunggu',
+    color: 'text-gray-600',
+    dot: 'bg-gray-400',
+  };
+
+  return (
+    <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-3">
+      <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Info Pengiriman</p>
+
+      {/* Current status banner */}
+      <div className="flex items-center gap-3 bg-eglux-accent rounded-lg p-3">
+        <div className={`w-3 h-3 rounded-full ${statusInfo.dot} flex-shrink-0`} />
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-bold text-eglux-primary">{statusInfo.label}</p>
+          <p className="text-[0.7rem] text-gray-500">
+            Status Biteship: <code className="font-mono">{order?.biteship_status || '—'}</code>
+          </p>
+        </div>
+      </div>
+
+      {/* Info grid */}
+      <div className="space-y-2 text-xs">
+        {order?.courier_code && (
+          <div className="flex justify-between">
+            <span className="text-gray-500">Kurir</span>
+            <span className="font-medium text-gray-900 uppercase">
+              {order.courier_code}{order.courier_service ? ` · ${order.courier_service}` : ''}
+            </span>
+          </div>
+        )}
+        {order?.courier_duration && (
+          <div className="flex justify-between">
+            <span className="text-gray-500">Estimasi</span>
+            <span className="font-medium text-gray-900">{order.courier_duration}</span>
+          </div>
+        )}
+        {order?.tracking_number && (
+          <div className="flex justify-between items-center gap-2">
+            <span className="text-gray-500">No. Resi</span>
+            <span className="font-mono font-medium text-eglux-secondary text-xs break-all">
+              {order.tracking_number}
+            </span>
+          </div>
+        )}
+        {order?.biteship_pickup_code && (
+          <div className="flex justify-between items-center gap-2">
+            <span className="text-gray-500">Kode Pickup</span>
+            <span className="font-mono font-medium text-gray-900">{order.biteship_pickup_code}</span>
+          </div>
+        )}
+      </div>
+
+      {/* Tracking link button (pakai biteship_waybill_url dari DB - gratis!) */}
+      {order?.biteship_waybill_url && (
+        <a
+          href={order.biteship_waybill_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="block w-full px-4 py-2.5 bg-eglux-primary text-white rounded-lg text-xs font-semibold hover:opacity-90 transition-opacity text-center no-underline mt-2"
+        >
+          Lacak Paket di Biteship →
+        </a>
+      )}
+
+      {/* Hint kalau belum ada waybill_url */}
+      {!order?.biteship_waybill_url && order?.biteship_status && (
+        <p className="text-[0.7rem] text-gray-400 text-center pt-1">
+          Link tracking akan tersedia setelah kurir confirmed pickup
+        </p>
+      )}
+      {!order?.biteship_status && (
+        <p className="text-[0.7rem] text-gray-400 text-center pt-1">
+          Status pengiriman akan muncul setelah Biteship confirmed order
+        </p>
+      )}
     </div>
   );
 };
