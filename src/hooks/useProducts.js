@@ -1,4 +1,20 @@
-BELS = {
+// src/hooks/useProducts.js
+// ============================================================================
+// [v3] Updated: variant-as-source-of-truth + discount support
+// ============================================================================
+// Changes:
+//   - Hapus base_price + weight_in_gram dari products (lihat SQL 028)
+//   - Fetch discount fields per variant (discount_type, discount_value,
+//     discount_start_at, discount_end_at)
+//   - Compute discount price per variant (currentPrice, originalPrice,
+//     discountPercent) — discount cuma aktif kalau dalam schedule
+//   - Compute minDiscountPrice per product (untuk ProductCardFull display)
+// ============================================================================
+
+import { useState, useEffect } from 'react';
+import { supabase } from '../lib/supabaseClient';
+
+const CATEGORY_LABELS = {
   kitchen:   'Kitchen',
   storage:   'Storage',
   homedecor: 'Home Decor',
