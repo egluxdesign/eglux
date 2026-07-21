@@ -206,12 +206,21 @@ const AddProductPanel = ({ isOpen, onClose, onCreated }) => {
   // ── Upload photos ke Storage setelah product created ──
   // ⭐ v3: First photo per variant_id (atau null untuk cover) = is_primary
   // Setelah reorder, first photo adalah yang ada di index 0 (per variant_id group)
+  // ⭐ v3 fix: Pakai user JWT (bukan ANON_KEY) — edge function butuh auth admin
   const uploadPendingPhotos = async (productId, variantIdMap) => {
     // variantIdMap: { tempId: realUuid }
     if (pendingPhotos.length === 0) return;
 
     setUploadingPhoto(true);
     let uploaded = 0;
+
+    // ⭐ Fetch user session untuk dapat JWT (admin auth)
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      showToast('Sesi login habis. Login ulang dulu untuk upload foto.', 'error');
+      setUploadingPhoto(false);
+      return;
+    }
 
     // Group photos by variant_id, first photo of each group = primary
     const seenVariants = new Set(); // track variant_id yang sudah ada primary-nya
@@ -235,7 +244,8 @@ const AddProductPanel = ({ isOpen, onClose, onCreated }) => {
         const resp = await fetch(`${SUPABASE_URL}/functions/v1/upload-product-image`, {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${ANON_KEY}`,
+            // ⭐ v3 fix: Pakai session JWT (bukan ANON_KEY)
+            'Authorization': `Bearer ${session.access_token}`,
           },
           body: fd,
         });
