@@ -183,14 +183,38 @@ const AddProductPanel = ({ isOpen, onClose, onCreated }) => {
     });
   };
 
+  // ⭐ Reorder photos via drag-and-drop (native HTML5 DnD)
+  // Drag photo with `fromId` → drop on photo with `toId` → swap positions
+  // Hanya berlaku untuk photos dengan variant_id yang sama (cover ↔ cover, atau variant ↔ variant yang sama)
+  const reorderPhotos = (fromId, toId) => {
+    setPendingPhotos((prev) => {
+      const fromIdx = prev.findIndex((p) => p.id === fromId);
+      const toIdx = prev.findIndex((p) => p.id === toId);
+      if (fromIdx === -1 || toIdx === -1 || fromIdx === toIdx) return prev;
+
+      // Cek same variant_id (jangan cross-reorder cover ↔ variant)
+      if (prev[fromIdx].variant_id !== prev[toIdx].variant_id) return prev;
+
+      // Insert fromIdx ke posisi toIdx, remove dari posisi lama
+      const newArr = [...prev];
+      const [moved] = newArr.splice(fromIdx, 1);
+      newArr.splice(toIdx, 0, moved);
+      return newArr;
+    });
+  };
+
   // ── Upload photos ke Storage setelah product created ──
+  // ⭐ v3: First photo per variant_id (atau null untuk cover) = is_primary
+  // Setelah reorder, first photo adalah yang ada di index 0 (per variant_id group)
   const uploadPendingPhotos = async (productId, variantIdMap) => {
     // variantIdMap: { tempId: realUuid }
     if (pendingPhotos.length === 0) return;
 
     setUploadingPhoto(true);
     let uploaded = 0;
-    let firstPhoto = true; // first cover photo = primary
+
+    // Group photos by variant_id, first photo of each group = primary
+    const seenVariants = new Set(); // track variant_id yang sudah ada primary-nya
 
     for (const photo of pendingPhotos) {
       try {
@@ -201,10 +225,11 @@ const AddProductPanel = ({ isOpen, onClose, onCreated }) => {
         if (photo.variant_id && variantIdMap[photo.variant_id]) {
           fd.append('variant_id', variantIdMap[photo.variant_id]);
         }
-        // First cover photo auto-primary
-        if (!photo.variant_id && firstPhoto) {
+        // First photo per variant_id (atau cover) = primary
+        const groupKey = photo.variant_id || 'cover';
+        if (!seenVariants.has(groupKey)) {
           fd.append('is_primary', 'true');
-          firstPhoto = false;
+          seenVariants.add(groupKey);
         }
 
         const resp = await fetch(`${SUPABASE_URL}/functions/v1/upload-product-image`, {
@@ -376,8 +401,27 @@ const AddProductPanel = ({ isOpen, onClose, onCreated }) => {
             </h3>
             <div className="flex flex-wrap gap-3">
               {getPhotos(null).map((photo, idx) => (
-                <div key={photo.id} className="relative group w-24 h-24 rounded-lg overflow-hidden border-2 border-gray-200">
-                  <img src={photo.preview_url} alt="" className="w-full h-full object-cover" />
+                <div
+                  key={photo.id}
+                  className="relative group w-24 h-24 rounded-lg overflow-hidden border-2 border-gray-200 cursor-move"
+                  draggable
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData('text/plain', photo.id);
+                    e.dataTransfer.effectAllowed = 'move';
+                  }}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    const draggedId = e.dataTransfer.getData('text/plain');
+                    if (draggedId && draggedId !== photo.id) {
+                      reorderPhotos(draggedId, photo.id);
+                    }
+                  }}
+                >
+                  <img src={photo.preview_url} alt="" className="w-full h-full object-cover pointer-events-none" />
                   {/* Star icon for first photo (primary/cover) */}
                   {idx === 0 && (
                     <div className="absolute top-1 left-1 w-5 h-5 bg-amber-500 rounded-full flex items-center justify-center">
@@ -386,6 +430,13 @@ const AddProductPanel = ({ isOpen, onClose, onCreated }) => {
                       </svg>
                     </div>
                   )}
+                  {/* Drag handle hint */}
+                  <div className="absolute bottom-1 right-1 w-5 h-5 bg-black/40 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                    <svg className="w-3 h-3 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <circle cx="9" cy="5" r="1" /><circle cx="9" cy="12" r="1" /><circle cx="9" cy="19" r="1" />
+                      <circle cx="15" cy="5" r="1" /><circle cx="15" cy="12" r="1" /><circle cx="15" cy="19" r="1" />
+                    </svg>
+                  </div>
                   <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
                     <button
                       onClick={() => removePhoto(photo.id)}
@@ -420,7 +471,7 @@ const AddProductPanel = ({ isOpen, onClose, onCreated }) => {
               </label>
             </div>
             <p className="text-[0.65rem] text-gray-400 mt-2">
-              Foto pertama otomatis jadi primary. Upload setelah produk dibuat.
+              📌 Drag foto untuk reorder. Foto pertama (⭐) jadi cover/primary.
             </p>
           </section>
 

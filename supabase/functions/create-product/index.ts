@@ -3,17 +3,20 @@
 // create-product — Admin: create new product + multiple variants
 // ============================================================================
 //
+// ⭐ v3: Hapus base_price + weight_in_gram dari product (kolom udah di-drop).
+//    Harga & berat ada di variant. Weight variant WAJIB diisi (gak ada fallback).
+//
 // Cara panggil:
 //   POST /functions/v1/create-product
 //   Headers: Authorization: Bearer <admin-jwt>
 //   Body: {
 //     product: {
-//       name, slug?, category, base_price, weight_in_gram,
+//       name, slug?, category,
 //       badge?, description?, is_active
 //     },
 //     variants: [  // array, minimal 1
 //       {
-//         name, price, stock, weight_in_gram?, sku?,
+//         name, price, stock, weight_in_gram, sku?,
 //         is_active, length_cm?, width_cm?, height_cm?
 //       }
 //     ]
@@ -73,16 +76,7 @@ serve(async (req: Request) => {
     if (!product || !product.name || !product.category) {
       return json({ error: "product.{name, category} are required" }, 400);
     }
-
-    const basePrice = Number(product.base_price);
-    if (isNaN(basePrice) || basePrice < 0) {
-      return json({ error: "product.base_price must be >= 0" }, 400);
-    }
-
-    const weightGram = Number(product.weight_in_gram);
-    if (isNaN(weightGram) || weightGram < 0) {
-      return json({ error: "product.weight_in_gram must be >= 0" }, 400);
-    }
+    // ⭐ v3: Hapus validasi base_price + weight_in_gram (kolom udah di-drop)
 
     // ── Validate variants (array, minimal 1) ──
     if (!Array.isArray(variants) || variants.length === 0) {
@@ -103,14 +97,17 @@ serve(async (req: Request) => {
       if (isNaN(vPrice) || vPrice < 0) {
         return json({ error: `variants[${i}].price must be >= 0` }, 400);
       }
-      if (vPrice > basePrice) {
-        return json({
-          error: `variants[${i}].price (${vPrice}) tidak boleh > base_price (${basePrice})`,
-        }, 400);
-      }
+      // ⭐ v3: Hapus cek price > base_price (gak ada base_price lagi)
       const vStock = parseInt(String(v.stock), 10);
       if (isNaN(vStock) || vStock < 0) {
         return json({ error: `variants[${i}].stock must be >= 0` }, 400);
+      }
+      // ⭐ v3: Weight variant WAJIB diisi (gak ada fallback dari product lagi)
+      const vWeight = Number(v.weight_in_gram);
+      if (v.is_active && (isNaN(vWeight) || vWeight <= 0)) {
+        return json({
+          error: `variants[${i}].weight_in_gram must be > 0 when is_active=true`,
+        }, 400);
       }
     }
 
@@ -138,6 +135,7 @@ serve(async (req: Request) => {
     }
 
     // ── INSERT product ──
+    // ⭐ v3: Hapus base_price + weight_in_gram dari INSERT (kolom udah di-drop)
     const productId = crypto.randomUUID();
     const { error: prodInsertErr } = await supabase
       .from("products")
@@ -146,8 +144,6 @@ serve(async (req: Request) => {
         slug: slug,
         name: product.name.trim(),
         category: product.category.trim(),
-        base_price: basePrice,
-        weight_in_gram: weightGram,
         badge: product.badge?.trim() || null,
         description: product.description?.trim() || null,
         is_active: product.is_active !== undefined ? Boolean(product.is_active) : false,
@@ -167,10 +163,8 @@ serve(async (req: Request) => {
       const vPrice = Number(v.price);
       const vStock = parseInt(String(v.stock), 10);
 
-      // Variant weight: fallback ke product weight kalau gak diisi
-      const variantWeight = v.weight_in_gram
-        ? Number(v.weight_in_gram)
-        : weightGram;
+      // ⭐ v3: Variant weight WAJIB diisi (gak ada fallback dari product lagi)
+      const variantWeight = v.weight_in_gram ? Number(v.weight_in_gram) : null;
 
       // Variant is_active: kalau true, weight wajib > 0
       const variantIsActive = v.is_active !== undefined
