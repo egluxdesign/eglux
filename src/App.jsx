@@ -34,6 +34,9 @@ import OrdersPage from './pages/OrdersPage';
 import TrackOrderPage from './pages/TrackOrderPage';
 import OrderHistoryPage from './pages/OrderHistoryPage';
 
+import PrivacyPage from './pages/PrivacyPage';
+import TermsPage from './pages/TermsPage';
+
 // Protected route wrapper
 import ProtectedRoute from './components/ui/ProtectedRoute';
 
@@ -59,6 +62,9 @@ const App = () => {
               <Route path="/contact" element={<Contact />} />
               <Route path="/about" element={<AboutPage />} />
               <Route path="/affiliate" element={<AffiliatePage />} />
+
+              <Route path="/privacy" element={<PrivacyPage />} />
+              <Route path="/terms" element={<TermsPage />} />
 
               {/* ── Standalone routes (tanpa storefront layout) ── */}
               <Route path="/register" element={<RegisterPage />} />
