@@ -22,7 +22,6 @@ import { useDisableNumberInputScroll } from './hooks/useDisableNumberInputScroll
 
 // Pages
 import HomePage from './pages/HomePage';
-import ProductPage from './pages/ProductPage';
 import BlogPage from './pages/BlogPage';
 import Contact from './pages/ContactPage';
 import AboutPage from './pages/AboutPage';
@@ -58,7 +57,6 @@ const App = () => {
               {/* ── Storefront routes ──
                   Tiap page render layout sendiri (Header + Hero + DuplicateNav + main + Footer). */}
               <Route path="/" element={<HomePage />} />
-              <Route path="/products" element={<ProductPage />} />
               <Route path="/blog" element={<BlogPage />} />
               <Route path="/contact" element={<Contact />} />
               <Route path="/about" element={<AboutPage />} />
@@ -79,7 +77,7 @@ const App = () => {
               <Route path="/track" element={<TrackOrderPage />} />
               <Route path="/order-history" element={<OrderHistoryPage />} />
               <Route path="/unsubscribe" element={<UnsubscribePage />} />
-              
+
               {/* ── Protected admin route ──
                   Hanya bisa diakses oleh role: team_dev, master, admin. */}
               <Route

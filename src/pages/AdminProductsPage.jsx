@@ -23,6 +23,7 @@ import { supabase } from '../lib/supabaseClient';
 import AdminLayout from '../components/admin/layout/AdminLayout';
 import EditProductPanel from '../components/admin/EditProductPanel';
 import AddProductPanel from '../components/admin/AddProductPanel';
+import HomepageContentPanel from '../components/admin/HomepageContentPanel';
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -284,6 +285,9 @@ const AdminProductsPage = () => {
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+
+  // ⭐ Tab view: 'products' | 'homepage'
+  const [activeTab, setActiveTab] = useState('products');
 
   // Search + filter
   const [searchQuery, setSearchQuery] = useState('');
@@ -795,6 +799,38 @@ const AdminProductsPage = () => {
 
   return (
     <AdminLayout title="Products Admin" subtitle={subtitle} actions={actions}>
+        {/* ⭐ Tab switcher */}
+        <div className="flex gap-2 mb-6 border-b border-gray-200">
+          <button
+            onClick={() => setActiveTab('products')}
+            className={`px-4 py-2 text-sm font-semibold border-b-2 cursor-pointer transition-colors ${
+              activeTab === 'products' ? 'border-eglux-primary text-eglux-primary' : 'border-transparent text-gray-400 hover:text-gray-600'
+            }`}
+          >
+            📦 Produk
+          </button>
+          <button
+            onClick={() => setActiveTab('homepage')}
+            className={`px-4 py-2 text-sm font-semibold border-b-2 cursor-pointer transition-colors ${
+              activeTab === 'homepage' ? 'border-eglux-primary text-eglux-primary' : 'border-transparent text-gray-400 hover:text-gray-600'
+            }`}
+          >
+            🏠 Homepage Content
+          </button>
+        </div>
+
+        {/* ═══════════════════════════════════════════════════════════
+            HOMEPAGE CONTENT TAB
+            ═══════════════════════════════════════════════════════════ */}
+        {activeTab === 'homepage' && (
+          <HomepageContentPanel showToast={showToast} />
+        )}
+
+        {/* ═══════════════════════════════════════════════════════════
+            PRODUCTS TAB (existing content)
+            ═══════════════════════════════════════════════════════════ */}
+        {activeTab === 'products' && (
+          <>
         {/* === UPLOAD SECTION === */}
         <section className="bg-white border border-gray-200 rounded-lg p-6 mb-6">
           <h2 className="text-lg font-semibold text-gray-900 mb-4">📦 Bulk Upload (CSV / XLSX)</h2>
@@ -1208,6 +1244,8 @@ const AdminProductsPage = () => {
         <p className="text-xs text-gray-400 mt-4 text-center">
           EGLUX Admin — hidden page. All operations via edge functions (service_role). Auto-save per cell.
         </p>
+          </>
+        )}
 
       {/* Edit Product Panel (Shopee-style slide-in) */}
       {editingProduct && (
