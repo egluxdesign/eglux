@@ -82,10 +82,12 @@ serve(async (req: Request) => {
       });
     }
 
-    // INSERT new subscriber
-    const { error: insertErr } = await supabase
+    // INSERT new subscriber (dapat subscriber_id untuk email link)
+    const { data: insertData, error: insertErr } = await supabase
       .from("newsletter_subscribers")
-      .insert({ email, status: "active", source });
+      .insert({ email, status: "active", source })
+      .select("id")
+      .single();
 
     if (insertErr) {
       if (insertErr.code === "23505") {
@@ -99,11 +101,29 @@ serve(async (req: Request) => {
       return json({ error: "Gagal menyimpan subscriber", details: insertErr.message }, 500);
     }
 
-    console.log("[subscribe-newsletter] ✓ New subscriber:", email, "from", source);
+    const subscriberId = insertData?.id;
+    console.log("[subscribe-newsletter] ✓ New subscriber:", email, "from", source, "ID:", subscriberId);
+
+    // ⭐ Kirim welcome email via Resend (non-blocking — jangan fail subscribe kalau email gagal)
+    if (subscriberId) {
+      try {
+        const { error: emailErr } = await supabase.functions.invoke(
+          "send-newsletter-welcome",
+          { body: { email, subscriber_id: subscriberId } }
+        );
+        if (emailErr) {
+          console.warn("[subscribe-newsletter] Welcome email failed (subscriber still saved):", emailErr.message);
+        } else {
+          console.log("[subscribe-newsletter] ✓ Welcome email sent to:", email);
+        }
+      } catch (emailErr) {
+        console.warn("[subscribe-newsletter] Welcome email invoke error (subscriber still saved):", emailErr?.message);
+      }
+    }
 
     return json({
       success: true,
-      message: "Berhasil subscribe! Terima kasih telah bergabung.",
+      message: "Berhasil subscribe! Cek email kamu untuk konfirmasi. Terima kasih telah bergabung.",
     });
   } catch (e) {
     console.error("[subscribe-newsletter]", e);

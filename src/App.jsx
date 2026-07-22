@@ -33,6 +33,7 @@ import AdminProductsPage from './pages/AdminProductsPage';
 import OrdersPage from './pages/OrdersPage';
 import TrackOrderPage from './pages/TrackOrderPage';
 import OrderHistoryPage from './pages/OrderHistoryPage';
+import UnsubscribePage from './pages/UnsubscribePage';
 
 import PrivacyPage from './pages/PrivacyPage';
 import TermsPage from './pages/TermsPage';
@@ -77,6 +78,8 @@ const App = () => {
               <Route path="/orders" element={<OrdersPage />} />
               <Route path="/track" element={<TrackOrderPage />} />
               <Route path="/order-history" element={<OrderHistoryPage />} />
+              <Route path="/unsubscribe" element={<UnsubscribePage />} />
+              
               {/* ── Protected admin route ──
                   Hanya bisa diakses oleh role: team_dev, master, admin. */}
               <Route
