@@ -283,3 +283,63 @@ h1, h2, h3, h4, h5, h6,
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * v4: Parallax Hero + Full-page Sections (Ruadh-inspired)
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Parallax Hero: stays fixed, next section scrolls over ── */
+.hero-parallax {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  width: 100%;
+  z-index: 0;
+  overflow: hidden;
+  background: var(--eglux-accent);
+}
+
+/* ── Section overlay: scrolls over the parallax hero ── */
+.section-overlay {
+  position: relative;
+  z-index: 1;
+  background: var(--eglux-white);
+}
+
+/* ── Footer: ensure above parallax hero ── */
+footer {
+  position: relative;
+  z-index: 2;
+}
+
+/* ── Smooth scroll behavior ── */
+html {
+  scroll-behavior: smooth;
+}
+
+/* ── Hide scrollbar on body during hero parallax (prevent flash) ── */
+body {
+  overflow-x: hidden;
+}
+
+/* ── Hero overlay adjustments for parallax ── */
+.hero-parallax .hero-overlay {
+  padding: 4rem 2rem;
+}
+
+.hero-parallax .hero-overlay__title {
+  font-size: clamp(2rem, 6vw, 4rem);
+  line-height: 1.1;
+}
+
+/* ── Product card aspect ratio: 4/5 (portrait, Ruadh style) ── */
+.product-card .product-card__image {
+  aspect-ratio: 4 / 5;
+}
+
+/* ── Section min-height for full-page feel ── */
+@media (min-height: 600px) {
+  .section-overlay {
+    min-height: 100vh;
+  }
+}

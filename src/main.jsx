@@ -19,7 +19,7 @@ import { validateEnv } from './lib/env';
 import EnvErrorPage from './components/ui/EnvErrorPage';
 import './assets/styles/globals.css';
 import './assets/styles/header.css';  // atau path yang sesuai
-import './styles/eglux-design-system.css';
+import './assets/styles/eglux-design-system.css';
 
 // ⭐ Startup validation: cek semua required env vars
 const { valid, missing } = validateEnv();
