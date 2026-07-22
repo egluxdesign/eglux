@@ -80,14 +80,17 @@ nav.eglux-primary-nav {
 
 /* ============================================================================
  * Nav links — shared styling (primary nav & duplicate nav)
+ * v3: Ruadh-inspired elegant typography
  * ========================================================================== */
 .nav-link {
-  font-size: 0.82rem;
-  font-weight: 500;
-  color: #1a1d2b; /* eglux-primary */
-  /* Padding di-handle oleh Tailwind (px-2 md:px-4) — jangan set di sini */
+  font-family: 'Inter', sans-serif;
+  font-size: 0.75rem;
+  font-weight: 400;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #1a1a1a;
   white-space: nowrap;
-  transition: color 0.2s ease;
+  transition: color 0.3s ease, opacity 0.3s ease;
   text-decoration: none;
   position: relative;
   display: flex;
@@ -96,12 +99,13 @@ nav.eglux-primary-nav {
 }
 
 .nav-link:hover {
-  color: #c9a96e; /* eglux-secondary */
+  color: #9a7d4a;
+  opacity: 0.8;
 }
 
 .nav-link.active {
-  color: #c9a96e;
-  font-weight: 600;
+  color: #9a7d4a;
+  font-weight: 500;
 }
 
 .nav-link.active::after {
@@ -110,11 +114,10 @@ nav.eglux-primary-nav {
   bottom: -1px;
   left: 50%;
   transform: translateX(-50%);
-  width: 60%;
-  max-width: 32px;
-  height: 2px;
-  background: #c9a96e;
-  border-radius: 1px;
+  width: 50%;
+  max-width: 28px;
+  height: 1px;
+  background: #9a7d4a;
 }
 
 /* ============================================================================

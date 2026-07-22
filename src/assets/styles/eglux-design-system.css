@@ -1,0 +1,285 @@
+/* src/styles/eglux-design-system.css */
+/* ============================================================================
+ * EGLUX Design System v3 — Ruadh-inspired luxury editorial aesthetic
+ * ============================================================================
+ * Typography:
+ *   - Headings: Playfair Display (serif, elegant)
+ *   - Body: Inter (sans-serif, clean)
+ *
+ * Color Palette (more muted/sophisticated):
+ *   --eglux-primary:    #1a1a1a (near-black, was same)
+ *   --eglux-secondary:  #9a7d4a (muted gold, less saturated than #c9a96e)
+ *   --eglux-accent:     #f7f3ed (warmer cream, was #faf6ef)
+ *   --eglux-text:       #3a3944 (soft dark, was pure black)
+ *   --eglux-text-muted: #8a8a8a (was gray-400/500)
+ *
+ * Spacing: More generous whitespace between sections
+ * Cards: Borderless, no shadow, clean
+ * ============================================================================ */
+
+:root {
+  /* ── Color Palette ── */
+  --eglux-primary: #1a1a1a;
+  --eglux-secondary: #9a7d4a;
+  --eglux-accent: #f7f3ed;
+  --eglux-text: #3a3944;
+  --eglux-text-muted: #8a8a8a;
+  --eglux-border: #e8e4df;
+  --eglux-white: #ffffff;
+
+  /* ── Typography ── */
+  --font-heading: 'Playfair Display', Georgia, 'Times New Roman', serif;
+  --font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+
+  /* ── Spacing ── */
+  --space-section: 5rem;    /* 80px between sections (was 3rem/48px) */
+  --space-section-lg: 7rem; /* 112px for major section breaks */
+}
+
+/* ── Base typography ── */
+body {
+  font-family: var(--font-body);
+  color: var(--eglux-text);
+  background-color: var(--eglux-white);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ── Headings: Playfair Display ── */
+h1, h2, h3, h4, h5, h6,
+.font-heading {
+  font-family: var(--font-heading);
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  color: var(--eglux-primary);
+}
+
+/* ── Section titles (editorial style) ── */
+.section-title {
+  font-family: var(--font-heading);
+  font-size: 2rem;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  color: var(--eglux-primary);
+}
+
+.section-subtitle {
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  font-weight: 300;
+  color: var(--eglux-text-muted);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  margin-top: 0.5rem;
+}
+
+/* ── Product Card: Borderless Clean (Ruadh/IKEA style) ── */
+.product-card {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  overflow: hidden;
+  cursor: pointer;
+  transition: opacity 0.3s ease;
+}
+
+.product-card:hover {
+  opacity: 0.85;
+  transform: none; /* no lift effect */
+  box-shadow: none;
+}
+
+.product-card .product-card__image {
+  overflow: hidden;
+  border-radius: 0;
+}
+
+.product-card .product-card__image img {
+  transition: transform 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.product-card:hover .product-card__image img {
+  transform: scale(1.04); /* subtle zoom, no lift */
+}
+
+.product-card .product-card__name {
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  font-weight: 400;
+  color: var(--eglux-text);
+  line-height: 1.5;
+  margin-top: 0.75rem;
+  letter-spacing: 0.01em;
+}
+
+.product-card .product-card__price {
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--eglux-primary);
+  margin-top: 0.25rem;
+}
+
+.product-card .product-card__price-original {
+  font-size: 0.75rem;
+  color: var(--eglux-text-muted);
+  text-decoration: line-through;
+  font-weight: 400;
+  margin-right: 0.5rem;
+}
+
+/* ── Badge: minimal, no rounded ── */
+.product-badge {
+  font-family: var(--font-body);
+  font-size: 0.65rem;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 4px 10px;
+  background: var(--eglux-primary);
+  color: var(--eglux-white);
+  border-radius: 0; /* sharp corners = editorial */
+}
+
+.product-badge--discount {
+  background: #c44;
+  border-radius: 0;
+}
+
+/* ── Hero overlay: minimal text ── */
+.hero-overlay {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 3rem 2rem;
+  background: linear-gradient(to top, rgba(0,0,0,0.5) 0%, rgba(0,0,0,0) 60%);
+}
+
+.hero-overlay__title {
+  font-family: var(--font-heading);
+  font-size: 2.5rem;
+  font-weight: 500;
+  color: #fff;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  max-width: 600px;
+}
+
+.hero-overlay__cta {
+  display: inline-block;
+  margin-top: 1.5rem;
+  padding: 12px 32px;
+  background: transparent;
+  color: #fff;
+  border: 1px solid rgba(255,255,255,0.6);
+  font-family: var(--font-body);
+  font-size: 0.8rem;
+  font-weight: 400;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.hero-overlay__cta:hover {
+  background: #fff;
+  color: var(--eglux-primary);
+  border-color: #fff;
+}
+
+/* ── Filter buttons: minimal underline style ── */
+.filter-btn {
+  font-family: var(--font-body);
+  font-size: 0.8rem;
+  font-weight: 400;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 8px 16px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid transparent;
+  color: var(--eglux-text-muted);
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.filter-btn:hover {
+  color: var(--eglux-primary);
+}
+
+.filter-btn--active {
+  color: var(--eglux-primary);
+  border-bottom: 1px solid var(--eglux-primary);
+}
+
+/* ── Section spacing ── */
+.section-spacing {
+  padding-top: var(--space-section);
+  padding-bottom: var(--space-section);
+}
+
+.section-spacing-lg {
+  padding-top: var(--space-section-lg);
+  padding-bottom: var(--space-section-lg);
+}
+
+/* ── "Lihat Semua" link: minimal ── */
+.see-all-link {
+  font-family: var(--font-body);
+  font-size: 0.75rem;
+  font-weight: 400;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--eglux-primary);
+  text-decoration: none;
+  border-bottom: 1px solid var(--eglux-primary);
+  padding-bottom: 2px;
+  transition: opacity 0.3s ease;
+  cursor: pointer;
+  background: transparent;
+  border-left: none;
+  border-top: none;
+  border-right: none;
+}
+
+.see-all-link:hover {
+  opacity: 0.6;
+}
+
+/* ── Pagination: minimal ── */
+.pagination-btn {
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--eglux-border);
+  background: transparent;
+  color: var(--eglux-text);
+  font-family: var(--font-body);
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  border-radius: 0;
+}
+
+.pagination-btn:hover:not(:disabled) {
+  border-color: var(--eglux-primary);
+  color: var(--eglux-primary);
+}
+
+.pagination-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+/* ── No scrollbar utility ── */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* ── Line clamp utility ── */
+.line-clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}

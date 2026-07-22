@@ -1,24 +1,16 @@
 // src/pages/HomePage.jsx
 // ============================================================================
-// HomePage v3 — Beranda + Product page merged (Everyday/Shopee style)
+// HomePage v3.1 — Ruadh-inspired luxury editorial aesthetic
 // ============================================================================
-//
-// Structure (4 sections):
-//   1. Hero Swiper — banner dari DB (admin upload). Klik → filter produk.
-//   2. Best Seller — 4 produk preview (badge='Best Seller'). Klik → filter + open modal.
-//   3. Category Carousel — horizontal scroll. Klik → filter by kategori.
-//   4. All Products — full catalog + filter bar + pagination.
-//
-// Dynamic content from DB:
-//   - homepage_banners (hero swiper images)
-//   - homepage_categories (category carousel images)
-//   - products (best seller + all products)
-//
-// Deep links:
-//   /?filter=kitchen     → scroll to products + filter kitchen
-//   /?filter=bestseller  → scroll to products + filter best seller
-//   /?filter=produkbaru  → scroll to products + filter produk baru
-//   /?open=<product_id>  → scroll to products + open ProductModal
+// Design changes from v3:
+//   - Playfair Display serif for section titles + hero title
+//   - Inter sans-serif for body + product names + prices
+//   - Product cards: borderless, no shadow, no border-radius
+//   - Section spacing: more generous (80px+)
+//   - Hero overlay: minimal text, outline CTA button
+//   - Filter buttons: underline style (not pill)
+//   - "Lihat Semua": text link with underline (not button)
+//   - Pagination: minimal square buttons
 // ============================================================================
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
@@ -28,20 +20,20 @@ import Footer from '../components/layout/Footer';
 import ProductModal from '../components/ui/ProductModal';
 import { useCartActions } from './CartPage';
 import { supabase } from '../lib/supabaseClient';
-import { rupiah } from '../context/CartContext';
+import '../styles/eglux-design-system.css';
 
-// ── Reuse useProducts hook ──
 import useProducts from '../hooks/useProducts';
 
-// ── Constants ──
 const ITEMS_PER_PAGE = 12;
 
-// ── Filter function (same as ProductsSection) ──
 const KEYWORD_FILTERS = ['produkbaru', 'bestseller'];
 function filterProducts(products, filterValue) {
   if (filterValue === 'all') return products;
   if (filterValue === 'produkbaru') return products.filter((p) => p.badge === 'Baru');
   if (filterValue === 'bestseller') return products.filter((p) => p.badge === 'Best Seller');
+  if (KEYWORD_FILTERS.includes(filterValue)) {
+    return products.filter((p) => p.name.toLowerCase().includes(filterValue));
+  }
   return products.filter((p) => p.category === filterValue);
 }
 
@@ -49,7 +41,6 @@ const HomePage = () => {
   const { openCart, handleAddToCart } = useCartActions();
   const { products, filterButtons, loading, error, refreshProducts } = useProducts();
 
-  // ── State ──
   const [banners, setBanners] = useState([]);
   const [categories, setCategories] = useState([]);
   const [activeFilter, setActiveFilter] = useState('all');
@@ -57,11 +48,9 @@ const HomePage = () => {
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [searchParams, setSearchParams] = useSearchParams();
 
-  // ── Refs untuk scroll ──
   const productsSectionRef = useRef(null);
-  const bestSellerRef = useRef(null);
 
-  // ── Fetch banners + categories dari DB ──
+  // ── Fetch banners + categories ──
   useEffect(() => {
     const fetchContent = async () => {
       const [bannersRes, categoriesRes] = await Promise.all([
@@ -74,19 +63,18 @@ const HomePage = () => {
     fetchContent();
   }, []);
 
-  // ── Deep link: ?filter=xxx → scroll to products + set filter ──
+  // ── Deep link: ?filter=xxx ──
   useEffect(() => {
     const filter = searchParams.get('filter');
     if (filter) {
       setActiveFilter(filter);
-      // Scroll to products section
       setTimeout(() => {
         productsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }, 300);
     }
   }, [searchParams]);
 
-  // ── Deep link: ?open=<product_id> → open ProductModal ──
+  // ── Deep link: ?open=<product_id> ──
   useEffect(() => {
     if (!products.length) return;
     const openId = searchParams.get('open');
@@ -99,32 +87,19 @@ const HomePage = () => {
     }
   }, [products, searchParams, setSearchParams]);
 
-  // ── Filtered + paginated products ──
-  const filteredProducts = useMemo(() => {
-    return filterProducts(products, activeFilter);
-  }, [products, activeFilter]);
-
+  // ── Filtered + paginated ──
+  const filteredProducts = useMemo(() => filterProducts(products, activeFilter), [products, activeFilter]);
   const totalPages = Math.ceil(filteredProducts.length / ITEMS_PER_PAGE) || 1;
   const paginatedProducts = useMemo(() => {
     const start = (currentPage - 1) * ITEMS_PER_PAGE;
     return filteredProducts.slice(start, start + ITEMS_PER_PAGE);
   }, [filteredProducts, currentPage]);
 
-  // ── Best Seller products (top 4) ──
-  const bestSellers = useMemo(() => {
-    return products.filter((p) => p.badge === 'Best Seller').slice(0, 4);
-  }, [products]);
-
-  // ── New Arrival products (top 4) ──
-  const newArrivals = useMemo(() => {
-    return products.filter((p) => p.badge === 'Baru').slice(0, 4);
-  }, [products]);
+  const bestSellers = useMemo(() => products.filter((p) => p.badge === 'Best Seller').slice(0, 4), [products]);
+  const newArrivals = useMemo(() => products.filter((p) => p.badge === 'Baru').slice(0, 4), [products]);
 
   // ── Handlers ──
-  const handleFilterChange = (value) => {
-    setActiveFilter(value);
-    setCurrentPage(1);
-  };
+  const handleFilterChange = (value) => { setActiveFilter(value); setCurrentPage(1); };
 
   const handleBannerClick = (banner) => {
     if (banner.cta_link_type === 'filter' && banner.cta_link_value) {
@@ -145,73 +120,47 @@ const HomePage = () => {
     productsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
-  // ⭐ Highlight product: klik di Best Seller/New Arrival → filter + open modal
   const handleHighlightProduct = (product) => {
-    // Set filter berdasarkan badge product
-    if (product.badge === 'Best Seller') {
-      setActiveFilter('bestseller');
-    } else if (product.badge === 'Baru') {
-      setActiveFilter('produkbaru');
-    }
+    if (product.badge === 'Best Seller') setActiveFilter('bestseller');
+    else if (product.badge === 'Baru') setActiveFilter('produkbaru');
     setCurrentPage(1);
-    // Scroll to products section
     productsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    // Open ProductModal (delay supaya scroll smooth dulu)
     setTimeout(() => setSelectedProduct(product), 500);
-  };
-
-  const handleOpenModal = (product) => {
-    setSelectedProduct(product);
   };
 
   const closeModal = () => setSelectedProduct(null);
 
-  // ── Format price helper ──
-  const formatPrice = (value) =>
-    new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(value ?? 0);
+  const formatPrice = (v) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(v ?? 0);
 
   return (
     <>
       <HeaderProducts onCartOpen={openCart} />
 
-      {/* ================================================================
-          SECTION 1: HERO SWIPER (banners from DB)
-          ================================================================ */}
+      {/* ═══════════════════════════════════════════════════════════════
+          SECTION 1: HERO SWIPER (minimal overlay)
+          ═══════════════════════════════════════════════════════════════ */}
       {banners.length > 0 && (
         <section className="relative w-full overflow-hidden">
           <div className="flex overflow-x-auto snap-x snap-mandatory no-scrollbar" style={{ scrollBehavior: 'smooth' }}>
             {banners.map((banner) => (
-              <div
-                key={banner.id}
-                className="w-full flex-shrink-0 snap-center relative cursor-pointer"
-                onClick={() => handleBannerClick(banner)}
-              >
-                <div className="relative w-full h-[300px] md:h-[450px] lg:h-[550px]">
-                  <img
-                    src={banner.image_url}
-                    alt={banner.title || 'EGLUX Banner'}
-                    className="w-full h-full object-cover"
-                    loading="eager"
-                  />
-                  {/* Overlay gradient */}
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/20 to-transparent" />
-                  {/* Content overlay */}
-                  <div className="absolute bottom-0 left-0 right-0 p-6 md:p-12">
+              <div key={banner.id} className="w-full flex-shrink-0 snap-center relative cursor-pointer" onClick={() => handleBannerClick(banner)}>
+                <div className="relative w-full h-[320px] md:h-[500px] lg:h-[600px]">
+                  <img src={banner.image_url} alt={banner.title || 'EGLUX'} className="w-full h-full object-cover" loading="eager" />
+                  {/* Minimal gradient */}
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-transparent" />
+                  {/* Overlay content */}
+                  <div className="hero-overlay">
                     <div className="max-w-container mx-auto">
                       {banner.subtitle && (
-                        <p className="text-eglux-secondary text-[0.8rem] md:text-[1rem] font-semibold uppercase tracking-wide mb-2">
+                        <p className="text-white/70 text-[0.7rem] md:text-[0.8rem] font-light uppercase tracking-[0.2em] mb-3">
                           {banner.subtitle}
                         </p>
                       )}
                       {banner.title && (
-                        <h2 className="text-white text-[1.5rem] md:text-[2.5rem] lg:text-[3rem] font-bold leading-tight mb-4 max-w-[600px]">
-                          {banner.title}
-                        </h2>
+                        <h2 className="hero-overlay__title">{banner.title}</h2>
                       )}
                       {banner.cta_text && (
-                        <button className="inline-block bg-eglux-secondary text-white px-6 py-3 rounded-lg text-[0.85rem] md:text-[0.95rem] font-semibold hover:opacity-90 transition-opacity cursor-pointer border-none">
-                          {banner.cta_text}
-                        </button>
+                        <button className="hero-overlay__cta">{banner.cta_text}</button>
                       )}
                     </div>
                   </div>
@@ -219,76 +168,51 @@ const HomePage = () => {
               </div>
             ))}
           </div>
-          {/* Swiper dots */}
-          {banners.length > 1 && (
-            <div className="absolute bottom-4 right-6 flex gap-2">
-              {banners.map((_, idx) => (
-                <span key={idx} className="w-2 h-2 rounded-full bg-white/50" />
-              ))}
-            </div>
-          )}
         </section>
       )}
 
-      {/* ================================================================
-          SECTION 2: BEST SELLER (4 produk preview)
-          ================================================================ */}
+      {/* ═══════════════════════════════════════════════════════════════
+          SECTION 2: BEST SELLER
+          ═══════════════════════════════════════════════════════════════ */}
       {bestSellers.length > 0 && (
-        <section ref={bestSellerRef} className="bg-white py-12 md:py-16">
+        <section className="bg-white section-spacing">
           <div className="max-w-container mx-auto px-4 md:px-8">
-            <div className="flex items-center justify-between mb-6 md:mb-8">
+            <div className="flex items-end justify-between mb-8 md:mb-12">
               <div>
-                <h2 className="text-[1.3rem] md:text-[1.8rem] font-bold text-eglux-primary">Best Seller</h2>
-                <p className="text-[0.8rem] text-gray-400 mt-1">Produk terlaris paling dicari</p>
+                <h2 className="section-title">Best Seller</h2>
+                <p className="section-subtitle">Produk terlaris paling dicari</p>
               </div>
               <button
-                onClick={() => {
-                  setActiveFilter('bestseller');
-                  setCurrentPage(1);
-                  productsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                }}
-                className="text-[0.8rem] text-eglux-secondary font-semibold hover:underline cursor-pointer bg-transparent border-none"
+                onClick={() => { setActiveFilter('bestseller'); setCurrentPage(1); productsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}
+                className="see-all-link"
               >
-                Lihat Semua →
+                Lihat Semua
               </button>
             </div>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-6">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-8">
               {bestSellers.map((product) => (
-                <ProductCard
-                  key={product.id}
-                  product={product}
-                  onClick={() => handleHighlightProduct(product)}
-                />
+                <ProductCard key={product.id} product={product} onClick={() => handleHighlightProduct(product)} formatPrice={formatPrice} />
               ))}
             </div>
           </div>
         </section>
       )}
 
-      {/* ================================================================
-          SECTION 3: CATEGORY CAROUSEL (horizontal scroll from DB)
-          ================================================================ */}
+      {/* ═══════════════════════════════════════════════════════════════
+          SECTION 3: CATEGORY CAROUSEL
+          ═══════════════════════════════════════════════════════════════ */}
       {categories.length > 0 && (
-        <section className="bg-[#faf6ef] py-12 md:py-16">
+        <section className="bg-[var(--eglux-accent)] section-spacing">
           <div className="max-w-container mx-auto px-4 md:px-8">
-            <h2 className="text-[1.3rem] md:text-[1.8rem] font-bold text-eglux-primary mb-6 md:mb-8">Kategori</h2>
-            <div className="flex gap-4 overflow-x-auto pb-4 no-scrollbar" style={{ scrollBehavior: 'smooth' }}>
+            <h2 className="section-title mb-8 md:mb-12">Kategori</h2>
+            <div className="flex gap-6 overflow-x-auto pb-4 no-scrollbar">
               {categories.map((category) => (
-                <button
-                  key={category.id}
-                  onClick={() => handleCategoryClick(category)}
-                  className="flex-shrink-0 w-[160px] md:w-[220px] group cursor-pointer border-none bg-transparent p-0"
-                >
-                  <div className="relative w-full h-[200px] md:h-[280px] rounded-xl overflow-hidden">
-                    <img
-                      src={category.image_url}
-                      alt={category.name}
-                      className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
-                      loading="lazy"
-                    />
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
-                    <div className="absolute bottom-0 left-0 right-0 p-4">
-                      <p className="text-white text-[0.9rem] md:text-[1.1rem] font-bold capitalize">{category.name}</p>
+                <button key={category.id} onClick={() => handleCategoryClick(category)} className="flex-shrink-0 w-[180px] md:w-[240px] group cursor-pointer border-none bg-transparent p-0">
+                  <div className="relative w-full h-[220px] md:h-[300px] overflow-hidden">
+                    <img src={category.image_url} alt={category.name} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" loading="lazy" />
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent" />
+                    <div className="absolute bottom-0 left-0 right-0 p-5">
+                      <p className="text-white text-[0.95rem] md:text-[1.1rem] font-medium tracking-wide">{category.name}</p>
                     </div>
                   </div>
                 </button>
@@ -298,64 +222,53 @@ const HomePage = () => {
         </section>
       )}
 
-      {/* ================================================================
-          SECTION 3.5: NEW ARRIVAL (4 produk preview) — jika ada
-          ================================================================ */}
+      {/* ═══════════════════════════════════════════════════════════════
+          SECTION 3.5: NEW ARRIVAL
+          ═══════════════════════════════════════════════════════════════ */}
       {newArrivals.length > 0 && (
-        <section className="bg-white py-12 md:py-16">
+        <section className="bg-white section-spacing">
           <div className="max-w-container mx-auto px-4 md:px-8">
-            <div className="flex items-center justify-between mb-6 md:mb-8">
+            <div className="flex items-end justify-between mb-8 md:mb-12">
               <div>
-                <h2 className="text-[1.3rem] md:text-[1.8rem] font-bold text-eglux-primary">Produk Baru</h2>
-                <p className="text-[0.8rem] text-gray-400 mt-1">Koleksi terbaru EGLUX</p>
+                <h2 className="section-title">Produk Baru</h2>
+                <p className="section-subtitle">Koleksi terbaru EGLUX</p>
               </div>
               <button
-                onClick={() => {
-                  setActiveFilter('produkbaru');
-                  setCurrentPage(1);
-                  productsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                }}
-                className="text-[0.8rem] text-eglux-secondary font-semibold hover:underline cursor-pointer bg-transparent border-none"
+                onClick={() => { setActiveFilter('produkbaru'); setCurrentPage(1); productsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}
+                className="see-all-link"
               >
-                Lihat Semua →
+                Lihat Semua
               </button>
             </div>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-6">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-8">
               {newArrivals.map((product) => (
-                <ProductCard
-                  key={product.id}
-                  product={product}
-                  onClick={() => handleHighlightProduct(product)}
-                />
+                <ProductCard key={product.id} product={product} onClick={() => handleHighlightProduct(product)} formatPrice={formatPrice} />
               ))}
             </div>
           </div>
         </section>
       )}
 
-      {/* ================================================================
-          SECTION 4: ALL PRODUCTS (full catalog + filter + pagination)
-          ================================================================ */}
-      <section ref={productsSectionRef} className="bg-white py-12 pb-20" id="products-section">
+      {/* ═══════════════════════════════════════════════════════════════
+          SECTION 4: ALL PRODUCTS
+          ═══════════════════════════════════════════════════════════════ */}
+      <section ref={productsSectionRef} className="bg-white section-spacing" id="products-section">
         <div className="max-w-container mx-auto px-4 md:px-8">
 
           {/* Section header */}
-          <div className="text-center mb-8">
-            <h2 className="text-[1.5rem] md:text-[2rem] font-bold text-eglux-primary">Semua Produk</h2>
-            <p className="text-[0.85rem] text-gray-400 mt-1">Temukan produk rumah tangga berkualitas untuk Anda</p>
+          <div className="text-center mb-10 md:mb-14">
+            <h2 className="section-title text-[1.8rem] md:text-[2.2rem]">Semua Produk</h2>
+            <p className="section-subtitle mt-2">Temukan produk rumah tangga berkualitas untuk Anda</p>
           </div>
 
-          {/* Filter Bar */}
+          {/* Filter Bar — underline style */}
           {!loading && !error && (
-            <div className="flex justify-center gap-2 md:gap-3 flex-wrap mb-8">
+            <div className="flex justify-center gap-1 md:gap-2 flex-wrap mb-10 md:mb-14">
               {filterButtons.map((btn) => (
                 <button
                   key={btn.value}
                   onClick={() => handleFilterChange(btn.value)}
-                  className={`py-2.5 px-4 md:px-5 rounded-full border-2 cursor-pointer font-medium transition-all duration-300 text-[0.82rem] md:text-sm
-                    ${activeFilter === btn.value
-                      ? 'bg-eglux-primary text-white border-eglux-primary'
-                      : 'bg-white text-eglux-primary border-eglux-primary/30 hover:bg-eglux-primary hover:text-white hover:border-eglux-primary'}`}
+                  className={`filter-btn ${activeFilter === btn.value ? 'filter-btn--active' : ''}`}
                 >
                   {btn.label}
                 </button>
@@ -364,64 +277,46 @@ const HomePage = () => {
           )}
 
           {/* Loading */}
-          {loading && (
-            <p className="text-center text-gray-400 py-16 text-base">Memuat produk...</p>
-          )}
+          {loading && <p className="text-center text-gray-400 py-20 text-sm">Memuat produk...</p>}
 
           {/* Error */}
-          {error && (
-            <p className="text-center text-red-500 py-16 text-base">Gagal memuat produk. Coba refresh halaman.</p>
-          )}
+          {error && <p className="text-center text-red-500 py-20 text-sm">Gagal memuat produk. Coba refresh halaman.</p>}
 
           {/* Product Grid */}
           {!loading && !error && (
             paginatedProducts.length > 0 ? (
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 md:gap-6">
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-8">
                 {paginatedProducts.map((product) => (
-                  <ProductCard
-                    key={product.id}
-                    product={product}
-                    onClick={() => handleOpenModal(product)}
-                  />
+                  <ProductCard key={product.id} product={product} onClick={() => setSelectedProduct(product)} formatPrice={formatPrice} />
                 ))}
               </div>
             ) : (
-              <p className="text-center text-gray-400 py-16 text-base">
-                Tidak ada produk untuk kategori ini.
-              </p>
+              <p className="text-center text-gray-400 py-20 text-sm">Tidak ada produk untuk kategori ini.</p>
             )
           )}
 
-          {/* Pagination */}
+          {/* Pagination — minimal */}
           {!loading && !error && filteredProducts.length > ITEMS_PER_PAGE && (
-            <div className="flex flex-col items-center gap-4 mt-12 pt-8 border-t border-[#eee]">
-              <div className="flex items-center gap-4">
+            <div className="flex flex-col items-center gap-4 mt-16 pt-8">
+              <div className="flex items-center gap-2">
                 <button
-                  onClick={() => {
-                    setCurrentPage((p) => Math.max(1, p - 1));
-                    productsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                  }}
+                  onClick={() => { setCurrentPage((p) => Math.max(1, p - 1)); productsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}
                   disabled={currentPage <= 1}
-                  className="w-10 h-10 border-2 border-eglux-primary bg-white rounded-full flex items-center justify-center text-eglux-primary cursor-pointer transition-all hover:bg-eglux-primary hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
+                  className="pagination-btn flex items-center justify-center"
                 >
-                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 18 9 12 15 6" /></svg>
+                  <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 18 9 12 15 6" /></svg>
                 </button>
-                <span className="text-sm font-medium text-gray-600">
-                  Halaman {currentPage} / {totalPages}
-                </span>
+                <span className="text-xs font-light text-gray-500 px-4 tracking-wide">{currentPage} / {totalPages}</span>
                 <button
-                  onClick={() => {
-                    setCurrentPage((p) => Math.min(totalPages, p + 1));
-                    productsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                  }}
+                  onClick={() => { setCurrentPage((p) => Math.min(totalPages, p + 1)); productsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}
                   disabled={currentPage >= totalPages}
-                  className="w-10 h-10 border-2 border-eglux-primary bg-white rounded-full flex items-center justify-center text-eglux-primary cursor-pointer transition-all hover:bg-eglux-primary hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
+                  className="pagination-btn flex items-center justify-center"
                 >
-                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 18 15 12 9 6" /></svg>
+                  <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 18 15 12 9 6" /></svg>
                 </button>
               </div>
-              <p className="text-[0.8rem] text-gray-400">
-                Menampilkan {(currentPage - 1) * ITEMS_PER_PAGE + 1}–{Math.min(currentPage * ITEMS_PER_PAGE, filteredProducts.length)} dari {filteredProducts.length} produk
+              <p className="text-[0.7rem] text-gray-400 tracking-wide">
+                {(currentPage - 1) * ITEMS_PER_PAGE + 1}–{Math.min(currentPage * ITEMS_PER_PAGE, filteredProducts.length)} dari {filteredProducts.length} produk
               </p>
             </div>
           )}
@@ -430,22 +325,17 @@ const HomePage = () => {
 
       <Footer />
 
-      {/* Product Modal */}
       {selectedProduct && (
-        <ProductModal
-          product={selectedProduct}
-          onClose={closeModal}
-          onAddToCart={handleAddToCart}
-        />
+        <ProductModal product={selectedProduct} onClose={closeModal} onAddToCart={handleAddToCart} />
       )}
     </>
   );
 };
 
 // ============================================================================
-// ProductCard — Reusable card component (discount-aware)
+// ProductCard — Borderless Clean (Ruadh/IKEA style)
 // ============================================================================
-const ProductCard = ({ product, onClick }) => {
+const ProductCard = ({ product, onClick, formatPrice }) => {
   const minVariantPrice = product?.minVariantPrice ?? null;
   const minOriginalPrice = product?.minOriginalPrice ?? null;
   const hasActiveDiscount = product?.hasActiveDiscount ?? false;
@@ -453,53 +343,31 @@ const ProductCard = ({ product, onClick }) => {
   const hasDiscount = hasActiveDiscount && maxDiscountPercent > 0;
 
   return (
-    <article
-      className="group bg-white rounded-[16px] md:rounded-[20px] overflow-hidden cursor-pointer border border-[#eee]
-                 transition-all duration-300 hover:-translate-y-2 hover:shadow-lg hover:border-transparent"
-      onClick={onClick}
-      role="button"
-      tabIndex={0}
-      onKeyDown={(e) => e.key === 'Enter' && onClick()}
-    >
-      <div className="relative overflow-hidden h-[200px] md:h-[250px]">
-        <img
-          src={product.image}
-          alt={product.name}
-          className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
-          loading="lazy"
-        />
+    <article className="product-card group" onClick={onClick} role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && onClick()}>
+      {/* Image — borderless, no rounded */}
+      <div className="product-card__image relative w-full aspect-square overflow-hidden bg-[var(--eglux-accent)]">
+        <img src={product.image} alt={product.name} className="w-full h-full object-cover" loading="lazy" />
+        {/* Badge — sharp corners, minimal */}
         {product.badge && (
-          <span className="absolute top-3 left-3 bg-eglux-secondary text-white text-[0.65rem] md:text-[0.75rem] font-semibold py-1 px-2.5 md:px-3 rounded-full">
-            {product.badge}
-          </span>
+          <span className="product-badge absolute top-3 left-3">{product.badge}</span>
         )}
         {hasDiscount && (
-          <span className="absolute top-3 right-3 bg-red-500 text-white text-[0.65rem] md:text-[0.72rem] font-bold py-1 px-2 rounded-full shadow-sm">
-            -{maxDiscountPercent}%
-          </span>
+          <span className="product-badge product-badge--discount absolute top-3 right-3">-{maxDiscountPercent}%</span>
         )}
       </div>
-      <div className="p-3 md:p-6">
-        <h4 className="text-[0.82rem] md:text-base font-semibold text-eglux-primary mb-1 leading-snug line-clamp-2">
-          {product.name}
-        </h4>
-        <p className="text-[0.7rem] md:text-[0.85rem] text-gray-400 mb-2 md:mb-3 capitalize">{product.category}</p>
-        <div>
+      {/* Info — clean, generous spacing */}
+      <div className="pt-3">
+        <p className="product-card__name line-clamp-2">{product.name}</p>
+        <div className="mt-1.5">
           {minVariantPrice ? (
-            <>
-              <div className="flex items-baseline gap-1.5 flex-wrap">
-                {hasDiscount && minOriginalPrice && minOriginalPrice > minVariantPrice && (
-                  <span className="text-[0.65rem] md:text-[0.78rem] text-gray-400 line-through">
-                    {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(minOriginalPrice)}
-                  </span>
-                )}
-                <span className="text-[0.9rem] md:text-[1.15rem] font-bold text-eglux-secondary">
-                  {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(minVariantPrice)}
-                </span>
-              </div>
-            </>
+            <div className="flex items-baseline gap-1.5">
+              {hasDiscount && minOriginalPrice && minOriginalPrice > minVariantPrice && (
+                <span className="product-card__price-original">{formatPrice(minOriginalPrice)}</span>
+              )}
+              <span className="product-card__price">{formatPrice(minVariantPrice)}</span>
+            </div>
           ) : (
-            <p className="text-[0.82rem] md:text-[0.95rem] font-semibold text-gray-400">Hubungi CS</p>
+            <span className="text-[0.8rem] text-gray-400">Hubungi CS</span>
           )}
         </div>
       </div>
