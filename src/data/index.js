@@ -14,7 +14,6 @@
 // dari URL/activePage prop.
 export const NAV_LINKS = [
   { label: 'Beranda',      href: '/',          key: 'home'      },
-  // { label: 'Produk',       href: '/products',  key: 'products'  },
   { label: 'Blog',         href: '/blog',      key: 'blog'      },
   { label: 'Tentang Kami', href: '/about',     key: 'about'     },
   { label: 'Kontak',       href: '/contact',   key: 'contact'   },
@@ -31,20 +30,20 @@ export const SOCIAL_LINKS = [
 export const SIDEBAR_CATEGORIES = [
   {
     label: 'New Arrival',
-    href:  '/products?filter=new',
+    href:  '/?filter=new',
     // TODO: Ganti URL ini dengan path dari Supabase Storage
     // Contoh: supabase.storage.from('category-images').getPublicUrl('new-arrival.webp')
     image: 'https://down-id.img.susercontent.com/file/sg-11134201-820nf-mn9v2qt7p6h23a.webp',
   },
   {
     label: 'Best Seller',
-    href:  '/products?filter=bestseller',
+    href:  '/?filter=bestseller',
     // TODO: Supabase Storage path — best-seller category image
     image: 'https://down-id.img.susercontent.com/file/sg-11134201-824gv-me0yfrozmpzae4.webp',
   },
   {
     label: 'All Products',
-    href:  '/products',
+    href:  '/',
     // TODO: Supabase Storage path — all products category image
     image: 'https://down-tx-id.img.susercontent.com/id-11134210-7rbk4-m6npp1bog9rg6c',
   },
@@ -55,10 +54,10 @@ export const SIDEBAR_CATEGORIES = [
     // TODO: Supabase Storage path — kitchen category image
     image: 'https://down-id.img.susercontent.com/file/sg-11134201-820n5-mn9v2pvit5om4b.webp',
     submenu: [
-      { label: 'Prasmanan',    href: '/products?filter=prasmanan' },
-      { label: 'Tempat Bumbu', href: '/products?filter=bumbu'     },
-      { label: 'Toples',       href: '/products?filter=toples'    },
-      { label: 'Nampan',       href: '/products?filter=nampan'    },
+      { label: 'Prasmanan',    href: '/?filter=prasmanan' },
+      { label: 'Tempat Bumbu', href: '/?filter=bumbu'     },
+      { label: 'Toples',       href: '/?filter=toples'    },
+      { label: 'Nampan',       href: '/?filter=nampan'    },
     ],
   },
   {
@@ -68,21 +67,21 @@ export const SIDEBAR_CATEGORIES = [
     // TODO: Supabase Storage path — home decor category image
     image: 'https://down-id.img.susercontent.com/file/id-11134207-7rasg-m5z7qgib73zc9d.webp',
     submenu: [
-      { label: 'Wall Decor',  href: '/products?filter=walldecor' },
-      { label: 'Pajangan',    href: '/products?filter=pajangan'  },
-      { label: 'Vas Bunga',   href: '/products?filter=vas'       },
-      { label: 'Taplak Meja', href: '/products?filter=taplak'    },
+      { label: 'Wall Decor',  href: '/?filter=walldecor' },
+      { label: 'Pajangan',    href: '/?filter=pajangan'  },
+      { label: 'Vas Bunga',   href: '/?filter=vas'       },
+      { label: 'Taplak Meja', href: '/?filter=taplak'    },
     ],
   },
   {
     label: 'Bathroom',
-    href:  '/products?filter=bathroom',
+    href:  '/?filter=bathroom',
     // TODO: Supabase Storage path — bathroom category image
     image: 'https://down-id.img.susercontent.com/file/sg-11134201-7rdvm-mdjp4ct77ggp63.webp',
   },
   {
     label: 'Storage',
-    href:  '/products?filter=storage',
+    href:  '/?filter=storage',
     // TODO: Supabase Storage path — storage category image
     image: 'https://down-id.img.susercontent.com/file/sg-11134201-7rdy8-mcj15f3yq0frd3.webp',
   },
@@ -97,31 +96,31 @@ export const HERO_DATA = {
   logo1:  '/src/assets/img/Logo2.png',
   subtitle: 'Kitchen & Home Decor',
   ctaLabel: 'Shop Now',
-  ctaHref:  '/products',
+  ctaHref:  '/',
   tagline:  'Gunakan Eglux, Biar Tetangga Iri',
 };
 
 // ── Promo Banners ─────────────────────────────────────────────
 export const PROMO_BANNERS = [
-  // {
-  //   id:      'flash-sale',
-  //   tag:     '🔥 Flash Sale',
-  //   title:   'Diskon Hingga 50%',
-  //   desc:    'Perlengkapan Dapur Premium — Hanya Hari Ini!',
-  //   cta:     'Beli Sekarang',
-  //   href:    '/products?filter=flashsale',
-  //   variant: 'primary',   // coklat overlay
-  //   // TODO: Ganti dengan hero banner dari Supabase Storage
-  //   image:   'https://images.unsplash.com/photo-1556909114-f6e7ad7d3136?w=1200&q=80',
-  //   tall:    true,
-  // },
+  {
+    id:      'flash-sale',
+    tag:     '🔥 Flash Sale',
+    title:   'Diskon Hingga 50%',
+    desc:    'Perlengkapan Dapur Premium — Hanya Hari Ini!',
+    cta:     'Beli Sekarang',
+    href:    '/?filter=flashsale',
+    variant: 'primary',   // coklat overlay
+    // TODO: Ganti dengan hero banner dari Supabase Storage
+    image:   'https://images.unsplash.com/photo-1556909114-f6e7ad7d3136?w=1200&q=80',
+    tall:    true,
+  },
   {
     id:      'new-arrival',
     tag:     '✨ New Arrival',
     title:   'Koleksi Terbaru 2026',
     desc:    'Temukan produk home decor & kitchen terbaru dari Eglux',
     cta:     'Lihat Koleksi',
-    href:    '/products?filter=new',
+    href:    '/?filter=new',
     variant: 'dark',      // biru gelap overlay
     // TODO: Ganti dengan banner new arrival dari Supabase Storage
     image:   'https://images.unsplash.com/photo-1556909114-44e3e70034e2?w=1200&q=80',
@@ -133,28 +132,28 @@ export const PROMO_BANNERS = [
 export const CATEGORY_CARDS = [
   {
     label: 'Perlengkapan Penyimpanan',
-    href:  '/products-sections?filter=storage',
+    href:  '/?filter=storage',
     // TODO: Supabase Storage path — storage category card image
     image: 'https://down-id.img.susercontent.com/file/sg-11134201-7rdy8-mcj15f3yq0frd3.webp',
     alt:   'Storage',
   },
   {
     label: 'Perlengkapan Dapur',
-    href:  '/products-sections?filter=kitchen',
+    href:  '/?filter=kitchen',
     // TODO: Supabase Storage path — kitchen category card image
     image: 'https://down-id.img.susercontent.com/file/sg-11134201-820n5-mn9v2pvit5om4b.webp',
     alt:   'Kitchen',
   },
   {
     label: 'Perlengkapan Kamar Mandi',
-    href:  '/products-sections?filter=bathroom',
+    href:  '/?filter=bathroom',
     // TODO: Supabase Storage path — bathroom category card image
     image: 'https://down-id.img.susercontent.com/file/sg-11134201-7rdvm-mdjp4ct77ggp63.webp',
     alt:   'Bathroom',
   },
   {
     label: 'Hiasan Rumah',
-    href:  '/products-sections?filter=homedecor',
+    href:  '/?filter=homedecor',
     // TODO: Supabase Storage path — homedecor category card image
     image: 'https://down-id.img.susercontent.com/file/sg-11134201-7rdx6-mdjse24iesx0a6.webp',
     alt:   'Home Decor',
@@ -295,20 +294,20 @@ export const FEATURES = [
 export const FOOTER_LINKS = {
   navigasi: [
     { label: 'Beranda',      href: '/'          },
-    { label: 'Produk',       href: '/products'  },
+    { label: 'Produk',       href: '/'  },
     { label: 'Blog',         href: '/blog'      },
     { label: 'Tentang Kami', href: '/about'     },
     { label: 'Kontak',       href: '/contact'   },
     { label: 'Affiliate',    href: '/affiliate' },
   ],
   kategori: [
-    { label: 'New Arrival',  href: '/products-sections?filter=new'        },
-    { label: 'Best Seller',  href: '/products-sections?filter=bestseller' },
-    { label: 'Semua Produk', href: '/products-sections'                   },
-    { label: 'Kitchen',      href: '/products-sections?filter=kitchen'    },
-    { label: 'Homedecor',    href: '/products-sections?filter=homedecor'  },
-    { label: 'Bathroom',     href: '/products-sections?filter=bathroom'   },
-    { label: 'Storage',      href: '/products-sections?filter=storage'    },
+    { label: 'New Arrival',  href: '/?filter=new'        },
+    { label: 'Best Seller',  href: '/?filter=bestseller' },
+    { label: 'Semua Produk', href: '/'                   },
+    { label: 'Kitchen',      href: '/?filter=kitchen'    },
+    { label: 'Homedecor',    href: '/?filter=homedecor'  },
+    { label: 'Bathroom',     href: '/?filter=bathroom'   },
+    { label: 'Storage',      href: '/?filter=storage'    },
   ],
   bantuan: [
     { label: 'Pengiriman',   href: '/contact?section=shipping' },

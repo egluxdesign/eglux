@@ -24,7 +24,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import HeaderProducts from '../components/layout/HeaderProducts';
-import DuplicateNav from '../components/layout/DuplicateNav';
 import Footer from '../components/layout/Footer';
 import ProductModal from '../components/ui/ProductModal';
 import { useCartActions } from './CartPage';
@@ -47,7 +46,7 @@ function filterProducts(products, filterValue) {
 }
 
 const HomePage = () => {
-  const { openCart } = useCartActions();
+  const { openCart, handleAddToCart } = useCartActions();
   const { products, filterButtons, loading, error, refreshProducts } = useProducts();
 
   // ── State ──
@@ -334,8 +333,6 @@ const HomePage = () => {
         </section>
       )}
 
-      <DuplicateNav />
-
       {/* ================================================================
           SECTION 4: ALL PRODUCTS (full catalog + filter + pagination)
           ================================================================ */}
@@ -438,12 +435,7 @@ const HomePage = () => {
         <ProductModal
           product={selectedProduct}
           onClose={closeModal}
-          onAddToCart={(product, variant, qty) => {
-            // Delegate to CartPage's handleAddToCart via useCartActions
-            // (CartPage provides this via context)
-            const { handleAddToCart } = useCartActions();
-            handleAddToCart?.(product, variant, qty);
-          }}
+          onAddToCart={handleAddToCart}
         />
       )}
     </>
@@ -495,7 +487,6 @@ const ProductCard = ({ product, onClick }) => {
         <div>
           {minVariantPrice ? (
             <>
-              <p className="text-[0.55rem] md:text-[0.65rem] text-gray-400 uppercase tracking-wide mb-0.5">Mulai dari</p>
               <div className="flex items-baseline gap-1.5 flex-wrap">
                 {hasDiscount && minOriginalPrice && minOriginalPrice > minVariantPrice && (
                   <span className="text-[0.65rem] md:text-[0.78rem] text-gray-400 line-through">
