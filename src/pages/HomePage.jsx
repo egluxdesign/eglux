@@ -24,6 +24,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import HeaderProducts from '../components/layout/HeaderProducts';
+import DuplicateNav from '../components/layout/DuplicateNav';
 import Footer from '../components/layout/Footer';
 import ProductModal from '../components/ui/ProductModal';
 import { useCartActions } from './CartPage';
@@ -332,6 +333,8 @@ const HomePage = () => {
           </div>
         </section>
       )}
+
+      <DuplicateNav />
 
       {/* ================================================================
           SECTION 4: ALL PRODUCTS (full catalog + filter + pagination)
