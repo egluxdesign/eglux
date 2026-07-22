@@ -133,28 +133,28 @@ export const PROMO_BANNERS = [
 export const CATEGORY_CARDS = [
   {
     label: 'Perlengkapan Penyimpanan',
-    href:  '/products?filter=storage',
+    href:  '/products-sections?filter=storage',
     // TODO: Supabase Storage path — storage category card image
     image: 'https://down-id.img.susercontent.com/file/sg-11134201-7rdy8-mcj15f3yq0frd3.webp',
     alt:   'Storage',
   },
   {
     label: 'Perlengkapan Dapur',
-    href:  '/products?filter=kitchen',
+    href:  '/products-sections?filter=kitchen',
     // TODO: Supabase Storage path — kitchen category card image
     image: 'https://down-id.img.susercontent.com/file/sg-11134201-820n5-mn9v2pvit5om4b.webp',
     alt:   'Kitchen',
   },
   {
     label: 'Perlengkapan Kamar Mandi',
-    href:  '/products?filter=bathroom',
+    href:  '/products-sections?filter=bathroom',
     // TODO: Supabase Storage path — bathroom category card image
     image: 'https://down-id.img.susercontent.com/file/sg-11134201-7rdvm-mdjp4ct77ggp63.webp',
     alt:   'Bathroom',
   },
   {
     label: 'Hiasan Rumah',
-    href:  '/products?filter=homedecor',
+    href:  '/products-sections?filter=homedecor',
     // TODO: Supabase Storage path — homedecor category card image
     image: 'https://down-id.img.susercontent.com/file/sg-11134201-7rdx6-mdjse24iesx0a6.webp',
     alt:   'Home Decor',
@@ -302,13 +302,13 @@ export const FOOTER_LINKS = {
     { label: 'Affiliate',    href: '/affiliate' },
   ],
   kategori: [
-    { label: 'New Arrival',  href: '/products?filter=new'        },
-    { label: 'Best Seller',  href: '/products?filter=bestseller' },
-    { label: 'Semua Produk', href: '/products'                   },
-    { label: 'Kitchen',      href: '/products?filter=kitchen'    },
-    { label: 'Homedecor',    href: '/products?filter=homedecor'  },
-    { label: 'Bathroom',     href: '/products?filter=bathroom'   },
-    { label: 'Storage',      href: '/products?filter=storage'    },
+    { label: 'New Arrival',  href: '/products-sections?filter=new'        },
+    { label: 'Best Seller',  href: '/products-sections?filter=bestseller' },
+    { label: 'Semua Produk', href: '/products-sections'                   },
+    { label: 'Kitchen',      href: '/products-sections?filter=kitchen'    },
+    { label: 'Homedecor',    href: '/products-sections?filter=homedecor'  },
+    { label: 'Bathroom',     href: '/products-sections?filter=bathroom'   },
+    { label: 'Storage',      href: '/products-sections?filter=storage'    },
   ],
   bantuan: [
     { label: 'Pengiriman',   href: '/contact?section=shipping' },
