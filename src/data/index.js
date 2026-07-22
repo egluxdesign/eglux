@@ -14,7 +14,7 @@
 // dari URL/activePage prop.
 export const NAV_LINKS = [
   { label: 'Beranda',      href: '/',          key: 'home'      },
-  { label: 'Produk',       href: '/products',  key: 'products'  },
+  // { label: 'Produk',       href: '/products',  key: 'products'  },
   { label: 'Blog',         href: '/blog',      key: 'blog'      },
   { label: 'Tentang Kami', href: '/about',     key: 'about'     },
   { label: 'Kontak',       href: '/contact',   key: 'contact'   },
