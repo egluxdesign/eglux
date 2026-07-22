@@ -77,9 +77,9 @@ const ProductCardFull = ({ product, onOpenModal }) => {
           {hasActiveVariant && minVariantPrice ? (
             <>
               {/* "Mulai dari" label */}
-              <p className="text-[0.65rem] text-[#999] uppercase tracking-[0.5px] mb-1">
+              {/* <p className="text-[0.65rem] text-[#999] uppercase tracking-[0.5px] mb-1">
                 Mulai dari
-              </p>
+              </p> */}
 
               {/* Strike base + min variant price + discount inline */}
               <div className="flex items-baseline gap-2 flex-wrap">
