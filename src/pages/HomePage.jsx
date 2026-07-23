@@ -152,7 +152,7 @@ const HomePage = () => {
           SECTION 2: BEST SELLER + PRODUK BARU (combined)
           ═══════════════════════════════════════════════════════════════ */}
       {(bestSellers.length > 0 || newArrivals.length > 0) && (
-        <section className="section-overlay bg-white md:min-h-screen md:flex md:flex-col md:justify-center py-6 md:py-12">
+        <section className="section-overlay bg-eglux-text-muted py-4 md:py-12">
           <div className="max-w-[1600px] mx-auto px-4 md:px-8 w-full">
 
             {bestSellers.length > 0 && (
@@ -205,19 +205,19 @@ const HomePage = () => {
       {/* ═══════════════════════════════════════════════════════════════
           SECTION 3: ALL PRODUCTS — with sticky filter bar
           ═══════════════════════════════════════════════════════════════ */}
-      <section ref={productsSectionRef} className="section-overlay bg-white pt-4 md:pt-8 pb-10 md:pb-16" id="products-section">
+      <section ref={productsSectionRef} className="section-overlay bg-white py-6 md:pt-8 md:pb-16" id="products-section">
         <div className="max-w-[1600px] mx-auto px-4 md:px-8">
 
-          <div className="text-center mb-4 md:mb-8">
-            <h2 className="section-title text-[1.6rem] md:text-[2rem]">Semua Produk</h2>
-            <p className="section-subtitle mt-2">Temukan produk rumah tangga berkualitas untuk Anda</p>
+          <div className="text-center mb-4 md:mb-8 pb-1 md:pb-2">
+            <h2 className="section-title text-eglux-secondary text-[1.6rem] md:text-[2rem]">Semua Produk</h2>
+            <p className="section-subtitle text-eglux-primary mt-2">Temukan produk rumah tangga berkualitas untuk Anda</p>
           </div>
 
           {/* ⭐ Sticky filter wrapper — detects scroll position */}
           <div ref={filterWrapperRef} className="min-h-[48px]">
             <div
               className={`transition-all duration-300 ${filterStuck
-                ? 'fixed left-0 right-0 z-[999] bg-white shadow-[0_2px_8px_rgba(0,0,0,0.06)]'
+                ? 'fixed left-0 right-0 z-[999] bg-transparent text-eglux-primary shadow-md backdrop-blur-sm'
                 : 'relative bg-transparent'
               }`}
               style={filterStuck ? { top: `${headerH}px` } : undefined}
@@ -228,7 +228,7 @@ const HomePage = () => {
                     <button
                       key={btn.value}
                       onClick={() => handleFilterChange(btn.value)}
-                      className={`filter-btn ${activeFilter === btn.value ? 'filter-btn--active' : ''}`}
+                      className={`filter-btn ${activeFilter === btn.value ? 'filter-btn--active' : ''} `}
                     >
                       {btn.label}
                     </button>
@@ -305,19 +305,8 @@ const HeroSwiper = ({ banners, onBannerClick }) => {
     setActiveIdx(idx);
   }, []);
 
-  // Auto-advance every 5s — reset on manual interaction
-  useEffect(() => {
-    if (banners.length <= 1) return;
-    autoAdvanceRef.current = setInterval(next, 5000);
-    return () => clearInterval(autoAdvanceRef.current);
-  }, [banners.length, next]);
-
-  const resetAutoAdvance = () => {
-    if (autoAdvanceRef.current) {
-      clearInterval(autoAdvanceRef.current);
-      autoAdvanceRef.current = setInterval(next, 5000);
-    }
-  };
+  // ⭐ No auto-advance — manual swipe only
+  const resetAutoAdvance = () => {};
 
   // Touch handlers (mobile swipe)
   const handleTouchStart = (e) => {
@@ -326,24 +315,23 @@ const HeroSwiper = ({ banners, onBannerClick }) => {
   const handleTouchEnd = (e) => {
     touchEndX.current = e.changedTouches[0].clientX;
     const delta = touchStartX.current - touchEndX.current;
-    if (Math.abs(delta) > 50) {
+    if (Math.abs(delta) > 40) {
       if (delta > 0) next();
       else prev();
-      resetAutoAdvance();
     }
   };
 
   // Mouse handlers (desktop drag)
   const handleMouseDown = (e) => {
     touchStartX.current = e.clientX;
+    e.preventDefault(); // prevent text selection
   };
   const handleMouseUp = (e) => {
     touchEndX.current = e.clientX;
     const delta = touchStartX.current - touchEndX.current;
-    if (Math.abs(delta) > 50) {
+    if (Math.abs(delta) > 40) {
       if (delta > 0) next();
       else prev();
-      resetAutoAdvance();
     }
   };
 
@@ -452,14 +440,14 @@ const ProductCard = ({ product, onClick, formatPrice, compact, hideBadge }) => {
           <p className="product-card__name line-clamp-2 text-left text-[0.7rem] md:text-[0.85rem]">{product.name}</p>
           <div className="mt-1 md:mt-1.5">
             {minVariantPrice ? (
-              <div className="flex items-baseline gap-1.5">
+              <div className="flex flex-col gap-0.5">
                 {hasDiscount && minOriginalPrice && minOriginalPrice > minVariantPrice && (
-                  <span className="product-card__price-original text-[0.6rem] md:text-[0.75rem]">{formatPrice(minOriginalPrice)}</span>
+                  <span className="text-gray-400 line-through text-[0.6rem] md:text-[0.75rem] leading-tight">{formatPrice(minOriginalPrice)}</span>
                 )}
-                <span className="product-card__price text-[0.7rem] md:text-[0.85rem]">{formatPrice(minVariantPrice)}</span>
+                <span className="text-eglux-secondary font-medium text-[0.7rem] md:text-[0.85rem] leading-tight">{formatPrice(minVariantPrice)}</span>
               </div>
             ) : (
-              <span className="text-[0.8rem] text-gray-400">Hubungi CS</span>
+              <span className="text-[0.7rem] md:text-[0.8rem] text-gray-400">Hubungi CS</span>
             )}
           </div>
         </div>
