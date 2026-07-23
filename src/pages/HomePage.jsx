@@ -152,14 +152,14 @@ const HomePage = () => {
           SECTION 2: BEST SELLER + PRODUK BARU (combined)
           ═══════════════════════════════════════════════════════════════ */}
       {(bestSellers.length > 0 || newArrivals.length > 0) && (
-        <section className="section-overlay bg-white min-h-screen flex flex-col justify-center py-8 md:py-12">
+        <section className="section-overlay bg-white md:min-h-screen md:flex md:flex-col md:justify-center py-6 md:py-12">
           <div className="max-w-[1600px] mx-auto px-4 md:px-8 w-full">
 
             {bestSellers.length > 0 && (
-              <div className="mb-6 md:mb-8">
-                <div className="flex items-end justify-between mb-3 md:mb-5">
+              <div className="mb-4 md:mb-8">
+                <div className="flex items-end justify-between mb-2 md:mb-5">
                   <div>
-                    <h2 className="section-title text-[1.3rem] md:text-[1.6rem]">Best Seller</h2>
+                    <h2 className="section-title text-[1.2rem] md:text-[1.6rem]">Best Seller</h2>
                     <p className="section-subtitle">Produk terlaris paling dicari</p>
                   </div>
                   <button
@@ -169,7 +169,7 @@ const HomePage = () => {
                     Lihat Semua
                   </button>
                 </div>
-                <div className="grid grid-cols-4 gap-2 md:gap-4">
+                <div className="grid grid-cols-4 gap-1.5 md:gap-4">
                   {bestSellers.map((product) => (
                     <ProductCard key={product.id} product={product} onClick={() => handleHighlightProduct(product)} formatPrice={formatPrice} compact hideBadge />
                   ))}
@@ -179,9 +179,9 @@ const HomePage = () => {
 
             {newArrivals.length > 0 && (
               <div>
-                <div className="flex items-end justify-between mb-3 md:mb-5">
+                <div className="flex items-end justify-between mb-2 md:mb-5">
                   <div>
-                    <h2 className="section-title text-[1.3rem] md:text-[1.6rem]">Produk Baru</h2>
+                    <h2 className="section-title text-[1.2rem] md:text-[1.6rem]">Produk Baru</h2>
                     <p className="section-subtitle">Koleksi terbaru EGLUX</p>
                   </div>
                   <button
@@ -191,7 +191,7 @@ const HomePage = () => {
                     Lihat Semua
                   </button>
                 </div>
-                <div className="grid grid-cols-4 gap-2 md:gap-4">
+                <div className="grid grid-cols-4 gap-1.5 md:gap-4">
                   {newArrivals.map((product) => (
                     <ProductCard key={product.id} product={product} onClick={() => handleHighlightProduct(product)} formatPrice={formatPrice} compact hideBadge />
                   ))}
@@ -447,16 +447,16 @@ const ProductCard = ({ product, onClick, formatPrice, compact, hideBadge }) => {
           <span className="absolute top-2 right-2 md:top-3 md:right-3 bg-red-500 text-white text-[0.65rem] md:text-[1.1rem] font-bold px-2 py-0.5 md:px-3 md:py-1.5 rounded-full">-{maxDiscountPercent}%</span>
         )}
       </div>
-      <div className="pt-2 md:pt-4">
+      <div className="pt-1.5 md:pt-4">
         <div className="min-w-0 flex-1">
-          <p className="product-card__name line-clamp-2 text-left">{product.name}</p>
-          <div className="mt-1.5">
+          <p className="product-card__name line-clamp-2 text-left text-[0.7rem] md:text-[0.85rem]">{product.name}</p>
+          <div className="mt-1 md:mt-1.5">
             {minVariantPrice ? (
               <div className="flex items-baseline gap-1.5">
                 {hasDiscount && minOriginalPrice && minOriginalPrice > minVariantPrice && (
-                  <span className="product-card__price-original">{formatPrice(minOriginalPrice)}</span>
+                  <span className="product-card__price-original text-[0.6rem] md:text-[0.75rem]">{formatPrice(minOriginalPrice)}</span>
                 )}
-                <span className="product-card__price">{formatPrice(minVariantPrice)}</span>
+                <span className="product-card__price text-[0.7rem] md:text-[0.85rem]">{formatPrice(minVariantPrice)}</span>
               </div>
             ) : (
               <span className="text-[0.8rem] text-gray-400">Hubungi CS</span>
