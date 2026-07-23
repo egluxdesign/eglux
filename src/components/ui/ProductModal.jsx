@@ -1,32 +1,31 @@
 // src/components/ui/ProductModal.jsx
 // ============================================================================
-// [v4] Shopee/Tokopedia-style ProductModal
+// [v6.2] Fix arrow key navigation & cart scroll isolation
 // ============================================================================
-// UI changes from v3:
-//   - Main image: single large (square), shows activeImage (cover OR variant)
-//   - Thumbnail strip: ALL images (cover + variant images), clickable
-//   - Clicking variant auto-switches main image to variant image
-//   - Price: strike base (small gray) + variant price (large gold)
-//   - Variant chips: sorted by price, show stock if < 20, disable if 0
-//   - Quantity: with stock limit
+// Changes:
+//   - Removed Swiper Keyboard module (conflicted with window listener).
+//   - Window keydown now handles Left/Right with proper single-step logic.
+//   - Arrow Up/Down scrolls the modal content, not the background page.
 // ============================================================================
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { Swiper, SwiperSlide } from 'swiper/react';
+import 'swiper/css';
 import { rupiah } from '../../context/CartContext';
 
 const ProductModal = ({ product, onClose, onAddToCart }) => {
   const [selectedVariant, setSelectedVariant] = useState(null);
   const [qty, setQty] = useState(1);
-  const [activeImage, setActiveImage] = useState('');
+  const [activeIndex, setActiveIndex] = useState(0);
   const [descOpen, setDescOpen] = useState(false);
+  const swiperRef = useRef(null);
+  const scrollContainerRef = useRef(null);
 
-  // 1. Filter: hanya tampilkan variant yang ACTIVE
   const activeVariants = useMemo(() => {
     if (!product?.variants) return [];
     return product.variants.filter((v) => v.is_active);
   }, [product]);
 
-  // 2. Sort variants by price ascending (cheapest first — Shopee pattern)
   const sortedVariants = useMemo(() => {
     return [...activeVariants].sort((a, b) => {
       const priceA = Number(a.price) || 0;
@@ -35,10 +34,14 @@ const ProductModal = ({ product, onClose, onAddToCart }) => {
     });
   }, [activeVariants]);
 
-  // 3. Pisahkan gambar: cover (variant_id=null) vs variant images
   const generalImages = useMemo(() => {
     if (!product?.images) return [];
-    return product.images.filter((img) => !img.variant_id);
+    const covers = product.images.filter((img) => !img.variant_id);
+    return [...covers].sort((a, b) => {
+      if (a.is_primary && !b.is_primary) return -1;
+      if (!a.is_primary && b.is_primary) return 1;
+      return (a.position || 0) - (b.position || 0);
+    });
   }, [product]);
 
   const variantImagesMap = useMemo(() => {
@@ -54,12 +57,8 @@ const ProductModal = ({ product, onClose, onAddToCart }) => {
     return map;
   }, [product]);
 
-  // 4. ALL thumbnails untuk gallery strip (cover + variant images)
   const allThumbnails = useMemo(() => {
-    const covers = generalImages.map((img) => ({
-      ...img,
-      type: 'cover',
-    }));
+    const covers = generalImages.map((img) => ({ ...img, type: 'cover' }));
     const variants = sortedVariants
       .map((v) => {
         const img = variantImagesMap.get(v.id);
@@ -69,45 +68,63 @@ const ProductModal = ({ product, onClose, onAddToCart }) => {
     return [...covers, ...variants];
   }, [generalImages, sortedVariants, variantImagesMap]);
 
-  // 5. Cari variant image untuk selectedVariant
-  const variantImage = useMemo(() => {
-    if (!selectedVariant) return null;
-    return variantImagesMap.get(selectedVariant.id) || null;
-  }, [selectedVariant, variantImagesMap]);
-
-  // 6. INISIALISASI: auto-select cheapest variant + set cover image
   useEffect(() => {
     if (!product) return;
-    const cheapest = sortedVariants[0] || null;
-    setSelectedVariant(cheapest);
+    setSelectedVariant(null);
     setQty(1);
-
-    // Set main image to primary cover image
-    const primary = generalImages.find((img) => img.is_primary) || generalImages[0];
-    setActiveImage(primary?.url || '');
-  }, [product, sortedVariants, generalImages]);
-
-  // 7. Saat variant berubah, auto-switch main image ke variant image (Shopee pattern)
-  useEffect(() => {
-    if (variantImage) {
-      setActiveImage(variantImage.url);
-    } else if (generalImages.length > 0) {
-      // Kalau variant tidak punya image, fallback ke cover
-      const primary = generalImages.find((img) => img.is_primary) || generalImages[0];
-      setActiveImage(primary?.url || '');
+    setActiveIndex(0);
+    if (swiperRef.current) {
+      swiperRef.current.slideTo(0, 0);
     }
-  }, [variantImage, generalImages]);
+  }, [product]);
+
+  // FIX: Single source of truth for keyboard — window listener only.
+  // Swiper Keyboard module REMOVED to prevent double-firing.
+  const handleKeyDown = useCallback((e) => {
+    const tag = e.target.tagName.toLowerCase();
+    const isTyping = tag === 'input' || tag === 'textarea' || tag === 'select' || e.target.isContentEditable;
+    if (isTyping) return;
+
+    const swiper = swiperRef.current;
+    const scrollEl = scrollContainerRef.current;
+    const maxIdx = allThumbnails.length - 1;
+
+    if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      if (swiper && activeIndex > 0) {
+        swiper.slideTo(activeIndex - 1);
+      }
+    } else if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      if (swiper && activeIndex < maxIdx) {
+        swiper.slideTo(activeIndex + 1);
+      }
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (scrollEl) {
+        scrollEl.scrollBy({ top: -60, behavior: 'smooth' });
+      }
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (scrollEl) {
+        scrollEl.scrollBy({ top: 60, behavior: 'smooth' });
+      }
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      onClose();
+    }
+  }, [activeIndex, allThumbnails.length, onClose]);
+
+  useEffect(() => {
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleKeyDown]);
 
   if (!product) return null;
 
-  // 8. LOGIC HARGA: selalu pakai variant price
-  // ⭐ v3: Discount-aware pricing — pakai computeVariantDiscount dari useProducts
-  // Jika variant punya discount aktif (dalam schedule), pakai currentPrice.
-  // effectivePrice = harga setelah discount, originalPrice = harga asli (untuk strike)
   const _originalVariantPrice = Number(selectedVariant?.price) || 0;
   const _discountInfo = (() => {
     if (!selectedVariant) return { currentPrice: 0, originalPrice: 0, discountPercent: 0, isActive: false };
-    // Inline compute (same logic as useProducts.computeVariantDiscount)
     if (!selectedVariant.discount_type || !selectedVariant.discount_value) {
       return { currentPrice: _originalVariantPrice, originalPrice: _originalVariantPrice, discountPercent: 0, isActive: false };
     }
@@ -130,31 +147,39 @@ const ProductModal = ({ product, onClose, onAddToCart }) => {
     return { currentPrice, originalPrice: _originalVariantPrice, discountPercent, isActive: discountPercent > 0 };
   })();
   const effectivePrice = _discountInfo.currentPrice;
-  const basePrice = _discountInfo.originalPrice;       // = originalVariantPrice (for strike-through)
+  const basePrice = _discountInfo.originalPrice;
   const isDiscounted = _discountInfo.isActive;
   const discountPercent = _discountInfo.discountPercent;
   const subtotal = effectivePrice * qty;
   const selectedStock = selectedVariant ? parseInt(selectedVariant.stock, 10) || 0 : 0;
-  // Hanya anggap out of stock kalau stock PASTI 0 (bukan null/undefined)
   const isOutOfStock = selectedVariant && selectedStock === 0 && selectedVariant.stock !== null && selectedVariant.stock !== undefined;
   const maxStock = selectedStock;
 
-  // 9. Handler: klik variant → switch variant + auto-switch image
   const handleVariantClick = (variant) => {
     const stock = parseInt(variant.stock, 10) || 0;
-    // Hanya skip kalau stock PASTI 0. Kalau null/undefined, biarkan tetap bisa dipilih.
     if (stock === 0 && variant.stock !== null && variant.stock !== undefined) return;
     setSelectedVariant(variant);
-    setQty(1); // reset qty kalau ganti variant
+    setQty(1);
+
+    const imgIdx = allThumbnails.findIndex((t) => t.type === 'variant' && t.variantId === variant.id);
+    if (imgIdx !== -1 && swiperRef.current) {
+      swiperRef.current.slideTo(imgIdx);
+    }
   };
 
-  // 10. Handler: klik thumbnail → manually switch main image
-  const handleThumbnailClick = (img) => {
-    setActiveImage(img.url);
-    // Kalau thumbnail adalah variant image, switch selected variant juga
-    if (img.type === 'variant' && img.variantId) {
-      const variant = sortedVariants.find((v) => v.id === img.variantId);
-      if (variant) {
+  const handleThumbnailClick = (idx) => {
+    if (swiperRef.current) {
+      swiperRef.current.slideTo(idx);
+    }
+  };
+
+  const handleSlideChange = (swiper) => {
+    const idx = swiper.activeIndex;
+    setActiveIndex(idx);
+    const item = allThumbnails[idx];
+    if (item?.type === 'variant' && item.variantId) {
+      const variant = sortedVariants.find((v) => v.id === item.variantId);
+      if (variant && variant.id !== selectedVariant?.id) {
         setSelectedVariant(variant);
         setQty(1);
       }
@@ -169,7 +194,6 @@ const ProductModal = ({ product, onClose, onAddToCart }) => {
       aria-modal="true"
     >
       <div className="bg-white rounded-[20px] max-w-[520px] w-full max-h-[90vh] flex flex-col overflow-hidden relative">
-        {/* Close button */}
         <button
           onClick={onClose}
           className="absolute top-3 right-3 z-[2] w-11 h-11 min-w-[44px] min-h-[44px] rounded-full bg-black/[0.07]
@@ -180,41 +204,65 @@ const ProductModal = ({ product, onClose, onAddToCart }) => {
           &times;
         </button>
 
-        {/* === SCROLLABLE CONTENT === */}
-        <div className="flex-1 overflow-y-auto">
-          {/* === MAIN IMAGE (1:1 square) === */}
+        <div ref={scrollContainerRef} className="flex-1 overflow-y-auto">
           <div className="relative w-full aspect-square overflow-hidden bg-[#f3f4f6]">
-            {activeImage ? (
-              <img
-                src={activeImage}
-                alt={product.name}
-                className="w-full h-full object-cover transition-all duration-300"
-                loading="lazy"
-              />
+            {allThumbnails.length > 0 ? (
+              <Swiper
+                onSwiper={(swiper) => { swiperRef.current = swiper; }}
+                onSlideChange={handleSlideChange}
+                grabCursor
+                slidesPerView={1}
+                spaceBetween={0}
+                className="w-full h-full"
+                style={{ touchAction: 'pan-y' }}
+              >
+                {allThumbnails.map((img, idx) => (
+                  <SwiperSlide key={img.id || img.url || idx} style={{ touchAction: 'pan-y' }}>
+                    <img
+                      src={img.url}
+                      alt={product.name}
+                      draggable={false}
+                      className="w-full h-full object-cover select-none"
+                      loading={idx === 0 ? 'eager' : 'lazy'}
+                    />
+                  </SwiperSlide>
+                ))}
+              </Swiper>
             ) : (
               <div className="w-full h-full flex flex-col items-center justify-center text-[#9ca3af]">
                 <span className="text-4xl mb-2">📷</span>
-                <span className="text-[0.85rem]">Upload gambar di Admin</span>
+                <span className="text-[0.85rem]">Upload gambar di Admin Panel</span>
               </div>
             )}
 
-            {/* Badge overlay */}
             {product.badge && (
-              <span className="absolute top-4 left-4 bg-eglux-secondary text-white text-[0.72rem] font-semibold py-1 px-3 rounded-full">
+              <span className="absolute top-4 left-4 z-[5] bg-eglux-secondary text-white text-[0.72rem] font-semibold py-1 px-3 rounded-full pointer-events-none">
                 {product.badge}
               </span>
             )}
+
+            {allThumbnails.length > 1 && (
+              <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-[5] flex gap-1.5 pointer-events-none">
+                {allThumbnails.map((_, idx) => (
+                  <span
+                    key={idx}
+                    className={`block w-1.5 h-1.5 rounded-full transition-all ${
+                      idx === activeIndex ? 'bg-white w-4' : 'bg-white/50'
+                    }`}
+                  />
+                ))}
+              </div>
+            )}
           </div>
 
-          {/* === THUMBNAIL STRIP === */}
           {allThumbnails.length > 1 && (
             <div className="flex gap-2 px-6 pt-3 pb-2 overflow-x-auto">
               {allThumbnails.map((img, idx) => (
                 <button
                   key={img.id || img.url || idx}
-                  onClick={() => handleThumbnailClick(img)}
+                  onClick={() => handleThumbnailClick(idx)}
                   className={`relative flex-shrink-0 w-14 h-14 rounded-lg overflow-hidden border-2 transition-all ${
-                    activeImage === img.url
+                    activeIndex === idx
                       ? 'border-eglux-secondary'
                       : 'border-transparent opacity-60 hover:opacity-100'
                   }`}
@@ -230,12 +278,10 @@ const ProductModal = ({ product, onClose, onAddToCart }) => {
             </div>
           )}
 
-          {/* === PRODUCT INFO === */}
           <div className="p-6 pt-3">
             <h2 className="text-[1.1rem] font-bold text-eglux-primary mb-1 leading-snug">{product.name}</h2>
             <p className="text-[0.8rem] text-[#999] mb-3 uppercase tracking-[0.5px]">{product.category}</p>
 
-            {/* === PRICE DISPLAY (v3: discount-aware) === */}
             <div className="mb-4 pb-4 border-b border-[#eee]">
               {selectedVariant && effectivePrice > 0 ? (
                 <div className="flex items-baseline gap-2 flex-wrap">
@@ -253,12 +299,13 @@ const ProductModal = ({ product, onClose, onAddToCart }) => {
                     </span>
                   )}
                 </div>
+              ) : !selectedVariant ? (
+                <span className="text-[0.95rem] text-[#999] italic">Pilih varian untuk menampilkan harga</span>
               ) : (
                 <span className="text-[1.2rem] font-bold text-[#999]">Hubungi CS</span>
               )}
             </div>
 
-            {/* === VARIANT SELECTOR (moved up, above description) === */}
             {sortedVariants.length > 0 && (
               <div className="mb-4">
                 <p className="text-[0.78rem] font-semibold uppercase tracking-[1px] text-eglux-primary mb-2">
@@ -270,7 +317,6 @@ const ProductModal = ({ product, onClose, onAddToCart }) => {
                     const vStock = parseInt(v.stock, 10) || 0;
                     const vOutOfStock = vStock === 0 && v.stock !== null && v.stock !== undefined;
                     const showStock = vStock > 0 && vStock < 20;
-                    // ⭐ v3: Pakai currentPrice (discount-aware) kalau ada, fallback ke price
                     const vDisplayPrice = v.currentPrice || Number(v.price) || 0;
                     const vOriginalPrice = v.originalPrice || Number(v.price) || 0;
                     const vHasDiscount = v.isActive && vOriginalPrice > vDisplayPrice;
@@ -287,7 +333,6 @@ const ProductModal = ({ product, onClose, onAddToCart }) => {
                           ${vOutOfStock ? 'opacity-40 cursor-not-allowed' : ''}`}
                       >
                         <span className="block font-semibold leading-tight">{v.name}</span>
-                        {/* ⭐ v3: Tampilkan harga diskon (strike original + discounted) */}
                         <span className={`block text-[0.72rem] mt-0.5 ${isSelected ? 'text-eglux-secondary' : 'text-[#999]'}`}>
                           {vDisplayPrice > 0 ? (
                             vHasDiscount ? (
@@ -315,7 +360,6 @@ const ProductModal = ({ product, onClose, onAddToCart }) => {
               </div>
             )}
 
-            {/* === QUANTITY (moved up, above description) === */}
             {selectedVariant && !isOutOfStock && effectivePrice > 0 && (
               <div className="mb-4">
                 <p className="text-[0.78rem] font-semibold uppercase tracking-[1px] text-eglux-primary mb-2">Jumlah</p>
@@ -344,7 +388,6 @@ const ProductModal = ({ product, onClose, onAddToCart }) => {
               </div>
             )}
 
-            {/* === DESCRIPTION (FAQ-style accordion, di bagian bawah) === */}
             {product.desc && (
               <div className="border-t border-[#eee] pt-4 mt-2">
                 <button
@@ -367,7 +410,6 @@ const ProductModal = ({ product, onClose, onAddToCart }) => {
           </div>
         </div>
 
-        {/* === STICKY BOTTOM: Subtotal + Cart Button === */}
         <div className="border-t border-[#eee] bg-white px-6 py-4 flex-shrink-0">
           {selectedVariant && !isOutOfStock && effectivePrice > 0 && (
             <div className="flex items-center justify-between mb-3">
@@ -378,14 +420,12 @@ const ProductModal = ({ product, onClose, onAddToCart }) => {
           <button
             onClick={() => {
               if (selectedVariant && !isOutOfStock && effectivePrice > 0) {
-                // ⭐ v3: Pass variant dengan price = effectivePrice (discounted)
-                // supaya CartContext pakai harga diskon untuk total calculation
                 const variantWithDiscount = {
                   ...selectedVariant,
-                  price: effectivePrice,           // harga setelah discount (yang dipakai untuk total)
-                  originalPrice: basePrice,         // harga asli (untuk strike-through display di cart)
-                  isDiscounted,                     // flag: apakah variant lagi diskon?
-                  discountPercent,                  // percent off (untuk badge)
+                  price: effectivePrice,
+                  originalPrice: basePrice,
+                  isDiscounted,
+                  discountPercent,
                 };
                 onAddToCart(product, variantWithDiscount, qty);
                 onClose();
@@ -394,7 +434,7 @@ const ProductModal = ({ product, onClose, onAddToCart }) => {
             disabled={!selectedVariant || isOutOfStock || effectivePrice === 0}
             className="w-full py-3.5 border-2 border-eglux-secondary bg-white text-eglux-secondary rounded-xl text-[0.95rem] font-bold cursor-pointer transition-all hover:bg-eglux-accent disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            {isOutOfStock ? 'Stok Habis' : !selectedVariant ? 'Pilih Varian Dulu' : '+ Keranjang'}
+            {isOutOfStock ? 'Stok Habis' : !selectedVariant ? 'Harap Pilih Varian' : '+ Keranjang'}
           </button>
         </div>
       </div>

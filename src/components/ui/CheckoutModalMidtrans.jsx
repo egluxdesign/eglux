@@ -41,6 +41,7 @@ import {
 import Select from 'react-select';
 import { INDONESIAN_CITIES } from '../../data/indonesianCities';
 import { COUNTRIES, DEFAULT_COUNTRY } from '../../data/countries';
+import PageLoader from './PageLoader';
 
 // Key untuk sessionStorage — sinyal agar parent page auto-buka checkout modal
 // setelah user berhasil login dari halaman /admin.
@@ -1017,7 +1018,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
               />
               <InlineError msg={formErrors.city} />
               <p className="text-[0.72rem] text-gray-500 mt-1">
-                Nama Kota Tujuan (misal: "bandung", "jakarta", "surabaya")
+                97 kota di Indonesia · ketik untuk cari (misal: "bandung", "jakarta", "surabaya")
               </p>
             </div>
 
@@ -1045,7 +1046,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
             {/* Loading area lookup */}
             {areasLoading && (
               <div className="text-[0.78rem] text-gray-500 flex items-center gap-2">
-                <Loader2 className="w-3.5 h-3.5 animate-spin" /> Mencari area...
+                <Loader2 className="w-3.5 h-3.5 animate-spin" /> Mencari area Biteship...
               </div>
             )}
 
@@ -1090,7 +1091,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
             {/* Not found */}
             {showAreaNotFound && (
               <p className="text-[0.78rem] text-red-500">
-                Kode pos tidak ditemukan. Periksa kembali.
+                Kode pos tidak ditemukan di Biteship. Periksa kembali.
               </p>
             )}
           </section>
@@ -1202,6 +1203,14 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
           </p>
         </div>
       </div>
+
+      {/* ⭐ EGLUX branded loader — muncul saat processing payment ke backend */}
+      {submitting && (
+        <PageLoader
+          label="Memproses Pembayaran"
+          backdrop="blur"
+        />
+      )}
     </div>
     </>
   );

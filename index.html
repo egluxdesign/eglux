@@ -54,9 +54,123 @@
     <link rel="preconnect" href="https://down-id.img.susercontent.com" crossorigin />
     <link rel="dns-prefetch" href="https://down-id.img.susercontent.com" />
     <link rel="preconnect" href="https://images.unsplash.com" crossorigin />
+
+    <!-- ⭐ Preconnect + preload untuk logo loader (Supabase Storage) ── -->
+    <link rel="preconnect" href="https://mbuwpjxpxvnsxjusrnlk.supabase.co" crossorigin />
+    <link
+      rel="preload"
+      as="image"
+      href="https://mbuwpjxpxvnsxjusrnlk.supabase.co/storage/v1/object/public/logo/Logo-Loading.svg"
+      fetchpriority="high"
+    />
   </head>
   <body>
     <div id="root"></div>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         EGLUX Pre-hydration Loader
+         ──────────────────────────────────────────────────────────────
+         Pure HTML/CSS, jalan SEBELUM React mount. Tampil saat page
+         reload/refresh/loading checkout. Di-hide oleh main.jsx setelah
+         App berhasil render.
+
+         Animasi: logo EGLUX (image) naik dari bawah + opacity 50% → 100%.
+         ═══════════════════════════════════════════════════════════════ -->
+    <div id="eglux-loader" aria-hidden="true">
+      <div class="eglux-loader__logo">
+        <img
+          src="https://mbuwpjxpxvnsxjusrnlk.supabase.co/storage/v1/object/public/logo/Logo-Loading.svg"
+          alt=""
+          draggable="false"
+        />
+      </div>
+    </div>
+
+    <style>
+      /* ── EGLUX Loader — Pre-hydration branding animation ── */
+      #eglux-loader {
+        position: fixed;
+        inset: 0;
+        z-index: 99999;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #ffffff;
+        transition: opacity 0.4s ease-out, visibility 0.4s ease-out;
+      }
+      #eglux-loader.is-hidden {
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+      }
+      .eglux-loader__logo {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 12px;
+        width: min(280px, 70vw);
+      }
+      .eglux-loader__logo img {
+        width: 100%;
+        height: auto;
+        display: block;
+        -webkit-user-drag: none;
+        user-select: none;
+        /* ⭐ Animasi: opacity 50% → 100% + naik dari bawah (translateY 16px → 0) */
+        animation: eglux-logo-reveal 1.6s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+      }
+      .eglux-loader__tagline {
+        font-family: 'Inter', system-ui, sans-serif;
+        font-size: 0.6rem;
+        font-weight: 400;
+        letter-spacing: 0.35em;
+        color: #9a7d4a;
+        opacity: 0.5;
+        text-transform: uppercase;
+        animation: eglux-tagline-fade 1.6s ease-in-out infinite;
+        animation-delay: 0.15s;
+      }
+      @keyframes eglux-logo-reveal {
+        0%   { opacity: 0.5; transform: translateY(16px); }
+        50%  { opacity: 1;   transform: translateY(0); }
+        100% { opacity: 0.5; transform: translateY(16px); }
+      }
+      @keyframes eglux-tagline-fade {
+        0%, 100% { opacity: 0.3; }
+        50%      { opacity: 0.8; }
+      }
+
+      /* ── Respect reduced motion ── */
+      @media (prefers-reduced-motion: reduce) {
+        .eglux-loader__logo img,
+        .eglux-loader__tagline {
+          animation: none;
+        }
+        .eglux-loader__logo img { opacity: 1; transform: none; }
+        .eglux-loader__tagline { opacity: 0.6; }
+      }
+    </style>
+
+    <script>
+      // ⭐ Fallback: hide loader setelah 4s kalau React gak pernah signal ready
+      // (mis. error saat hydration). Mencegah loader stuck forever.
+      window.__EGLUX_LOADER_TIMEOUT__ = setTimeout(function () {
+        var el = document.getElementById('eglux-loader');
+        if (el) el.classList.add('is-hidden');
+      }, 4000);
+
+      // ⭐ Public API — dipanggil oleh main.jsx setelah App mount
+      window.hideEgluxLoader = function () {
+        clearTimeout(window.__EGLUX_LOADER_TIMEOUT__);
+        var el = document.getElementById('eglux-loader');
+        if (el) {
+          el.classList.add('is-hidden');
+          // ⭐ Remove dari DOM setelah transition selesai
+          setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, 500);
+        }
+      };
+    </script>
+
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

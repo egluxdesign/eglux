@@ -35,6 +35,7 @@ const HomePage = () => {
   const { products, filterButtons, loading, error } = useProducts();
 
   const [banners, setBanners] = useState([]);
+  const [overlayTimedOut, setOverlayTimedOut] = useState(false);
   const [activeFilter, setActiveFilter] = useState('all');
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedProduct, setSelectedProduct] = useState(null);
@@ -50,6 +51,11 @@ const HomePage = () => {
       if (bannersRes.data) setBanners(bannersRes.data);
     };
     fetchContent();
+
+    // ⭐ Safety: kalau banners gak load dalam 6s (network error / DB down),
+    // hide overlay & show fallback hero. Cegah infinite loader.
+    const timeout = setTimeout(() => setOverlayTimedOut(true), 6000);
+    return () => clearTimeout(timeout);
   }, []);
 
   // Deep link: ?filter=xxx
@@ -135,16 +141,57 @@ const HomePage = () => {
       <HeaderProducts onCartOpen={openCart} />
 
       {/* ═══════════════════════════════════════════════════════════════
-          SECTION 1: HERO — Parallax + Transform Swiper
+          LOADING OVERLAY — Full viewport, covers EVERYTHING (header, footer)
+          ──────────────────────────────────────────────────────────────
+          Identical to pre-hydration loader (index.html) supaya seamless:
+            T+0     → Pre-hydration loader (white bg + SVG logo)
+            T+400ms → React mount → pre-hydration fades out
+            T+400ms → This overlay takes over (white bg + SVG logo, same animation)
+            T+1s    → Banners load → overlay disappears → HeroSwiper visible
+          
+          User sees: continuous SVG logo on white bg, no flash, no header visible.
+          
+          Safety: kalau 6s banners belum load (network error), overlay timeout
+          & fallback hero muncul. Cegah infinite loader.
+          ═══════════════════════════════════════════════════════════════ */}
+      {banners.length === 0 && !overlayTimedOut && (
+        <div
+          className="fixed inset-0 z-[10000] flex items-center justify-center bg-white"
+          aria-hidden="true"
+        >
+          <img
+            src="https://mbuwpjxpxvnsxjusrnlk.supabase.co/storage/v1/object/public/logo/Logo-Loading.svg"
+            alt=""
+            className="w-[min(280px,70vw)] h-auto"
+            style={{
+              animation: 'eglux-logo-reveal 1.6s cubic-bezier(0.22, 1, 0.36, 1) infinite',
+              WebkitUserDrag: 'none',
+              userSelect: 'none',
+            }}
+            draggable={false}
+          />
+        </div>
+      )}
+
+      {/* ═══════════════════════════════════════════════════════════════
+          SECTION 1: HERO — Parallax + Transform Swiper (full viewport)
           ═══════════════════════════════════════════════════════════════ */}
       {banners.length > 0 ? (
         <HeroSwiper banners={banners} onBannerClick={handleBannerClick} />
       ) : (
-        <section className="hero-parallax bg-[var(--eglux-accent)] flex items-center justify-center">
-          <div className="text-center px-4">
-            <h2 className="font-heading text-[2rem] md:text-[4rem] font-medium text-eglux-primary tracking-tight">EGLUX</h2>
-            <p className="text-[0.8rem] md:text-[1rem] text-eglux-text-muted mt-3 tracking-[0.15em] uppercase">Produk Rumah Tangga & Dapur Berkualitas</p>
-          </div>
+        // Fallback hero — hanya muncul kalau overlay timeout (banners gagal load)
+        <section className="hero-parallax bg-[var(--eglux-accent)] flex items-center justify-center" aria-hidden="true">
+          <img
+            src="https://mbuwpjxpxvnsxjusrnlk.supabase.co/storage/v1/object/public/logo/Logo-Loading.svg"
+            alt=""
+            className="w-[min(280px,70vw)] h-auto"
+            style={{
+              animation: 'eglux-logo-reveal 1.6s cubic-bezier(0.22, 1, 0.36, 1) infinite',
+              WebkitUserDrag: 'none',
+              userSelect: 'none',
+            }}
+            draggable={false}
+          />
         </section>
       )}
 
@@ -354,8 +401,8 @@ const HeroSwiper = ({ banners, onBannerClick }) => {
             className="w-full h-full flex-shrink-0 relative cursor-pointer"
             onClick={() => onBannerClick(banner)}
           >
-            <img src={banner.image_url} alt={banner.title || 'EGLUX'} className="w-full h-full object-cover" />
-            <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-black/10" />
+            <img src={banner.image_url} alt={banner.title || 'EGLUX'} className="w-full h-full object-cover" draggable={false} style={{ WebkitUserDrag: 'none', userSelect: 'none' }} />
+            <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-black/10 pointer-events-none" />
             <div className="hero-overlay" style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
               <div className="max-w-container mx-auto text-center">
                 {banner.subtitle && (

@@ -292,11 +292,33 @@ h1, h2, h3, h4, h5, h6,
 .hero-parallax {
   position: sticky;
   top: 0;
+  /* ⭐ Full viewport on ALL media:
+     - 100vh: standard (fallback for older browsers)
+     - 100dvh: dynamic viewport (mobile URL bar show/hide)
+     - 100svh: small viewport (most conservative — for mobile keyboards etc.)
+     Order matters: last supported value wins. */
   height: 100vh;
   width: 100%;
+  /* ⭐ Banner goes BEHIND transparent header — no top padding/margin */
+  margin: 0;
+  padding: 0;
   z-index: 0;
   overflow: hidden;
   background: var(--eglux-accent);
+  /* ⭐ Swipe-friendly defaults (defensive — inline styles also set on component) */
+  touch-action: pan-y;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* ⭐ Prevent native image drag inside hero (Safari/Chrome desktop) */
+.hero-parallax img {
+  -webkit-user-drag: none;
+  user-drag: none;
+  pointer-events: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 /* ── Section overlay: scrolls over the parallax hero ── */
@@ -342,4 +364,88 @@ body {
   .section-overlay {
     min-height: 100vh;
   }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * PageLoader — React loader (checkout, route transitions, fetch)
+ * Same animation as pre-hydration loader: logo rises from bottom + opacity 50→100
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ⭐ Keyframes — duplicate dari inline <style> di index.html supaya
+   PageLoader (React component) juga punya animasi yang sama. */
+@keyframes eglux-logo-reveal {
+  0%   { opacity: 0.5; transform: translateY(16px); }
+  50%  { opacity: 1;   transform: translateY(0); }
+  100% { opacity: 0.5; transform: translateY(16px); }
+}
+@keyframes eglux-tagline-fade {
+  0%, 100% { opacity: 0.3; }
+  50%      { opacity: 0.8; }
+}
+
+.eglux-page-loader {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+
+.eglux-page-loader--fixed {
+  position: fixed;
+  inset: 0;
+}
+
+.eglux-page-loader--inline {
+  position: absolute;
+  inset: 0;
+}
+
+.eglux-page-loader--blur {
+  background: rgba(255, 255, 255, 0.75);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.eglux-page-loader--solid {
+  background: #ffffff;
+}
+
+.eglux-page-loader__logo {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  width: min(280px, 70vw);
+}
+
+.eglux-page-loader__logo img {
+  width: 100%;
+  height: auto;
+  display: block;
+  -webkit-user-drag: none;
+  user-select: none;
+  animation: eglux-logo-reveal 1.6s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+}
+
+.eglux-page-loader__label {
+  font-family: var(--font-body), 'Inter', system-ui, sans-serif;
+  font-size: 0.7rem;
+  font-weight: 400;
+  letter-spacing: 0.2em;
+  color: var(--eglux-primary);
+  text-transform: uppercase;
+  opacity: 0.6;
+  margin: 0;
+  text-align: center;
+  animation: eglux-tagline-fade 1.6s ease-in-out infinite;
+  animation-delay: 0.15s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .eglux-page-loader__logo img,
+  .eglux-page-loader__label {
+    animation: none;
+  }
+  .eglux-page-loader__logo img { opacity: 1; transform: none; }
+  .eglux-page-loader__label { opacity: 0.6; }
 }
