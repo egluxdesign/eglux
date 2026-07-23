@@ -1,15 +1,15 @@
 // src/pages/HomePage.jsx
 // ============================================================================
-// HomePage v4.2 — Parallax hero + combined sections + 2-col grid
+// HomePage v4.3 — Parallax hero + transform swiper + sticky filter + no carousel
 // ============================================================================
 //
-// Changes from v4.1:
-//   - Best Seller + Produk Baru combined into 1 section (both visible in 1 viewport)
-//   - Other sections: natural flow (no forced min-height: 100vh)
-//   - Only hero is full-page parallax; category carousel is full-page
+// Changes from v4.2:
+//   - HeroSwiper: transform-based (arrows work, smooth, touch-friendly)
+//   - DuplicateNav removed; filter bar gets sticky behavior when touching header
+//   - Category Carousel section removed
 // ============================================================================
 
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import HeaderProducts from '../components/layout/HeaderProducts';
 import Footer from '../components/layout/Footer';
@@ -20,6 +20,8 @@ import '/src/assets/styles/eglux-design-system.css';
 import useProducts from '../hooks/useProducts';
 
 const ITEMS_PER_PAGE = 20;
+const HEADER_HEIGHT_DESKTOP = 72;
+const HEADER_HEIGHT_MOBILE = 60;
 
 function filterProducts(products, filterValue) {
   if (filterValue === 'all') return products;
@@ -33,25 +35,24 @@ const HomePage = () => {
   const { products, filterButtons, loading, error } = useProducts();
 
   const [banners, setBanners] = useState([]);
-  const [categories, setCategories] = useState([]);
   const [activeFilter, setActiveFilter] = useState('all');
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const productsSectionRef = useRef(null);
+  const filterWrapperRef = useRef(null);
+  const [filterStuck, setFilterStuck] = useState(false);
 
+  // Fetch banners
   useEffect(() => {
     const fetchContent = async () => {
-      const [bannersRes, categoriesRes] = await Promise.all([
-        supabase.from('homepage_banners').select('*').eq('is_active', true).order('position', { ascending: true }),
-        supabase.from('homepage_categories').select('*').eq('is_active', true).order('position', { ascending: true }),
-      ]);
+      const bannersRes = await supabase.from('homepage_banners').select('*').eq('is_active', true).order('position', { ascending: true });
       if (bannersRes.data) setBanners(bannersRes.data);
-      if (categoriesRes.data) setCategories(categoriesRes.data);
     };
     fetchContent();
   }, []);
 
+  // Deep link: ?filter=xxx
   useEffect(() => {
     const filter = searchParams.get('filter');
     if (filter) {
@@ -60,6 +61,7 @@ const HomePage = () => {
     }
   }, [searchParams]);
 
+  // Deep link: ?open=<product_id>
   useEffect(() => {
     if (!products.length) return;
     const openId = searchParams.get('open');
@@ -71,6 +73,24 @@ const HomePage = () => {
       setSearchParams(searchParams, { replace: true });
     }
   }, [products, searchParams, setSearchParams]);
+
+  // ⭐ Sticky filter bar — detect when filter bar touches header
+  useEffect(() => {
+    let ticking = false;
+    const onScroll = () => {
+      if (!filterWrapperRef.current) return;
+      const headerH = window.innerWidth >= 768 ? HEADER_HEIGHT_DESKTOP : HEADER_HEIGHT_MOBILE;
+      const wrapperTop = filterWrapperRef.current.getBoundingClientRect().top;
+      setFilterStuck(wrapperTop <= headerH);
+      ticking = false;
+    };
+    const handle = () => {
+      if (!ticking) { requestAnimationFrame(onScroll); ticking = true; }
+    };
+    window.addEventListener('scroll', handle, { passive: true });
+    onScroll();
+    return () => window.removeEventListener('scroll', handle);
+  }, []);
 
   const filteredProducts = useMemo(() => filterProducts(products, activeFilter), [products, activeFilter]);
   const totalPages = Math.ceil(filteredProducts.length / ITEMS_PER_PAGE) || 1;
@@ -96,11 +116,6 @@ const HomePage = () => {
     }
   };
 
-  const handleCategoryClick = (category) => {
-    setActiveFilter(category.filter_value); setCurrentPage(1);
-    productsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  };
-
   const handleHighlightProduct = (product) => {
     if (product.badge === 'Best Seller') setActiveFilter('bestseller');
     else if (product.badge === 'Baru') setActiveFilter('produkbaru');
@@ -112,12 +127,15 @@ const HomePage = () => {
   const closeModal = () => setSelectedProduct(null);
   const formatPrice = (v) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(v ?? 0);
 
+  // Sticky filter header height
+  const headerH = typeof window !== 'undefined' && window.innerWidth >= 768 ? HEADER_HEIGHT_DESKTOP : HEADER_HEIGHT_MOBILE;
+
   return (
     <>
       <HeaderProducts onCartOpen={openCart} />
 
       {/* ═══════════════════════════════════════════════════════════════
-          SECTION 1: HERO — Parallax sticky + swipeable banner
+          SECTION 1: HERO — Parallax + Transform Swiper
           ═══════════════════════════════════════════════════════════════ */}
       {banners.length > 0 ? (
         <HeroSwiper banners={banners} onBannerClick={handleBannerClick} />
@@ -131,18 +149,17 @@ const HomePage = () => {
       )}
 
       {/* ═══════════════════════════════════════════════════════════════
-          SECTION 2: BEST SELLER + PRODUK BARU (combined, 1 viewport)
+          SECTION 2: BEST SELLER + PRODUK BARU (combined)
           ═══════════════════════════════════════════════════════════════ */}
       {(bestSellers.length > 0 || newArrivals.length > 0) && (
-        <section className="section-overlay bg-white py-16 md:py-20">
-          <div className="max-w-[1600px] mx-auto px-4 md:px-8">
+        <section className="section-overlay bg-white min-h-screen flex flex-col justify-center py-8 md:py-12">
+          <div className="max-w-[1600px] mx-auto px-4 md:px-8 w-full">
 
-            {/* Best Seller subsection */}
             {bestSellers.length > 0 && (
-              <div className="mb-12 md:mb-16">
-                <div className="flex items-end justify-between mb-6 md:mb-8">
+              <div className="mb-6 md:mb-8">
+                <div className="flex items-end justify-between mb-3 md:mb-5">
                   <div>
-                    <h2 className="section-title text-[1.4rem] md:text-[1.8rem]">Best Seller</h2>
+                    <h2 className="section-title text-[1.3rem] md:text-[1.6rem]">Best Seller</h2>
                     <p className="section-subtitle">Produk terlaris paling dicari</p>
                   </div>
                   <button
@@ -152,21 +169,19 @@ const HomePage = () => {
                     Lihat Semua
                   </button>
                 </div>
-                {/* ⭐ 4 columns for Best Seller (different from All Products 2-col) */}
                 <div className="grid grid-cols-4 gap-2 md:gap-4">
                   {bestSellers.map((product) => (
-                    <ProductCard key={product.id} product={product} onClick={() => handleHighlightProduct(product)} formatPrice={formatPrice} compact />
+                    <ProductCard key={product.id} product={product} onClick={() => handleHighlightProduct(product)} formatPrice={formatPrice} compact hideBadge />
                   ))}
                 </div>
               </div>
             )}
 
-            {/* Produk Baru subsection (same section, no extra spacing) */}
             {newArrivals.length > 0 && (
               <div>
-                <div className="flex items-end justify-between mb-6 md:mb-8">
+                <div className="flex items-end justify-between mb-3 md:mb-5">
                   <div>
-                    <h2 className="section-title text-[1.4rem] md:text-[1.8rem]">Produk Baru</h2>
+                    <h2 className="section-title text-[1.3rem] md:text-[1.6rem]">Produk Baru</h2>
                     <p className="section-subtitle">Koleksi terbaru EGLUX</p>
                   </div>
                   <button
@@ -176,10 +191,9 @@ const HomePage = () => {
                     Lihat Semua
                   </button>
                 </div>
-                {/* ⭐ 4 columns for Produk Baru */}
                 <div className="grid grid-cols-4 gap-2 md:gap-4">
                   {newArrivals.map((product) => (
-                    <ProductCard key={product.id} product={product} onClick={() => handleHighlightProduct(product)} formatPrice={formatPrice} compact />
+                    <ProductCard key={product.id} product={product} onClick={() => handleHighlightProduct(product)} formatPrice={formatPrice} compact hideBadge />
                   ))}
                 </div>
               </div>
@@ -189,58 +203,47 @@ const HomePage = () => {
       )}
 
       {/* ═══════════════════════════════════════════════════════════════
-          SECTION 3: CATEGORY CAROUSEL
+          SECTION 3: ALL PRODUCTS — with sticky filter bar
           ═══════════════════════════════════════════════════════════════ */}
-      {categories.length > 0 && (
-        <section className="section-overlay bg-[var(--eglux-accent)] py-16 md:py-20">
-          <div className="max-w-[1600px] mx-auto px-4 md:px-8">
-            <h2 className="section-title mb-6 md:mb-8">Kategori</h2>
-            <div className="flex gap-6 md:gap-8 overflow-x-auto pb-4 no-scrollbar">
-              {categories.map((category) => (
-                <button key={category.id} onClick={() => handleCategoryClick(category)} className="flex-shrink-0 w-[200px] md:w-[280px] group cursor-pointer border-none bg-transparent p-0">
-                  <div className="relative w-full h-[260px] md:h-[360px] overflow-hidden">
-                    <img src={category.image_url} alt={category.name} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" loading="lazy" />
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent" />
-                    <div className="absolute bottom-0 left-0 right-0 p-5 md:p-6">
-                      <p className="text-white text-[1rem] md:text-[1.2rem] font-light tracking-wide font-heading">{category.name}</p>
-                    </div>
-                  </div>
-                </button>
-              ))}
-            </div>
-          </div>
-        </section>
-      )}
-
-      {/* ═══════════════════════════════════════════════════════════════
-          SECTION 4: ALL PRODUCTS (natural flow, 2-column grid)
-          ═══════════════════════════════════════════════════════════════ */}
-      <section ref={productsSectionRef} className="section-overlay bg-white py-16 md:py-20" id="products-section">
+      <section ref={productsSectionRef} className="section-overlay bg-white pt-4 md:pt-8 pb-10 md:pb-16" id="products-section">
         <div className="max-w-[1600px] mx-auto px-4 md:px-8">
 
-          <div className="text-center mb-8 md:mb-12">
+          <div className="text-center mb-4 md:mb-8">
             <h2 className="section-title text-[1.6rem] md:text-[2rem]">Semua Produk</h2>
             <p className="section-subtitle mt-2">Temukan produk rumah tangga berkualitas untuk Anda</p>
           </div>
 
-          {/* Filter */}
-          {!loading && !error && (
-            <div className="flex justify-center gap-1 md:gap-3 flex-wrap mb-8 md:mb-12">
-              {filterButtons.map((btn) => (
-                <button key={btn.value} onClick={() => handleFilterChange(btn.value)}
-                  className={`filter-btn ${activeFilter === btn.value ? 'filter-btn--active' : ''}`}>
-                  {btn.label}
-                </button>
-              ))}
+          {/* ⭐ Sticky filter wrapper — detects scroll position */}
+          <div ref={filterWrapperRef} className="min-h-[48px]">
+            <div
+              className={`transition-all duration-300 ${filterStuck
+                ? 'fixed left-0 right-0 z-[999] bg-white shadow-[0_2px_8px_rgba(0,0,0,0.06)]'
+                : 'relative bg-transparent'
+              }`}
+              style={filterStuck ? { top: `${headerH}px` } : undefined}
+            >
+              <div className="max-w-[1600px] mx-auto px-4 md:px-8">
+                <div className="flex justify-center gap-1 md:gap-3 flex-wrap py-3">
+                  {filterButtons.map((btn) => (
+                    <button
+                      key={btn.value}
+                      onClick={() => handleFilterChange(btn.value)}
+                      className={`filter-btn ${activeFilter === btn.value ? 'filter-btn--active' : ''}`}
+                    >
+                      {btn.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
-          )}
+          </div>
 
           {loading && <p className="text-center text-gray-400 py-20 text-sm">Memuat produk...</p>}
           {error && <p className="text-center text-red-500 py-20 text-sm">Gagal memuat produk.</p>}
 
           {!loading && !error && (
             paginatedProducts.length > 0 ? (
-              <div className="grid grid-cols-2 gap-4 md:gap-6">
+              <div className="grid grid-cols-2 gap-4 md:gap-6 mt-4 md:mt-8">
                 {paginatedProducts.map((product) => (
                   <ProductCard key={product.id} product={product} onClick={() => setSelectedProduct(product)} formatPrice={formatPrice} />
                 ))}
@@ -282,76 +285,88 @@ const HomePage = () => {
 };
 
 // ============================================================================
-// HeroSwiper — Functional swipeable hero with dots + auto-advance
+// HeroSwiper — Transform-based (arrows work, smooth, touch-friendly)
 // ============================================================================
 const HeroSwiper = ({ banners, onBannerClick }) => {
   const [activeIdx, setActiveIdx] = useState(0);
-  const scrollRef = useRef(null);
-  const isDragging = useRef(false);
-  const startX = useRef(0);
-  const scrollStart = useRef(0);
+  const touchStartX = useRef(0);
+  const touchEndX = useRef(0);
+  const autoAdvanceRef = useRef(null);
 
-  // Auto-advance every 5s
-  useEffect(() => {
-    if (banners.length <= 1) return;
-    const interval = setInterval(() => {
-      setActiveIdx((prev) => (prev + 1) % banners.length);
-    }, 5000);
-    return () => clearInterval(interval);
+  const next = useCallback(() => {
+    setActiveIdx((prev) => (prev + 1) % banners.length);
   }, [banners.length]);
 
-  // Scroll to active slide
+  const prev = useCallback(() => {
+    setActiveIdx((p) => (p - 1 + banners.length) % banners.length);
+  }, [banners.length]);
+
+  const goTo = useCallback((idx) => {
+    setActiveIdx(idx);
+  }, []);
+
+  // Auto-advance every 5s — reset on manual interaction
   useEffect(() => {
-    if (scrollRef.current && banners.length > 1) {
-      const scrollLeft = activeIdx * scrollRef.current.offsetWidth;
-      scrollRef.current.scrollTo({ left: scrollLeft, behavior: 'smooth' });
+    if (banners.length <= 1) return;
+    autoAdvanceRef.current = setInterval(next, 5000);
+    return () => clearInterval(autoAdvanceRef.current);
+  }, [banners.length, next]);
+
+  const resetAutoAdvance = () => {
+    if (autoAdvanceRef.current) {
+      clearInterval(autoAdvanceRef.current);
+      autoAdvanceRef.current = setInterval(next, 5000);
     }
-  }, [activeIdx, banners.length]);
-
-  // Detect active slide on manual scroll
-  const handleScroll = () => {
-    if (!scrollRef.current || isDragging.current) return;
-    const scrollLeft = scrollRef.current.scrollLeft;
-    const width = scrollRef.current.offsetWidth;
-    const idx = Math.round(scrollLeft / width);
-    if (idx !== activeIdx) setActiveIdx(idx);
   };
 
-  // Mouse drag support (desktop)
+  // Touch handlers (mobile swipe)
+  const handleTouchStart = (e) => {
+    touchStartX.current = e.touches[0].clientX;
+  };
+  const handleTouchEnd = (e) => {
+    touchEndX.current = e.changedTouches[0].clientX;
+    const delta = touchStartX.current - touchEndX.current;
+    if (Math.abs(delta) > 50) {
+      if (delta > 0) next();
+      else prev();
+      resetAutoAdvance();
+    }
+  };
+
+  // Mouse handlers (desktop drag)
   const handleMouseDown = (e) => {
-    isDragging.current = true;
-    startX.current = e.pageX;
-    scrollStart.current = scrollRef.current.scrollLeft;
+    touchStartX.current = e.clientX;
   };
-  const handleMouseMove = (e) => {
-    if (!isDragging.current) return;
-    e.preventDefault();
-    const delta = e.pageX - startX.current;
-    scrollRef.current.scrollLeft = scrollStart.current - delta;
-  };
-  const handleMouseUp = () => {
-    isDragging.current = false;
+  const handleMouseUp = (e) => {
+    touchEndX.current = e.clientX;
+    const delta = touchStartX.current - touchEndX.current;
+    if (Math.abs(delta) > 50) {
+      if (delta > 0) next();
+      else prev();
+      resetAutoAdvance();
+    }
   };
 
   return (
-    <section className="hero-parallax">
+    <section
+      className="hero-parallax overflow-hidden"
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
+      onMouseDown={handleMouseDown}
+      onMouseUp={handleMouseUp}
+    >
+      {/* Slides container — transform translateX */}
       <div
-        ref={scrollRef}
-        onScroll={handleScroll}
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseUp}
-        className="w-full h-full flex overflow-x-auto snap-x snap-mandatory no-scrollbar cursor-grab active:cursor-grabbing"
-        style={{ scrollBehavior: 'smooth' }}
+        className="flex h-full transition-transform duration-700 ease-out"
+        style={{ transform: `translateX(-${activeIdx * 100}%)` }}
       >
         {banners.map((banner) => (
           <div
             key={banner.id}
-            className="w-full h-full flex-shrink-0 snap-center relative"
-            onClick={() => !isDragging.current && onBannerClick(banner)}
+            className="w-full h-full flex-shrink-0 relative cursor-pointer"
+            onClick={() => onBannerClick(banner)}
           >
-            <img src={banner.image_url} alt={banner.title || 'EGLUX'} className="w-full h-full object-cover pointer-events-none" />
+            <img src={banner.image_url} alt={banner.title || 'EGLUX'} className="w-full h-full object-cover" />
             <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-black/10" />
             <div className="hero-overlay" style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
               <div className="max-w-container mx-auto text-center">
@@ -378,7 +393,7 @@ const HeroSwiper = ({ banners, onBannerClick }) => {
           {banners.map((_, idx) => (
             <button
               key={idx}
-              onClick={() => setActiveIdx(idx)}
+              onClick={() => { goTo(idx); resetAutoAdvance(); }}
               className={`rounded-full transition-all duration-300 cursor-pointer border-none ${
                 idx === activeIdx ? 'w-6 h-1.5 bg-white' : 'w-1.5 h-1.5 bg-white/50'
               }`}
@@ -388,19 +403,19 @@ const HeroSwiper = ({ banners, onBannerClick }) => {
         </div>
       )}
 
-      {/* Arrow nav (desktop) */}
+      {/* Arrows (desktop + mobile) */}
       {banners.length > 1 && (
         <>
           <button
-            onClick={() => setActiveIdx((prev) => (prev - 1 + banners.length) % banners.length)}
-            className="hidden md:flex absolute left-6 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-white/20 hover:bg-white/40 text-white items-center justify-center cursor-pointer border-none z-10 transition-all"
+            onClick={() => { prev(); resetAutoAdvance(); }}
+            className="absolute left-3 md:left-6 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-white/20 hover:bg-white/40 text-white items-center justify-center cursor-pointer border-none z-10 transition-all flex"
             aria-label="Previous"
           >
             <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><polyline points="15 18 9 12 15 6" /></svg>
           </button>
           <button
-            onClick={() => setActiveIdx((prev) => (prev + 1) % banners.length)}
-            className="hidden md:flex absolute right-6 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-white/20 hover:bg-white/40 text-white items-center justify-center cursor-pointer border-none z-10 transition-all"
+            onClick={() => { next(); resetAutoAdvance(); }}
+            className="absolute right-3 md:right-6 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-white/20 hover:bg-white/40 text-white items-center justify-center cursor-pointer border-none z-10 transition-all flex"
             aria-label="Next"
           >
             <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><polyline points="9 18 15 12 9 6" /></svg>
@@ -414,7 +429,7 @@ const HeroSwiper = ({ banners, onBannerClick }) => {
 // ============================================================================
 // ProductCard — Borderless Clean
 // ============================================================================
-const ProductCard = ({ product, onClick, formatPrice, compact }) => {
+const ProductCard = ({ product, onClick, formatPrice, compact, hideBadge }) => {
   const minVariantPrice = product?.minVariantPrice ?? null;
   const minOriginalPrice = product?.minOriginalPrice ?? null;
   const hasActiveDiscount = product?.hasActiveDiscount ?? false;
@@ -425,14 +440,14 @@ const ProductCard = ({ product, onClick, formatPrice, compact }) => {
     <article className="product-card group" onClick={onClick} role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && onClick()}>
       <div className={`product-card__image relative w-full overflow-hidden bg-[var(--eglux-accent)] rounded-xl md:rounded-2xl ${compact ? 'aspect-square' : 'aspect-[4/5]'}`}>
         <img src={product.image} alt={product.name} className="w-full h-full object-cover" loading="lazy" />
-        {product.badge && (
+        {product.badge && !hideBadge && (
           <span className="absolute top-2 left-2 md:top-3 md:left-3 bg-eglux-primary text-white text-[0.55rem] md:text-[0.7rem] font-medium uppercase tracking-[0.1em] px-2 py-0.5 md:px-2.5 md:py-1 rounded-full">{product.badge}</span>
         )}
         {hasDiscount && (
           <span className="absolute top-2 right-2 md:top-3 md:right-3 bg-red-500 text-white text-[0.65rem] md:text-[1.1rem] font-bold px-2 py-0.5 md:px-3 md:py-1.5 rounded-full">-{maxDiscountPercent}%</span>
         )}
       </div>
-      <div className={`pt-2 md:pt-4`}>
+      <div className="pt-2 md:pt-4">
         <div className="min-w-0 flex-1">
           <p className="product-card__name line-clamp-2 text-left">{product.name}</p>
           <div className="mt-1.5">

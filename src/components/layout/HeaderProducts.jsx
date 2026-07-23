@@ -16,6 +16,7 @@ import { useAuth } from '../../context/AuthContext';
 import Sidebar from './Sidebar';
 import { NAV_LINKS } from '../../data';
 import ProfileModal from '../ui/ProfileModal';
+import logoImg from '../../assets/img/Logo1.png';
 import '/src/assets/styles/eglux-design-system.css';
 
 // ── Cart Icon ──
@@ -48,7 +49,7 @@ const NAV_LINKS_COMPACT = NAV_LINKS.filter((l) => l.key !== 'home');
 
 // ── UserMenu ──
 const UserMenu = ({ isScrolled }) => {
-  const { user, profile, logout } = useAuth();
+  const { user, profile, logout, isAdmin } = useAuth();
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [profileModalOpen, setProfileModalOpen] = useState(false);
   const dropdownRef = useRef(null);
@@ -83,6 +84,17 @@ const UserMenu = ({ isScrolled }) => {
   const displayName = profile?.full_name || user.email?.split('@')[0] || 'Akun';
   const textColor = isScrolled ? 'text-eglux-primary' : 'text-white';
 
+  // User account menu items (atas) — mulai dari Profil Saya
+  const USER_MENU_ITEMS = [
+    { label: 'Profil Saya', href: null, icon: IconUser, action: () => { setDropdownOpen(false); setProfileModalOpen(true); } },
+    { label: 'Pesanan Saya', href: '/orders', icon: IconPackage2 },
+    { label: 'Lacak Pesanan', href: '/track', icon: IconTruck },
+    { label: 'Riwayat Order', href: '/order-history', icon: IconClipboard },
+    { label: 'Tiket Bantuan', href: '/tickets', icon: IconTicket },
+  ];
+  // Page links (bawah) — Produk, Tentang Kami, Kontak, Blog, Affiliate
+  const PAGE_MENU_ITEMS = NAV_LINKS_COMPACT;
+
   return (
     <div className="relative" ref={dropdownRef}>
       <button
@@ -100,28 +112,60 @@ const UserMenu = ({ isScrolled }) => {
 
       {dropdownOpen && (
         <div className="absolute right-0 top-full mt-2 w-56 bg-white rounded-xl shadow-2xl border border-[#eee] overflow-hidden z-[2000]">
+          {/* Header with name + email + role */}
           <div className="px-4 py-3 border-b border-[#eee] bg-[var(--eglux-accent)]">
             <p className="text-[0.78rem] font-medium text-eglux-primary truncate">{displayName}</p>
             <p className="text-[0.68rem] text-gray-500 truncate">{user.email}</p>
+            <span className="inline-block mt-1 text-[0.55rem] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-eglux-secondary/10 text-eglux-secondary">
+              {profile?.role || 'verified'}
+            </span>
           </div>
+
+          {/* Admin panel link (atas, hanya untuk admin) */}
+          {isAdmin && (
+            <div className="py-1">
+              <a href="/products-admin" className="flex items-center gap-3 px-4 py-2.5 text-[0.78rem] font-semibold text-eglux-secondary hover:bg-eglux-secondary/5 transition-colors no-underline">
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" /><rect x="14" y="14" width="7" height="7" /><rect x="3" y="14" width="7" height="7" /></svg>
+                Admin Panel
+              </a>
+            </div>
+          )}
+
+          {/* User account menu (atas) — Profil Saya, Pesanan, Lacak, Riwayat, Tiket */}
           <div className="py-1">
-            {NAV_LINKS_COMPACT.map((item) => {
+            {USER_MENU_ITEMS.map((item) => {
+              const Icon = item.icon;
+              if (item.action) {
+                return (
+                  <button key={item.label} onClick={item.action} className="w-full flex items-center gap-3 px-4 py-2.5 text-[0.78rem] text-eglux-primary hover:bg-[var(--eglux-accent)] transition-colors cursor-pointer border-none bg-transparent text-left">
+                    <Icon className="w-4 h-4" /> {item.label}
+                  </button>
+                );
+              }
+              return (
+                <a key={item.label} href={item.href} className="flex items-center gap-3 px-4 py-2.5 text-[0.78rem] text-eglux-primary hover:bg-[var(--eglux-accent)] transition-colors no-underline">
+                  <Icon className="w-4 h-4" /> {item.label}
+                </a>
+              );
+            })}
+          </div>
+
+          {/* Page links (bawah) — Produk, Tentang Kami, Kontak, Blog, Affiliate */}
+          <div className="border-t border-[#eee] py-1">
+            {PAGE_MENU_ITEMS.map((item) => {
               const Icon = NAV_ICONS[item.key];
               return (
-                <a key={item.href} href={item.href} className="flex items-center gap-3 px-4 py-2.5 text-[0.78rem] text-eglux-primary hover:bg-[var(--eglux-accent)] transition-colors no-underline">
+                <a key={item.href} href={item.href} className="flex items-center gap-3 px-4 py-2.5 text-[0.78rem] text-gray-500 hover:bg-[var(--eglux-accent)] transition-colors no-underline">
                   {Icon && <Icon />} {item.label}
                 </a>
               );
             })}
-            <div className="border-t border-[#eee] my-1" />
-            <button onClick={() => { setDropdownOpen(false); setProfileModalOpen(true); }} className="w-full flex items-center gap-3 px-4 py-2.5 text-[0.78rem] text-eglux-primary hover:bg-[var(--eglux-accent)] transition-colors cursor-pointer border-none bg-transparent text-left">
-              <IconUser className="w-4 h-4" /> Profil Saya
-            </button>
-            <a href="/orders" className="flex items-center gap-3 px-4 py-2.5 text-[0.78rem] text-eglux-primary hover:bg-[var(--eglux-accent)] transition-colors no-underline"><IconPackage2 /> Pesanan Saya</a>
-            <a href="/track" className="flex items-center gap-3 px-4 py-2.5 text-[0.78rem] text-eglux-primary hover:bg-[var(--eglux-accent)] transition-colors no-underline"><IconTruck /> Lacak Pesanan</a>
-            <a href="/order-history" className="flex items-center gap-3 px-4 py-2.5 text-[0.78rem] text-eglux-primary hover:bg-[var(--eglux-accent)] transition-colors no-underline"><IconClipboard /> Riwayat Order</a>
-            <a href="/tickets" className="flex items-center gap-3 px-4 py-2.5 text-[0.78rem] text-eglux-primary hover:bg-[var(--eglux-accent)] transition-colors no-underline"><IconTicket /> Tiket Bantuan</a>
           </div>
+
+          {/* Extra space before logout */}
+          <div className="h-3 bg-white" />
+
+          {/* Logout */}
           <div className="border-t border-[#eee] py-1">
             <button onClick={async () => { await logout(); setDropdownOpen(false); window.location.href = '/'; }} className="w-full flex items-center gap-3 px-4 py-2.5 text-[0.78rem] text-red-500 hover:bg-red-50 transition-colors cursor-pointer border-none bg-transparent">
               <IconLogOut className="w-4 h-4" /> Keluar
@@ -196,7 +240,7 @@ const HeaderProducts = ({ onCartOpen }) => {
             aria-label="EGLUX Beranda"
           >
             <img
-              src="/src/assets/img/Logo1.png"
+              src={logoImg}
               alt="Eglux Logo"
               className={`${logoHeight} w-auto max-w-[120px] transition-all duration-500 ease-out`}
               style={{ filter: logoFilter }}
