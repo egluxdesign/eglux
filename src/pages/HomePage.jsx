@@ -513,7 +513,7 @@ const ProductCard = ({ product, onClick, formatPrice, compact, hideBadge }) => {
       <div className={`product-card__image relative w-full overflow-hidden bg-[var(--eglux-accent)] rounded-xl md:rounded-2xl ${compact ? 'aspect-square' : 'aspect-[4/5]'}`}>
         <img src={product.image} alt={product.name} className="w-full h-full object-cover" loading="lazy" />
         {product.badge && !hideBadge && (
-          <span className="absolute top-2 left-2 md:top-3 md:left-3 bg-eglux-primary text-white text-[0.55rem] md:text-[0.7rem] font-medium uppercase tracking-[0.1em] px-2 py-0.5 md:px-2.5 md:py-1 rounded-full">{product.badge}</span>
+          <span className="absolute bottom-2 left-2 md:bottom-3 md:left-3 bg-eglux-primary text-white text-[0.55rem] md:text-[0.7rem] font-medium uppercase tracking-[0.1em] px-2 py-0.5 md:px-2.5 md:py-1 rounded-full">{product.badge}</span>
         )}
         {hasDiscount && (
           <span className="absolute top-2 right-2 md:top-3 md:right-3 bg-red-500 text-white text-[0.65rem] md:text-[1.1rem] font-bold px-2 py-0.5 md:px-3 md:py-1.5 rounded-full">-{maxDiscountPercent}%</span>

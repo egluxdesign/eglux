@@ -236,7 +236,7 @@ const ProductModal = ({ product, onClose, onAddToCart }) => {
             )}
 
             {product.badge && (
-              <span className="absolute top-4 left-4 z-[5] bg-eglux-secondary text-white text-[0.72rem] font-semibold py-1 px-3 rounded-full pointer-events-none">
+              <span className="absolute bottom-4 left-4 z-[5] bg-eglux-secondary text-white text-[0.72rem] font-semibold py-1 px-3 rounded-full pointer-events-none">
                 {product.badge}
               </span>
             )}
@@ -279,7 +279,12 @@ const ProductModal = ({ product, onClose, onAddToCart }) => {
           )}
 
           <div className="p-6 pt-3">
-            <h2 className="text-[1.1rem] font-bold text-eglux-primary mb-1 leading-snug">{product.name}</h2>
+            <h2
+              className="text-[1.1rem] font-bold text-eglux-primary mb-1 leading-snug"
+              style={{ fontFamily: 'var(--font-body)' }}
+            >
+              {product.name}
+            </h2>
             <p className="text-[0.8rem] text-[#999] mb-3 uppercase tracking-[0.5px]">{product.category}</p>
 
             <div className="mb-4 pb-4 border-b border-[#eee]">
