@@ -92,8 +92,9 @@ const UserMenu = ({ isScrolled }) => {
     { label: 'Riwayat Order', href: '/order-history', icon: IconClipboard },
     { label: 'Tiket Bantuan', href: '/tickets', icon: IconTicket },
   ];
-  // Page links (bawah) — Produk, Tentang Kami, Kontak, Blog, Affiliate
-  const PAGE_MENU_ITEMS = NAV_LINKS_COMPACT;
+  // ⭐ Page links (Blog/Tentang/Kontak/Affiliate) dihapus dari user menu —
+  //    akses ke page-page tersebut tetap via Sidebar (hamburger menu).
+  //    Logo di header sudah link ke home/produk, jadi link "Produk" juga dihapus.
 
   return (
     <div className="relative" ref={dropdownRef}>
@@ -150,17 +151,9 @@ const UserMenu = ({ isScrolled }) => {
             })}
           </div>
 
-          {/* Page links (bawah) — Produk, Tentang Kami, Kontak, Blog, Affiliate */}
-          <div className="border-t border-[#eee] py-1">
-            {PAGE_MENU_ITEMS.map((item) => {
-              const Icon = NAV_ICONS[item.key];
-              return (
-                <a key={item.href} href={item.href} className="flex items-center gap-3 px-4 py-2.5 text-[0.78rem] text-gray-500 hover:bg-[var(--eglux-accent)] transition-colors no-underline">
-                  {Icon && <Icon />} {item.label}
-                </a>
-              );
-            })}
-          </div>
+          {/* Page links (Blog/Tentang/Kontak/Affiliate) dihapus dari sini.
+              Akses ke page tersebut tetap via Sidebar (hamburger menu).
+              Spasi sebelum logout tetap dipertahankan di bawah ini. */}
 
           {/* Extra space before logout */}
           <div className="h-3 bg-white" />

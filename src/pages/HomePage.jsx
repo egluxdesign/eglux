@@ -196,51 +196,17 @@ const HomePage = () => {
       )}
 
       {/* ═══════════════════════════════════════════════════════════════
-          SECTION 2: BEST SELLER + PRODUK BARU (horizontal scroll + Lihat Lainnya)
+          SECTION 2: PRODUK BARU + BEST SELLER (horizontal scroll + Lihat Lainnya)
+          ──────────────────────────────────────────────────────────────
+          Urutan: Produk Baru dulu, baru Best Seller.
+          "Lihat Lainnya" card hanya muncul kalau section punya >5 produk.
           ═══════════════════════════════════════════════════════════════ */}
       {(bestSellers.length > 0 || newArrivals.length > 0) && (
         <section className="section-overlay bg-eglux-text-muted py-4 md:py-12">
           <div className="max-w-[1600px] mx-auto px-4 md:px-8 w-full">
 
-            {bestSellers.length > 0 && (
-              <div className="mb-4 md:mb-8">
-                <div className="flex items-end justify-between mb-2 md:mb-5">
-                  <div>
-                    <h2 className="section-title text-[1.2rem] md:text-[1.6rem]">Best Seller</h2>
-                    <p className="section-subtitle">Produk terlaris paling dicari</p>
-                  </div>
-                  <button
-                    onClick={() => { setActiveFilter('bestseller'); setCurrentPage(1); productsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}
-                    className="see-all-link"
-                  >
-                    Lihat Semua
-                  </button>
-                </div>
-                {/* ⭐ Horizontal scroll container — mobile & desktop both scroll sideways */}
-                <div className="eglux-hscroll -mx-4 md:mx-0 px-4 md:px-0">
-                  <div className="eglux-hscroll__track">
-                    {bestSellers.map((product) => (
-                      <div key={product.id} className="eglux-hscroll__item">
-                        <ProductCard product={product} onClick={() => handleHighlightProduct(product)} formatPrice={formatPrice} compact hideBadge />
-                      </div>
-                    ))}
-                    {/* ⭐ "Lihat Lainnya" card — last item, redirect ke filter bestseller */}
-                    <button
-                      type="button"
-                      onClick={() => { setActiveFilter('bestseller'); setCurrentPage(1); productsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}
-                      className="eglux-hscroll__item eglux-hscroll__more"
-                      aria-label="Lihat lainnya"
-                    >
-                      <svg className="w-6 h-6 mb-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><polyline points="9 18 15 12 9 6" /></svg>
-                      <span className="text-[0.7rem] md:text-[0.85rem] font-medium tracking-wide">Lihat Lainnya</span>
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-
             {newArrivals.length > 0 && (
-              <div>
+              <div className="mb-4 md:mb-8">
                 <div className="flex items-end justify-between mb-2 md:mb-5">
                   <div>
                     <h2 className="section-title text-[1.2rem] md:text-[1.6rem]">Produk Baru</h2>
@@ -253,7 +219,7 @@ const HomePage = () => {
                     Lihat Semua
                   </button>
                 </div>
-                {/* ⭐ Horizontal scroll container — same pattern as Best Seller */}
+                {/* ⭐ Horizontal scroll container — mobile & desktop both scroll sideways */}
                 <div className="eglux-hscroll -mx-4 md:mx-0 px-4 md:px-0">
                   <div className="eglux-hscroll__track">
                     {newArrivals.map((product) => (
@@ -261,16 +227,57 @@ const HomePage = () => {
                         <ProductCard product={product} onClick={() => handleHighlightProduct(product)} formatPrice={formatPrice} compact hideBadge />
                       </div>
                     ))}
-                    {/* ⭐ "Lihat Lainnya" card — last item, redirect ke filter produkbaru */}
-                    <button
-                      type="button"
-                      onClick={() => { setActiveFilter('produkbaru'); setCurrentPage(1); productsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}
-                      className="eglux-hscroll__item eglux-hscroll__more"
-                      aria-label="Lihat lainnya"
-                    >
-                      <svg className="w-6 h-6 mb-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><polyline points="9 18 15 12 9 6" /></svg>
-                      <span className="text-[0.7rem] md:text-[0.85rem] font-medium tracking-wide">Lihat Lainnya</span>
-                    </button>
+                    {/* ⭐ "Lihat Lainnya" card — hanya muncul kalau >5 produk */}
+                    {newArrivals.length > 5 && (
+                      <button
+                        type="button"
+                        onClick={() => { setActiveFilter('produkbaru'); setCurrentPage(1); productsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}
+                        className="eglux-hscroll__item eglux-hscroll__more"
+                        aria-label="Lihat lainnya"
+                      >
+                        <svg className="w-6 h-6 mb-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><polyline points="9 18 15 12 9 6" /></svg>
+                        <span className="text-[0.7rem] md:text-[0.85rem] font-medium tracking-wide">Lihat Lainnya</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {bestSellers.length > 0 && (
+              <div>
+                <div className="flex items-end justify-between mb-2 md:mb-5">
+                  <div>
+                    <h2 className="section-title text-[1.2rem] md:text-[1.6rem]">Best Seller</h2>
+                    <p className="section-subtitle">Produk terlaris paling dicari</p>
+                  </div>
+                  <button
+                    onClick={() => { setActiveFilter('bestseller'); setCurrentPage(1); productsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}
+                    className="see-all-link"
+                  >
+                    Lihat Semua
+                  </button>
+                </div>
+                {/* ⭐ Horizontal scroll container — same pattern as Produk Baru */}
+                <div className="eglux-hscroll -mx-4 md:mx-0 px-4 md:px-0">
+                  <div className="eglux-hscroll__track">
+                    {bestSellers.map((product) => (
+                      <div key={product.id} className="eglux-hscroll__item">
+                        <ProductCard product={product} onClick={() => handleHighlightProduct(product)} formatPrice={formatPrice} compact hideBadge />
+                      </div>
+                    ))}
+                    {/* ⭐ "Lihat Lainnya" card — hanya muncul kalau >5 produk */}
+                    {bestSellers.length > 5 && (
+                      <button
+                        type="button"
+                        onClick={() => { setActiveFilter('bestseller'); setCurrentPage(1); productsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}
+                        className="eglux-hscroll__item eglux-hscroll__more"
+                        aria-label="Lihat lainnya"
+                      >
+                        <svg className="w-6 h-6 mb-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><polyline points="9 18 15 12 9 6" /></svg>
+                        <span className="text-[0.7rem] md:text-[0.85rem] font-medium tracking-wide">Lihat Lainnya</span>
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
