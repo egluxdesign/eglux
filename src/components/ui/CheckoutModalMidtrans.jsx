@@ -1017,7 +1017,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
               />
               <InlineError msg={formErrors.city} />
               <p className="text-[0.72rem] text-gray-500 mt-1">
-                97 kota di Indonesia · ketik untuk cari (misal: "bandung", "jakarta", "surabaya")
+                Nama Kota Tujuan (misal: "bandung", "jakarta", "surabaya")
               </p>
             </div>
 
@@ -1045,7 +1045,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
             {/* Loading area lookup */}
             {areasLoading && (
               <div className="text-[0.78rem] text-gray-500 flex items-center gap-2">
-                <Loader2 className="w-3.5 h-3.5 animate-spin" /> Mencari area Biteship...
+                <Loader2 className="w-3.5 h-3.5 animate-spin" /> Mencari area...
               </div>
             )}
 
@@ -1090,7 +1090,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
             {/* Not found */}
             {showAreaNotFound && (
               <p className="text-[0.78rem] text-red-500">
-                Kode pos tidak ditemukan di Biteship. Periksa kembali.
+                Kode pos tidak ditemukan. Periksa kembali.
               </p>
             )}
           </section>
