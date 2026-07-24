@@ -480,6 +480,23 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
     if (!selectedShipping) errors.shipping = 'Pilih kurir terlebih dahulu';
     if (!snapReady) errors.system = 'Sistem pembayaran belum siap, coba sesaat lagi';
 
+    // ⭐ Stock check (prevent oversell di frontend — Option C dari rekomendasi)
+    // Cek setiap cart item: kalau qty > available stock, tampilkan error
+    // Backend (midtrans-webhook) tetap allow oversell (Option B), tapi frontend
+    // mencegah user submit kalau stock tidak cukup.
+    // Note: stock bisa null (variant tanpa stock tracking) — skip check untuk itu
+    const oversoldItems = cart.filter((item) => {
+      if (item.stock === null || item.stock === undefined) return false;
+      return item.qty > item.stock;
+    });
+    if (oversoldItems.length > 0) {
+      const firstItem = oversoldItems[0];
+      const itemDesc = firstItem.variantName
+        ? `${firstItem.name} (${firstItem.variantName})`
+        : firstItem.name;
+      errors.stock = `Stok tidak cukup untuk ${itemDesc}. Tersedia: ${firstItem.stock}, diminta: ${firstItem.qty}. Mohon kurangi jumlah atau hapus item dari keranjang.`;
+    }
+
     setFormErrors(errors);
 
     if (Object.keys(errors).length > 0) {

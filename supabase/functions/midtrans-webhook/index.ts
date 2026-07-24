@@ -390,12 +390,77 @@ serve(async (req: Request) => {
 
   console.log("[midtrans-webhook] ✓ Order updated:", order_id, "→", finalTransactionStatus);
 
+  // ⭐ STEP 3.5: Decrement product stock saat payment settlement
+  // (per rekomendasi: stock berkurang saat payment sukses, BUKAN saat order dibuat)
+  //
+  // Logic:
+  //   - Cek apakah ini payment success (settlement/capture)
+  //   - Cek apakah previous payment_status BUKAN 'paid' (kalau sudah paid, skip —
+  //     berarti webhook retry, stock sudah di-decrement sebelumnya)
+  //   - Call RPC `decrement_order_stock(order_id)` — idempotent & atomic
+  //   - RPC akan loop semua order_items, decrement variant stock per item
+  //   - Kalau oversell (stock kurang), log warning tapi tetap proceed
+  //   - Set `stock_decremented_at` flag di orders table untuk idempotency
+  //
+  // PENTING: dilakukan SETELAH update orders, SEBELUM WABA trigger.
+  // Alasan: kalau WABA fail, stock tetap ke-decrement (data integrity > notifikasi).
+  const isPaymentSuccess =
+    (finalTransactionStatus === "settlement" || finalTransactionStatus === "capture") &&
+    (finalFraudStatus === "accept" || finalFraudStatus === undefined || finalFraudStatus === null);
+
+  const wasAlreadyPaid = currentOrder.payment_status === "paid";
+
+  if (isPaymentSuccess && !wasAlreadyPaid) {
+    console.log("[midtrans-webhook] Payment settlement → decrement stock for order:", order_id);
+
+    try {
+      // ⭐ Call RPC function decrement_order_stock (atomic + idempotent)
+      // RPC cek stock_decremented_at — kalau sudah ada value, skip (return skipped=true)
+      const { data: stockResult, error: stockError } = await supabase.rpc(
+        "decrement_order_stock",
+        { p_order_id: order_id }
+      );
+
+      if (stockError) {
+        console.error("[midtrans-webhook] Stock decrement RPC error:", stockError);
+        // ⚠️ Jangan fail webhook kalau stock decrement error — order sudah paid
+        // Admin bisa manual fix via SQL. Log warning supaya bisa investigate.
+        console.warn("[midtrans-webhook] ⚠️ Stock NOT decremented for order:", order_id,
+          "— manual investigation needed. Error:", stockError.message);
+      } else if (stockResult && stockResult.success === false && stockResult.skipped === true) {
+        // Idempotent skip — webhook retry, stock sudah di-decrement sebelumnya
+        console.log("[midtrans-webhook] Stock already decremented for order:", order_id,
+          "(skipped at", stockResult.decremented_at, ")");
+      } else if (stockResult && stockResult.success === true) {
+        const summary = `success=${stockResult.success_count}, oversell=${stockResult.oversell_count}, total=${stockResult.total_items}`;
+        console.log("[midtrans-webhook] ✓ Stock decremented for order:", order_id, "(" + summary + ")");
+
+        // Log detail per item kalau ada oversell (untuk admin investigation)
+        if (stockResult.oversell_count > 0) {
+          console.warn("[midtrans-webhook] ⚠️ OVERSELL detected for order:", order_id);
+          console.warn("[midtrans-webhook] Oversell items:", JSON.stringify(
+            (stockResult.items || []).filter((item: any) => item.status === "oversell"),
+            null, 2
+          ));
+        }
+      } else {
+        console.warn("[midtrans-webhook] Unexpected stock decrement result:", stockResult);
+      }
+    } catch (stockException) {
+      // Defensive: kalau RPC throw (seharusnya gak, tapi jaga-jaga)
+      console.error("[midtrans-webhook] Stock decrement exception:", stockException);
+      console.warn("[midtrans-webhook] ⚠️ Stock NOT decremented for order:", order_id,
+        "— exception occurred. Manual investigation needed.");
+    }
+  } else if (isPaymentSuccess && wasAlreadyPaid) {
+    // Webhook retry untuk order yang sudah paid — skip stock decrement
+    console.log("[midtrans-webhook] Webhook retry for already-paid order:", order_id,
+      "— stock decrement skipped (idempotent)");
+  }
+
   // 4. Trigger downstream actions berdasarkan status
   // Payment success → trigger WABA notif + auto-create Biteship order
-  if (
-    (finalTransactionStatus === "settlement" || finalTransactionStatus === "capture") &&
-    (finalFraudStatus === "accept" || finalFraudStatus === undefined || finalFraudStatus === null)
-  ) {
+  if (isPaymentSuccess) {
     console.log("[midtrans-webhook] Payment success → trigger WABA notification");
 
     try {

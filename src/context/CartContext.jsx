@@ -181,7 +181,8 @@ export const CartProvider = ({ children }) => {
             item.price === newPrice &&
             item.originalPrice === newOriginalPrice &&
             item.isDiscounted === newIsDiscounted &&
-            item.discountPercent === newDiscountPercent
+            item.discountPercent === newDiscountPercent &&
+            item.stock === (latestVariant.stock ?? null)
           ) {
             return item; // no change
           }
@@ -193,6 +194,8 @@ export const CartProvider = ({ children }) => {
             originalPrice: newOriginalPrice,
             isDiscounted: newIsDiscounted,
             discountPercent: newDiscountPercent,
+            // ⭐ Also include stock (dipakai di CheckoutModalMidtrans untuk oversell warning)
+            stock: latestVariant.stock ?? null,
             // Also update weight/dimensions kalau berubah
             weight_in_gram: Number(latestVariant.weight_in_gram) || item.weight_in_gram,
             length_cm: Number(latestVariant.length_cm) || item.length_cm,
@@ -316,6 +319,7 @@ export const CartProvider = ({ children }) => {
           originalPrice,                 // ⭐ v3: harga asli (untuk strike display)
           isDiscounted,                  // ⭐ v3: flag diskon aktif
           discountPercent,               // ⭐ v3: persen off (untuk badge)
+          stock: Number(variant?.stock) ?? null,  // ⭐ stock dari variant (untuk checkout oversell check)
           qty,
           // ⚠️ NEW fields for shipping calc
           weight_in_gram: weightInGram,
