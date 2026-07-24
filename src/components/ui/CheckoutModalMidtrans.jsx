@@ -41,6 +41,7 @@ import {
 import Select from 'react-select';
 import { INDONESIAN_CITIES } from '../../data/indonesianCities';
 import { COUNTRIES, DEFAULT_COUNTRY } from '../../data/countries';
+import { ensureSnapLoaded } from '../../hooks/useMidtransSnap';
 
 // Key untuk sessionStorage — sinyal agar parent page auto-buka checkout modal
 // setelah user berhasil login dari halaman /admin.
@@ -155,12 +156,14 @@ const selectStyles = {
 const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
   // ⭐ v3: pakai recomputeCartPrices untuk refresh prices saat checkout modal buka
   const { cart, totalPrice, clearCart, recomputeCartPrices } = useCart();
-  // ⭐ Redirect mode: gak perlu useMidtransSnap lagi (snap.js gak di-load)
-  // User di-redirect ke Midtrans Snap page (full browser), bukan iframe popup.
-  // Alasan: popup mode kena CSP error dari Midtrans sendiri (mereka kirim
-  // CSP strict untuk popup page mereka, tapi inline script mereka sendiri
-  // melanggar CSP itu — bug Midtrans yang gak bisa kita fix).
-  const snapReady = true; // always ready — gak perlu load snap.js
+  // ⭐ Snap.js di-load dynamically via ensureSnapLoaded() di handlePay().
+  // Gak perlu useMidtransSnap hook (auto-load) — kita load on-demand saat
+  // user klik "Bayar Sekarang" saja, hemat resource di homepage/cart page.
+  //
+  // Snap.js ready-check tetap defensive — kalau load gagal, user di-tahuin
+  // lewat toast "Sistem pembayaran gagal dimuat" dan order tetap tersimpan
+  // (bisa bayar via "Lanjutkan Pembayaran" di menu Pesanan Saya).
+  const snapReady = true; // UI assumption — actual check happens in handlePay
   const loadError = null;
   const { user, profile, isPro } = useAuth();
   const navigate = useNavigate();
@@ -548,7 +551,19 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
     return result.order_id;
   };
 
-  // ===== Submit → check auth → save order → mint Snap token → window.snap.pay() =====
+  // ===== Submit → check auth → save order → ensure Snap.js → mint token → close modal → snap.pay() =====
+  //
+  // ⭐ CRITICAL FIX (mirror OrdersList.handleLanjutkanPembayaran pattern):
+  //   1. ensureSnapLoaded() DULU — Snap.js gak di-load di homepage/cart page,
+  //      harus di-load dynamically sebelum window.snap.pay() dipanggil.
+  //   2. onClose() DULU sebelum window.snap.pay() — modal checkout (z-3500)
+  //      harus di-close dulu supaya Snap popup gak ter-block / render di belakang.
+  //      Snap.js sensitif terhadap modal context; kalau dipanggil saat modal
+  //      masih open, popup bisa gagal render atau invisible.
+  //   3. Callbacks tetap bisa aksi (showToast, clearCart) lewat closure.
+  //
+  // Sebelumnya: snapReady di-hardcode true → window.snap undefined → silent fail.
+  // Order tersimpan (create-order sukses) tapi popup gak muncul.
   const handlePay = async () => {
     // Phase C: Wajib login sebelum checkout.
     // Jika belum login → simpan intent checkout di sessionStorage,
@@ -588,6 +603,24 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
         showToast('Pesanan dibuat! Selesaikan pembayaran sekarang atau nanti via menu Pesanan Saya.', 'info');
       }
 
+      // ⭐ STEP 1: Ensure Snap.js loaded (mirror OrdersList pattern).
+      // Snap.js gak di-load di homepage — harus dynamic load sebelum snap.pay().
+      try {
+        await ensureSnapLoaded();
+      } catch (loadErr) {
+        setSubmitting(false);
+        showToast('Sistem pembayaran gagal dimuat. Cek koneksi atau refresh halaman. Order tersimpan — bayar via Pesanan Saya.', 'warning');
+        return;
+      }
+
+      // Verify snap API ready (defensive)
+      if (!window.snap || typeof window.snap.pay !== 'function') {
+        setSubmitting(false);
+        showToast('Sistem pembayaran belum siap. Order tersimpan — bayar via Pesanan Saya.', 'warning');
+        return;
+      }
+
+      // ⭐ STEP 2: Mint fresh Snap token via edge function
       const { data, error: fnError } = await supabase.functions.invoke(
         'create-midtrans-transaction',
         { body: { order_id: currentOrderId } }
@@ -599,16 +632,13 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
 
       setSubmitting(false);
 
-      // ── PAYMENT: Popup mode ──
-      const isSnapReady = window.snap && typeof window.snap.pay === 'function';
+      // ⭐ STEP 3: Close modal DULU sebelum snap.pay().
+      // Modal checkout (z-3500) harus di-close supaya Snap popup (z-9999+)
+      // gak ter-block atau render di belakang modal.
+      // Callbacks tetap bisa aksi (showToast) lewat closure.
+      onClose();
 
-      if (!isSnapReady) {
-        showToast('Sistem pembayaran belum siap. Order tersimpan — bayar nanti via Pesanan Saya.', 'warning');
-        setSubmitting(false);
-        return;
-      }
-
-      // Popup mode — window.snap.pay()
+      // ⭐ STEP 4: Open Midtrans Snap popup — same callbacks as before
       window.snap.pay(data.token, {
         onSuccess: (result) => {
           console.log('[Midtrans] Payment success:', result.transaction_id);
@@ -616,24 +646,19 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
           // (Snap popup set body overflow:hidden saat render, kadang gak ke-release
           // otomatis setelah auto-close → web "stuck" sampai refresh)
           document.body.style.overflow = '';
-          // Cart sudah di-clear saat order dibuat di atas
-          onClose();
           showToast('Pembayaran berhasil! Terima kasih ✓', 'success');
         },
         onPending: () => {
           document.body.style.overflow = '';
-          onClose();
           showToast('Menunggu pembayaran. Cek WA/email untuk instruksi, atau bayar via Pesanan Saya.', 'info');
         },
         onError: (result) => {
           console.error('[Midtrans] Payment error:', result);
           document.body.style.overflow = '';
-          onClose();
           showToast('Pembayaran gagal. Bayar ulang via menu Pesanan Saya.', 'error');
         },
         onClose: () => {
           document.body.style.overflow = '';
-          onClose();
           showToast('Order tersimpan. Bayar nanti via menu Pesanan Saya.', 'warning');
         },
       });
@@ -1017,7 +1042,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
               />
               <InlineError msg={formErrors.city} />
               <p className="text-[0.72rem] text-gray-500 mt-1">
-                Nama Kota Tujuan (misal: "bandung", "jakarta", "surabaya")
+                97 kota di Indonesia · ketik untuk cari (misal: "bandung", "jakarta", "surabaya")
               </p>
             </div>
 
@@ -1045,7 +1070,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
             {/* Loading area lookup */}
             {areasLoading && (
               <div className="text-[0.78rem] text-gray-500 flex items-center gap-2">
-                <Loader2 className="w-3.5 h-3.5 animate-spin" /> Mencari area...
+                <Loader2 className="w-3.5 h-3.5 animate-spin" /> Mencari area Biteship...
               </div>
             )}
 
@@ -1090,7 +1115,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
             {/* Not found */}
             {showAreaNotFound && (
               <p className="text-[0.78rem] text-red-500">
-                Kode pos tidak ditemukan. Periksa kembali.
+                Kode pos tidak ditemukan di Biteship. Periksa kembali.
               </p>
             )}
           </section>
