@@ -789,20 +789,25 @@ const OrdersList = () => {
         .from('orders')
         .select(selectFields)
         .eq('customer.email', user.email)
+        // ⭐ Hide expired orders dari "Pesanan Saya" (cron-expire setelah 24h unpaid).
+        // Expired orders tetap di DB 7 hari untuk audit, lalu hard-delete oleh cron.
+        .neq('status', 'expired')
         .order('created_at', { ascending: false })
         .limit(50);
 
       if (fetchErr) {
         console.warn('[OrdersList] DB filter failed, fallback:', fetchErr.message);
         // Fallback: fetch + client-side filter (RLS fallback)
+        // ⭐ Also filter expired di client-side fallback
         const { data: allData, error: allErr } = await supabase
           .from('orders')
           .select(selectFields)
+          .neq('status', 'expired')
           .order('created_at', { ascending: false })
           .limit(50);
 
         if (allErr) throw allErr;
-        setOrders((allData || []).filter(o => o.customer?.email === user.email));
+        setOrders((allData || []).filter(o => o.customer?.email === user.email && o.status !== 'expired'));
       } else {
         setOrders(data || []);
       }

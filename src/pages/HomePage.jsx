@@ -105,8 +105,8 @@ const HomePage = () => {
     return filteredProducts.slice(start, start + ITEMS_PER_PAGE);
   }, [filteredProducts, currentPage]);
 
-  const bestSellers = useMemo(() => products.filter((p) => p.badge === 'Best Seller').slice(0, 4), [products]);
-  const newArrivals = useMemo(() => products.filter((p) => p.badge === 'Baru').slice(0, 4), [products]);
+  const bestSellers = useMemo(() => products.filter((p) => p.badge === 'Best Seller').slice(0, 10), [products]);
+  const newArrivals = useMemo(() => products.filter((p) => p.badge === 'Baru').slice(0, 10), [products]);
 
   const handleFilterChange = (value) => { setActiveFilter(value); setCurrentPage(1); };
 
@@ -180,7 +180,7 @@ const HomePage = () => {
         <HeroSwiper banners={banners} onBannerClick={handleBannerClick} />
       ) : (
         // Fallback hero — hanya muncul kalau overlay timeout (banners gagal load)
-        <section className="hero-parallax bg-[var(--eglux-accent)] flex items-center justify-center" aria-hidden="true">
+        <section className="hero-parallax flex items-center justify-center" aria-hidden="true">
           <img
             src="https://mbuwpjxpxvnsxjusrnlk.supabase.co/storage/v1/object/public/logo/Logo-Loading.svg"
             alt=""
@@ -196,7 +196,7 @@ const HomePage = () => {
       )}
 
       {/* ═══════════════════════════════════════════════════════════════
-          SECTION 2: BEST SELLER + PRODUK BARU (combined)
+          SECTION 2: BEST SELLER + PRODUK BARU (horizontal scroll + Lihat Lainnya)
           ═══════════════════════════════════════════════════════════════ */}
       {(bestSellers.length > 0 || newArrivals.length > 0) && (
         <section className="section-overlay bg-eglux-text-muted py-4 md:py-12">
@@ -216,10 +216,25 @@ const HomePage = () => {
                     Lihat Semua
                   </button>
                 </div>
-                <div className="grid grid-cols-4 gap-1.5 md:gap-4">
-                  {bestSellers.map((product) => (
-                    <ProductCard key={product.id} product={product} onClick={() => handleHighlightProduct(product)} formatPrice={formatPrice} compact hideBadge />
-                  ))}
+                {/* ⭐ Horizontal scroll container — mobile & desktop both scroll sideways */}
+                <div className="eglux-hscroll -mx-4 md:mx-0 px-4 md:px-0">
+                  <div className="eglux-hscroll__track">
+                    {bestSellers.map((product) => (
+                      <div key={product.id} className="eglux-hscroll__item">
+                        <ProductCard product={product} onClick={() => handleHighlightProduct(product)} formatPrice={formatPrice} compact hideBadge />
+                      </div>
+                    ))}
+                    {/* ⭐ "Lihat Lainnya" card — last item, redirect ke filter bestseller */}
+                    <button
+                      type="button"
+                      onClick={() => { setActiveFilter('bestseller'); setCurrentPage(1); productsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}
+                      className="eglux-hscroll__item eglux-hscroll__more"
+                      aria-label="Lihat lainnya"
+                    >
+                      <svg className="w-6 h-6 mb-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><polyline points="9 18 15 12 9 6" /></svg>
+                      <span className="text-[0.7rem] md:text-[0.85rem] font-medium tracking-wide">Lihat Lainnya</span>
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
@@ -238,10 +253,25 @@ const HomePage = () => {
                     Lihat Semua
                   </button>
                 </div>
-                <div className="grid grid-cols-4 gap-1.5 md:gap-4">
-                  {newArrivals.map((product) => (
-                    <ProductCard key={product.id} product={product} onClick={() => handleHighlightProduct(product)} formatPrice={formatPrice} compact hideBadge />
-                  ))}
+                {/* ⭐ Horizontal scroll container — same pattern as Best Seller */}
+                <div className="eglux-hscroll -mx-4 md:mx-0 px-4 md:px-0">
+                  <div className="eglux-hscroll__track">
+                    {newArrivals.map((product) => (
+                      <div key={product.id} className="eglux-hscroll__item">
+                        <ProductCard product={product} onClick={() => handleHighlightProduct(product)} formatPrice={formatPrice} compact hideBadge />
+                      </div>
+                    ))}
+                    {/* ⭐ "Lihat Lainnya" card — last item, redirect ke filter produkbaru */}
+                    <button
+                      type="button"
+                      onClick={() => { setActiveFilter('produkbaru'); setCurrentPage(1); productsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}
+                      className="eglux-hscroll__item eglux-hscroll__more"
+                      aria-label="Lihat lainnya"
+                    >
+                      <svg className="w-6 h-6 mb-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><polyline points="9 18 15 12 9 6" /></svg>
+                      <span className="text-[0.7rem] md:text-[0.85rem] font-medium tracking-wide">Lihat Lainnya</span>
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
@@ -290,7 +320,7 @@ const HomePage = () => {
 
           {!loading && !error && (
             paginatedProducts.length > 0 ? (
-              <div className="grid grid-cols-2 gap-4 md:gap-6 mt-4 md:mt-8">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6 mt-4 md:mt-8">
                 {paginatedProducts.map((product) => (
                   <ProductCard key={product.id} product={product} onClick={() => setSelectedProduct(product)} formatPrice={formatPrice} />
                 ))}
