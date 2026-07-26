@@ -97,7 +97,7 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
         setProductImages([...(data.product_images || [])]);
       }
     } catch (e) {
-      console.error('refreshLocalData error:', e);
+      console.error('refreshLocalData error:', e?.message);
     }
   }, [product]);
 
@@ -434,7 +434,7 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
             .single();
           if (insertErr) {
             showToast(`✗ Gagal insert variant "${insertFields.name}": ${insertErr.message}`, 'error');
-            console.error('Insert variant error:', insertErr);
+            console.error('Insert variant error:', insertErr?.message);
           } else if (inserted) {
             newVariantIds[_tempId] = inserted.id;
           }
@@ -570,7 +570,7 @@ const EditProductPanel = ({ product, onClose, onSaved }) => {
                           headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
                           body: JSON.stringify({ action: 'set_primary', image_id: primaryImg.id, product_id: product.id }),
                         });
-                      } catch (err) { console.warn('Reorder set_primary failed:', err); }
+                      } catch (err) { console.warn('Reorder set_primary failed:', err?.message); }
                     }
                   }}
                 >

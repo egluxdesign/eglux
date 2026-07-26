@@ -56,7 +56,7 @@ const LoginForm = () => {
         friendlyError = error.message;
       }
       setError(friendlyError);
-      console.error('[Login] Supabase auth error:', error);
+      console.error('[Login] Supabase auth error:', error?.message);
       setLoading(false);
       return;
     }

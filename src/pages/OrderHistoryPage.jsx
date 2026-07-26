@@ -29,6 +29,7 @@ import { useCartActions } from './CartPage';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabaseClient';
 import { rupiah } from '../context/CartContext';
+import { friendlyErrorMessage } from '../lib/errorMessage';
 
 // ── Tab filter ──
 const STATUS_TABS = [
@@ -602,8 +603,8 @@ const OrderHistoryPage = () => {
         setOrders(data || []);
       }
     } catch (e) {
-      console.error('[OrderHistory] fetch error:', e);
-      setError(e.message);
+      console.error('[OrderHistory] fetch error:', e?.message);
+      setError(friendlyErrorMessage(e, 'Memuat riwayat order'));
     } finally {
       setLoading(false);
     }

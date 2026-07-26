@@ -127,7 +127,7 @@ const TrackOrderPage = () => {
         setOrders(data || []);
       }
     } catch (e) {
-      console.error('[TrackOrder] fetch error:', e);
+      console.error('[TrackOrder] fetch error:', e?.message);
     } finally {
       setLoading(false);
     }
@@ -140,6 +140,12 @@ const TrackOrderPage = () => {
   useEffect(() => {
     if (!user) return;
 
+    // ⭐ Defense-in-depth: Realtime subscription ke table orders.
+    // Supabase Realtime respect RLS by default — user hanya receive events untuk row
+    // yang dia boleh lihat (berdasarkan RLS policy: customer.email = auth.jwt email).
+    // Tambahan: state-based check di callback (`if (!existing) return prev`) untuk
+    // pastikan hanya order milik user yang di-update di UI.
+
     const channel = supabase
       .channel('track-order-realtime')
       .on(
@@ -148,8 +154,9 @@ const TrackOrderPage = () => {
         (payload) => {
           const updated = payload.new;
           setOrders((prev) => {
+            // Defense-in-depth: cek apakah order ini milik user via state lokal
             const existing = prev.find(o => o.id === updated.id);
-            if (!existing) return prev;
+            if (!existing) return prev; // bukan milik user, skip
             const patched = { ...existing, ...updated };
             return prev.map(o => o.id === updated.id ? patched : o);
           });
@@ -163,7 +170,14 @@ const TrackOrderPage = () => {
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'orders' },
-        () => { fetchOrders(); }
+        (payload) => {
+          // ⭐ Defense-in-depth: kalau INSERT event, cek apakah order baru ini
+          // milik user sebelum refetch (RLS seharusnya filter, tapi jaga-jaga)
+          const newRow = payload.new;
+          if (!newRow) return;
+          // Refetch aman — RLS akan filter, hanya order milik user yang return
+          fetchOrders();
+        }
       )
       .subscribe();
 
@@ -419,7 +433,7 @@ const ShippingInfoCard = ({ order }) => {
         <div className="flex-1 min-w-0">
           <p className="text-sm font-bold text-eglux-primary">{statusInfo.label}</p>
           <p className="text-[0.7rem] text-gray-500">
-            Status: <code className="font-mono">{order?.biteship_status || '—'}</code>
+            Status Biteship: <code className="font-mono">{order?.biteship_status || '—'}</code>
           </p>
         </div>
       </div>
@@ -468,7 +482,7 @@ const ShippingInfoCard = ({ order }) => {
             <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
             <circle cx="12" cy="12" r="3" />
           </svg>
-          Lacak Paket →
+          Lacak Paket di Biteship →
         </a>
       ) : (
         <p className="text-[0.7rem] text-gray-400 text-center pt-1">

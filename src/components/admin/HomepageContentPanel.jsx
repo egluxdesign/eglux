@@ -76,7 +76,7 @@ const HomepageContentPanel = ({ showToast }) => {
         setCategories(data.categories || []);
       }
     } catch (e) {
-      console.error('[HomepageContentPanel] fetch error:', e);
+      console.error('[HomepageContentPanel] fetch error:', e?.message);
       showToast?.('Gagal memuat data: ' + e.message, 'error');
     } finally {
       setLoading(false);

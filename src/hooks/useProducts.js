@@ -200,7 +200,7 @@ const useProducts = () => {
       setFilterButtons(buttons);
       setLoading(false);
     } catch (e) {
-      console.error('[useProducts] refresh error:', e);
+      console.error('[useProducts] refresh error:', e?.message);
       if (isInitial) setLoading(false);
     } finally {
       isRefreshingRef.current = false;

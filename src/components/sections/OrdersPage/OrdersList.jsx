@@ -28,6 +28,7 @@ import { useAuth } from '../../../context/AuthContext';
 import { supabase } from '../../../lib/supabaseClient';
 import { rupiah } from '../../../context/CartContext';
 import { ensureSnapLoaded } from '../../../hooks/useMidtransSnap';
+import { friendlyErrorMessage } from '../../../lib/errorMessage';
 import ChangeCourierModal from '../../ui/ChangeCourierModal';
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
@@ -281,11 +282,9 @@ const OrderDetailPanel = ({ order: orderProp, onClose, onOrderUpdated }) => {
         let errMsg = 'Gagal membuat transaksi pembayaran';
         if (data?.error) {
           errMsg = data.error;
-          // ⭐ Security: debug info hanya di-log ke console, JANGAN di-show ke user
-          // (debug bisa contain SQL error / schema internal yang reveal backend structure)
-          if (data.debug) {
-            console.error('[OrdersList] Debug info (server-side only, not shown to user):', data.debug);
-          }
+          // ⭐ Security: debug info TIDAK di-log ke browser console (sebelumnya di-log
+          // dan bisa leak SQL error / schema internal ke DevTools).
+          // Kalau perlu debug, cek edge function logs di Supabase Dashboard (server-side).
         } else if (fnError?.message) {
           errMsg = fnError.message;
         }
@@ -374,11 +373,9 @@ const OrderDetailPanel = ({ order: orderProp, onClose, onOrderUpdated }) => {
         },
       });
     } catch (e) {
-      console.error('[OrdersList] Lanjutkan Pembayaran error:', e);
-      const msg = e.message?.includes('Failed to fetch') || e.message?.includes('CORS')
-        ? 'Gagal terhubung ke server pembayaran. Coba lagi beberapa saat.'
-        : e.message;
-      setActionError(msg);
+      console.error('[OrdersList] Lanjutkan Pembayaran error:', e?.message);
+      // ⭐ Pakai friendlyErrorMessage untuk cegah raw error bocor ke user
+      setActionError(friendlyErrorMessage(e, 'Lanjutkan Pembayaran'));
       setPaying(false);
     }
   };
@@ -812,8 +809,9 @@ const OrdersList = () => {
         setOrders(data || []);
       }
     } catch (e) {
-      console.error('[OrdersList] fetch error:', e);
-      setError(e.message);
+      console.error('[OrdersList] fetch error:', e?.message);
+      // ⭐ Pakai friendlyErrorMessage untuk cegah raw error bocor ke user
+      setError(friendlyErrorMessage(e, 'Memuat pesanan'));
     } finally {
       setLoading(false);
     }

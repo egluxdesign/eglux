@@ -20,6 +20,7 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { supabase } from '../lib/supabaseClient';
+import { friendlyErrorMessage } from '../lib/errorMessage';
 import AdminLayout from '../components/admin/layout/AdminLayout';
 import EditProductPanel from '../components/admin/EditProductPanel';
 import AddProductPanel from '../components/admin/AddProductPanel';
@@ -361,7 +362,7 @@ const AdminProductsPage = () => {
       if (error) throw error;
       setProducts(data || []);
     } catch (e) {
-      setError(e.message);
+      setError(friendlyErrorMessage(e, 'Memuat produk'));
     } finally {
       setLoading(false);
     }

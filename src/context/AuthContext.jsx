@@ -55,7 +55,7 @@ export const AuthProvider = ({ children }) => {
         setProfile(data);
       }
     } catch (e) {
-      console.error('[AuthContext] fetchProfile exception:', e);
+      console.error('[AuthContext] fetchProfile exception:', e?.message);
       setProfile(null);
     }
   }, []);
@@ -75,7 +75,7 @@ export const AuthProvider = ({ children }) => {
           await fetchProfile(session.user.id);
         }
       } catch (e) {
-        console.error('[AuthContext] init error:', e);
+        console.error('[AuthContext] init error:', e?.message);
       } finally {
         if (mounted) setLoading(false);
       }

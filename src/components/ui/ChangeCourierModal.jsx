@@ -89,7 +89,7 @@ const ChangeCourierModal = ({ isOpen, onClose, order, onUpdated }) => {
         if (current) setSelected(current);
       }
     } catch (e) {
-      console.error('[ChangeCourierModal] fetchRates error:', e);
+      console.error('[ChangeCourierModal] fetchRates error:', e?.message);
       setError(`Gagal memuat daftar kurir: ${e.message}`);
     } finally {
       setLoading(false);
@@ -141,7 +141,7 @@ const ChangeCourierModal = ({ isOpen, onClose, order, onUpdated }) => {
       onUpdated?.(data.updated_fields);
       onClose();
     } catch (e) {
-      console.error('[ChangeCourierModal] save error:', e);
+      console.error('[ChangeCourierModal] save error:', e?.message);
       // Pesan ramah user kalau network/CORS error
       const msg = e.message?.includes('Failed to fetch') || e.message?.includes('CORS')
         ? 'Gagal terhubung ke server. Pastikan edge function "update-order-courier" sudah di-deploy ke Supabase.'

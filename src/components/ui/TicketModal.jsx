@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../lib/supabaseClient';
+import { friendlyErrorMessage } from '../../lib/errorMessage';
 
 const MAX_FILE_SIZE_MB = 10;
 const ATTACHMENT_BUCKET = 'ticket-attachments';
@@ -58,18 +59,37 @@ const TicketModal = ({ isOpen, onClose }) => {
   }, [user]);
 
   const handleOpenTicket = useCallback(async (ticketId) => {
+    if (!user) return;
     setLoadingDetail(true);
     setView('detail');
 
-    const [{ data: ticketData }, { data: attachmentsData }] = await Promise.all([
-      supabase.from('tickets').select('*').eq('id', ticketId).single(),
-      supabase.from('ticket_attachments').select('*').eq('ticket_id', ticketId),
-    ]);
+    // ⭐ Defense-in-depth: filter by user_id di sisi frontend (RLS seharusnya handle, tapi jaga-jaga)
+    // Ambil ticket dengan user_id match — kalau ticket bukan milik user, return null
+    const { data: ticketData, error: ticketErr } = await supabase
+      .from('tickets')
+      .select('*')
+      .eq('id', ticketId)
+      .eq('user_id', user.id)
+      .single();
 
-    setSelectedTicket(ticketData || null);
+    // Kalau ticket tidak ditemukan atau bukan milik user, jangan fetch attachments
+    if (ticketErr || !ticketData) {
+      setSelectedTicket(null);
+      setSelectedAttachments([]);
+      setLoadingDetail(false);
+      return;
+    }
+
+    // Ticket valid → baru ambil attachments (RLS akan filter berdasarkan ticket ownership)
+    const { data: attachmentsData } = await supabase
+      .from('ticket_attachments')
+      .select('*')
+      .eq('ticket_id', ticketId);
+
+    setSelectedTicket(ticketData);
     setSelectedAttachments(attachmentsData || []);
     setLoadingDetail(false);
-  }, []);
+  }, [user]);
 
   useEffect(() => {
     if (isOpen) {
@@ -181,7 +201,7 @@ const TicketModal = ({ isOpen, onClose }) => {
         setView('list');
       }, 1200);
     } catch (e) {
-      setError(e.message);
+      setError(friendlyErrorMessage(e, 'Membuat tiket'));
     } finally {
       setSubmitting(false);
     }

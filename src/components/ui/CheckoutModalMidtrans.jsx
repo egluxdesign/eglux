@@ -42,6 +42,7 @@ import Select from 'react-select';
 import { INDONESIAN_CITIES } from '../../data/indonesianCities';
 import { COUNTRIES, DEFAULT_COUNTRY } from '../../data/countries';
 import { ensureSnapLoaded } from '../../hooks/useMidtransSnap';
+import { friendlyErrorMessage } from '../../lib/errorMessage';
 
 // Key untuk sessionStorage — sinyal agar parent page auto-buka checkout modal
 // setelah user berhasil login dari halaman /admin.
@@ -682,8 +683,9 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
         },
       });
     } catch (err) {
-      console.error('[Midtrans Checkout] Gagal:', err);
-      showToast(`Gagal: ${err.message}`);
+      console.error('[Midtrans Checkout] Gagal:', err?.message);
+      // ⭐ Pakai friendlyErrorMessage untuk cegah raw error bocor ke user
+      showToast(friendlyErrorMessage(err, 'Checkout'), 'error');
       setSubmitting(false);
     }
   };

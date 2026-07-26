@@ -24,6 +24,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../../lib/supabaseClient';
+import { friendlyErrorMessage } from '../../lib/errorMessage';
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 
@@ -171,8 +172,8 @@ const DiscountModal = ({ variant, onClose, onSaved }) => {
 
       onSaved?.();
     } catch (e) {
-      console.error('[DiscountModal] save error:', e);
-      setError(e.message);
+      console.error('[DiscountModal] save error:', e?.message);
+      setError(friendlyErrorMessage(e, 'Menyimpan diskon'));
     } finally {
       setSaving(false);
     }
@@ -215,8 +216,8 @@ const DiscountModal = ({ variant, onClose, onSaved }) => {
 
       onSaved?.();
     } catch (e) {
-      console.error('[DiscountModal] clear error:', e);
-      setError(e.message);
+      console.error('[DiscountModal] clear error:', e?.message);
+      setError(friendlyErrorMessage(e, 'Menghapus diskon'));
     } finally {
       setSaving(false);
     }
