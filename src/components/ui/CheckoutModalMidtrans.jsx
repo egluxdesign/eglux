@@ -659,7 +659,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
       // ⭐ STEP 4: Open Midtrans Snap popup — same callbacks as before
       window.snap.pay(data.token, {
         onSuccess: (result) => {
-          console.log('[Midtrans] Payment success:', result.transaction_id);
+          // // console.log('[Midtrans] Payment success:', result.transaction_id);
           // ⭐ Defensive: reset body scroll lock yang mungkin di-set oleh Snap popup
           // (Snap popup set body overflow:hidden saat render, kadang gak ke-release
           // otomatis setelah auto-close → web "stuck" sampai refresh)

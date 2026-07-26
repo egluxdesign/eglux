@@ -12,9 +12,9 @@
 //
 // Update orders table:
 //   - biteship_status       (camelCase: confirmed, allocated, pickingUp, picked, inTransit, dst.)
-//   - status                (EGLUX internal: processing, shipping, completed, cancelled)
+//   - status                (EGLUX internal: processing, shipped, delivered, cancelled)
 //   - tracking_number       (nomor resi dari Biteship/kurir)
-//   - biteship_waybill_url  (URL PDF shipping label)
+//   - biteship_waybill_url  (URL tracking Biteship, dari courier_link field)
 //   - biteship_pickup_code  (kode pickup untuk verify courier)
 //
 // ⭐ FIXES di v3:
@@ -89,23 +89,34 @@ function mapBiteshipToEgluxStatus(biteshipStatus: string): string | null {
   //   pending, paid, processing, shipped, delivered, cancelled, expired
   //
   // Mapping dari Biteship status (camelCase + snake_case) ke EGLUX status:
+  //
+  // Biteship status flow:
+  //   confirmed → allocated → picking_up → picked → in_transit → dropping_off → delivered
+  //                ↓             ↓           ↓          ↓            ↓
+  //              processing    shipped     shipped   shipped     shipped    → delivered
+  //              (belum       (kurir       (paket    (dalam       (menuju
+  //               ada kurir)   sudah       diambil   perjalanan)  penerima)
+  //                           berangkat)  kurir)
   switch (normalized) {
-    // Pre-pickup (courier belum ambil paket) → processing
+    // Pre-pickup (kurir belum ambil paket) → processing
     case "confirmed":
     case "allocated":
-    case "pickingUp":
-    case "processing":  // ⭐ Biteship juga kirim "processing" untuk tahap penyiapan
+    case "processing":  // Biteship kirim "processing" untuk tahap penyiapan
       return "processing";
-    // Pickup done, dalam perjalanan → shipped (BUKAN "shipping" — constraint gak allow)
+    // ⭐ picking_up = kurir menuju lokasi pickup → SUDAH DALAM PENGIRIMAN → shipped
+    // (sebelumnya salah: return "processing")
+    // Normalize function sudah convert "picking_up" → "pickingUp"
+    case "pickingUp":
+    // Pickup done, dalam perjalanan → shipped
     case "picked":
     case "inTransit":
     case "droppingOff":
     case "onHold":
-    case "shipping":  // ⭐ Biteship webhook kirim "shipping" (snake_case tidak, tapi just in case)
+    case "shipping":
       return "shipped";
-    // Sampai tujuan → delivered (BUKAN "completed" — constraint gak allow)
+    // Sampai tujuan → delivered
     case "delivered":
-    case "completed":  // ⭐ fallback kalau Biteship kirim "completed"
+    case "completed":
       return "delivered";
     // Semua status cancelled-like → cancelled
     case "cancelled":

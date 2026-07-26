@@ -14,7 +14,6 @@ import { useState, useRef, useEffect } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../../context/AuthContext';
 import ProfileModal from '../../ui/ProfileModal';
-import TicketModal from '../../ui/TicketModal';
 
 // ── Icons (line art, 1-color) ──
 const ChevronDown = ({ className = '' }) => (
@@ -75,12 +74,11 @@ const ADMIN_NAV_ITEMS = [
   // { label: 'Customers', href: '/admin/customers' },
 ];
 
-// ── UserMenu (sinkron dengan HeaderProducts.jsx — Tiket Bantuan pakai modal) ──
+// ── UserMenu (copied from HeaderProducts, same logic) ──
 const UserMenu = () => {
   const { user, profile, role, isAdmin, logout } = useAuth();
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [profileModalOpen, setProfileModalOpen] = useState(false);
-  const [ticketModalOpen, setTicketModalOpen] = useState(false);
   const dropdownRef = useRef(null);
   const navigate = useNavigate();
   const { pathname } = useLocation();
@@ -112,12 +110,11 @@ const UserMenu = () => {
   }
 
   const displayName = profile?.full_name || user.email?.split('@')[0] || 'Akun';
-  // FIX: 'Tiket Bantuan' dihapus dari sini — sekarang jadi button modal
-  // di bawah, bukan Link ke /tickets lagi. Sinkron dengan HeaderProducts.jsx.
   const menuItems = [
     { label: 'Pesanan Saya', href: '/orders', Icon: IconPackage },
     { label: 'Lacak Pesanan', href: '/track', Icon: IconTruck },
     { label: 'Riwayat Order', href: '/order-history', Icon: IconClipboard },
+    { label: 'Tiket Bantuan', href: '/tickets', Icon: IconTicket },
   ];
   const adminMenuItems = isAdmin
     ? [{ label: 'Admin Produk', href: '/products-admin', Icon: IconWrench }]
@@ -175,13 +172,6 @@ const UserMenu = () => {
                 <item.Icon className="w-4 h-4" />{item.label}
               </Link>
             ))}
-            {/* Tiket Bantuan — opens modal (FIX: sebelumnya Link ke /tickets) */}
-            <button
-              onClick={() => { setDropdownOpen(false); setTicketModalOpen(true); }}
-              className="w-full flex items-center gap-3 px-4 py-2.5 text-[0.82rem] text-eglux-primary hover:bg-[#faf6ef] transition-colors cursor-pointer border-none bg-transparent text-left"
-            >
-              <IconTicket className="w-4 h-4" />Tiket Bantuan
-            </button>
           </div>
           <div className="border-t border-[#eee] py-1">
             <button
@@ -194,9 +184,8 @@ const UserMenu = () => {
         </div>
       )}
 
-      {/* Modals */}
+      {/* Profile Modal */}
       <ProfileModal isOpen={profileModalOpen} onClose={() => setProfileModalOpen(false)} />
-      <TicketModal isOpen={ticketModalOpen} onClose={() => setTicketModalOpen(false)} />
     </div>
   );
 };

@@ -162,7 +162,7 @@ export const AuthProvider = ({ children }) => {
 
           if (profileData) {
             setProfile(profileData);
-            console.log(`[AuthContext] Profile fetched on attempt ${attempt}`);
+            // console.log(`[AuthContext] Profile fetched on attempt ${attempt}`);
             break;
           }
           if (attempt === maxAttempts) {

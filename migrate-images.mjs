@@ -36,7 +36,7 @@ const IMAGES = [
 ];
 
 const migrate = async () => {
-  console.log('🚀 Mulai migrasi foto produk ke Supabase Storage...\n');
+  // console.log('🚀 Mulai migrasi foto produk ke Supabase Storage...\n');
 
   for (const item of IMAGES) {
     try {
@@ -67,13 +67,13 @@ const migrate = async () => {
         .eq('url', item.url); // match URL imgbox lama
       if (updateError) throw updateError;
 
-      console.log(`✅ ${item.slug}`);
+      // console.log(`✅ ${item.slug}`);
     } catch (err) {
       console.error(`❌ ${item.slug}: ${err.message}`);
     }
   }
 
-  console.log('\n✨ Selesai! Semua foto sudah dipindah ke Supabase Storage.');
+  // console.log('\n✨ Selesai! Semua foto sudah dipindah ke Supabase Storage.');
 };
 
 migrate();

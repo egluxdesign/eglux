@@ -33,26 +33,32 @@ import ChangeCourierModal from '../../ui/ChangeCourierModal';
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 
-// ── Status tabs (ACTIVE ONLY — completed/cancelled pindah ke /order-history) ──
+// ── Status tabs (ACTIVE ONLY — delivered/cancelled pindah ke /order-history) ──
+// ⭐ DB constraint (SQL 032e) hanya allow: pending, paid, processing, shipped, delivered, cancelled, expired
+//    Webhook Biteship map: picking_up/picked/in_transit → 'shipped', delivered → 'delivered'
 const STATUS_TABS = [
   { key: 'all_active', label: 'Semua Active' },
   { key: 'pending', label: 'Menunggu' },
   { key: 'processing', label: 'Diproses' },
-  { key: 'shipping', label: 'Dikirim' },
+  { key: 'shipped', label: 'Dikirim' },
 ];
 
-// Active statuses (yang ditampilkan di /orders)
-const ACTIVE_STATUSES = ['pending', 'processing', 'shipping'];
+// Active statuses (yang ditampilkan di /orders) — shipped = Dikirim
+const ACTIVE_STATUSES = ['pending', 'processing', 'shipped'];
 
-// ⚠️ NOTE: orders.status vocab: pending, processing, shipping, completed, cancelled
-// (di midtrans-webhook mapOrderStatus pakai 'shipping' bukan 'shipped')
+// ⚠️ NOTE: orders.status vocab (sesuai constraint SQL 032e):
+//   pending, paid, processing, shipped, delivered, cancelled, expired
+// (webhook Biteship sudah map ke 'shipped' dan 'delivered' — BUKAN 'shipping'/'completed' lagi)
 const STATUS_BADGE = {
   pending:    { text: 'Menunggu Pembayaran', cls: 'bg-gray-100 text-gray-600', banner: 'bg-gray-500' },
+  paid:       { text: 'Dibayar',              cls: 'bg-blue-50 text-blue-600',  banner: 'bg-blue-500' },
   processing: { text: 'Diproses',             cls: 'bg-blue-50 text-blue-600',  banner: 'bg-blue-500' },
-  shipping:   { text: 'Dikirim',              cls: 'bg-purple-50 text-purple-600', banner: 'bg-purple-500' },
+  shipping:   { text: 'Dikirim',              cls: 'bg-purple-50 text-purple-600', banner: 'bg-purple-500' }, // legacy fallback
   shipped:    { text: 'Dikirim',              cls: 'bg-purple-50 text-purple-600', banner: 'bg-purple-500' },
-  completed:  { text: 'Selesai',              cls: 'bg-green-50 text-green-600', banner: 'bg-green-500' },
+  completed:  { text: 'Selesai',              cls: 'bg-green-50 text-green-600', banner: 'bg-green-500' }, // legacy fallback
+  delivered:  { text: 'Selesai',              cls: 'bg-green-50 text-green-600', banner: 'bg-green-500' },
   cancelled:  { text: 'Dibatalkan',           cls: 'bg-red-50 text-red-600',   banner: 'bg-red-500' },
+  expired:    { text: 'Kedaluwarsa',          cls: 'bg-gray-100 text-gray-600', banner: 'bg-gray-500' },
 };
 
 const PAYMENT_LABEL = {
@@ -218,7 +224,6 @@ const OrderDetailPanel = ({ order: orderProp, onClose, onOrderUpdated }) => {
 
   const items = order.order_items || [];
   const statusCfg = STATUS_BADGE[order.status] || { banner: 'bg-gray-500' };
-  const canTrack = order.biteship_order_id || order.tracking_number || order.status === 'shipping' || order.status === 'shipped' || order.biteship_status;
   const isPending = order.status === 'pending' && order.payment_status !== 'paid';
 
   // ⭐ State untuk ChangeCourierModal + payment loading
@@ -226,15 +231,25 @@ const OrderDetailPanel = ({ order: orderProp, onClose, onOrderUpdated }) => {
   const [paying, setPaying] = useState(false);
   const [actionError, setActionError] = useState(null);
 
-  // ⭐ Lacak Pesanan: direct ke biteship_waybill_url (kalau ada), fallback ke /track page
+  // ⭐ canTrack: tombol "Lacak Pesanan" HANYA muncul kalau biteship_waybill_url ADA di DB.
+  // Kalau belum ada (Biteship webhook belum fire courier_link), tombol tidak muncul sama sekali
+  // — lebih baik daripada tombol muncul tapi gak bisa diklik.
+  const canTrack = Boolean(order.biteship_waybill_url);
+
+  // ⭐ Lacak Pesanan: direct ke biteship_waybill_url dari DB (bukan ke /track page)
+  // Behavior:
+  //   - Kalau biteship_waybill_url ADA → buka tab baru ke Biteship tracking page
+  //   - Kalau TIDAK ADA → tampilkan info (jangan redirect ke /track)
+  // Alasan: /track page redundant dengan info yang sudah ada di detail panel.
+  //         User cukup klik tombol → langsung ke Biteship tracking.
   const handleTrackOrder = () => {
     if (order.biteship_waybill_url) {
-      // Direct ke Biteship tracking page (gratis, no API call)
+      // ⭐ Direct ke Biteship tracking page (gratis, no API call)
       window.open(order.biteship_waybill_url, '_blank', 'noopener,noreferrer');
     } else {
-      // Fallback: buka track order page (untuk lihat status dari DB)
-      onClose();
-      navigate(`/track?order=${order.id}`);
+      // Waybill URL belum ada di DB (Biteship webhook belum fire courier_link event)
+      // Tampilkan info — JANGAN redirect ke /track page
+      setActionError('Tracking belum tersedia. Pesanan sedang disiapkan kurir, coba lagi nanti.');
     }
   };
 
@@ -300,11 +315,11 @@ const OrderDetailPanel = ({ order: orderProp, onClose, onOrderUpdated }) => {
       const startPaymentPolling = (orderId) => {
         let pollCount = 0;
         const maxPolls = 60; // 60 polls × 3 detik = 3 menit max
-        console.log('[OrdersList] Start polling payment status for', orderId);
+        // console.log('[OrdersList] Start polling payment status for', orderId);
 
         const poll = async () => {
           if (pollCount >= maxPolls) {
-            console.log('[OrdersList] Polling stopped (timeout)');
+            // console.log('[OrdersList] Polling stopped (timeout)');
             return;
           }
           pollCount++;
@@ -321,13 +336,13 @@ const OrderDetailPanel = ({ order: orderProp, onClose, onOrderUpdated }) => {
             }
 
             if (data?.payment_status === 'paid') {
-              console.log('[OrdersList] ✓ Payment confirmed via polling');
+              // console.log('[OrdersList] ✓ Payment confirmed via polling');
               onOrderUpdated?.(); // refresh orders list
               // Stop polling
               return;
             }
             if (data?.payment_status === 'failed') {
-              console.log('[OrdersList] Payment failed via polling');
+              // console.log('[OrdersList] Payment failed via polling');
               onOrderUpdated?.();
               return;
             }
@@ -466,9 +481,11 @@ const OrderDetailPanel = ({ order: orderProp, onClose, onOrderUpdated }) => {
                 )}
               </div>
               {canTrack && (
-                <button
-                  onClick={handleTrackOrder}
-                  className="mt-3 w-full px-4 py-2.5 bg-eglux-primary text-white rounded-lg text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer border-none flex items-center justify-center gap-2"
+                <a
+                  href={order.biteship_waybill_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-3 w-full px-4 py-2.5 bg-eglux-primary text-white rounded-lg text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer border-none flex items-center justify-center gap-2 no-underline"
                 >
                   <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <rect x="1" y="3" width="15" height="13" />
@@ -477,7 +494,7 @@ const OrderDetailPanel = ({ order: orderProp, onClose, onOrderUpdated }) => {
                     <circle cx="18.5" cy="18.5" r="2.5" />
                   </svg>
                   Lacak Pesanan
-                </button>
+                </a>
               )}
             </div>
           )}
@@ -702,15 +719,17 @@ const OrderDetailPanel = ({ order: orderProp, onClose, onOrderUpdated }) => {
               </div>
             )}
 
-            {/* Default actions: Lacak Pesanan (kalau ada tracking) + Tutup */}
+            {/* Default actions: Lacak Pesanan (kalau ada waybill_url) + Tutup */}
             <div className="flex gap-2">
               {canTrack && (
-                <button
-                  onClick={handleTrackOrder}
-                  className="flex-1 px-4 py-2.5 bg-eglux-primary text-white rounded-lg text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer border-none"
+                <a
+                  href={order.biteship_waybill_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex-1 px-4 py-2.5 bg-eglux-primary text-white rounded-lg text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer border-none no-underline text-center flex items-center justify-center"
                 >
                   Lacak Pesanan
-                </button>
+                </a>
               )}
               <button
                 onClick={onClose}
@@ -863,13 +882,13 @@ const OrdersList = () => {
           fetchOrders();
         }
       )
-      .subscribe((status) => {
-        if (status === 'SUBSCRIBED') {
-          console.log('[OrdersList] ✓ Realtime subscribed');
-        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-          console.warn('[OrdersList] Realtime subscription issue:', status);
-        }
-      });
+      // .subscribe((status) => {
+      //   if (status === 'SUBSCRIBED') {
+      //     console.log('[OrdersList] ✓ Realtime subscribed');
+      //   } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+      //     console.warn('[OrdersList] Realtime subscription issue:', status);
+      //   }
+      // });
 
     return () => {
       supabase.removeChannel(channel);
@@ -905,7 +924,7 @@ const OrdersList = () => {
 
   if (!user) {
     return (
-      <section className="max-w-container mx-auto px-4 md:px-8 py-16 text-center">
+      <section className="max-w-container mx-auto px-4 md:px-8 pt-24 pb-16 text-center">
         <p className="text-gray-500 mb-4">Kamu perlu masuk dulu untuk melihat pesanan.</p>
         <Link to="/admin" className="text-eglux-secondary font-semibold hover:underline">
           Masuk ke akun
@@ -915,7 +934,7 @@ const OrdersList = () => {
   }
 
   return (
-    <section className="max-w-container mx-auto px-4 md:px-8 py-8 md:py-12">
+    <section className="max-w-container mx-auto px-4 md:px-8 pt-24 md:pt-28 pb-8 md:pb-12">
       <h1 className="text-xl md:text-2xl font-bold text-eglux-primary mb-6">Pesanan Saya</h1>
 
       {/* Status tabs — Active only (Semua Active / Menunggu / Diproses / Dikirim) */}

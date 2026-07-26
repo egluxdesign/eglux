@@ -14,11 +14,12 @@
 //   - "Lihat Rincian" button → buka detail panel
 //
 // Tab filter (2 tabs only):
-//   - Semua Riwayat (default) = completed + cancelled
-//   - Selesai                 = completed only
+//   - Semua Riwayat (default) = delivered + cancelled
+//   - Selesai                 = delivered only
 //   - Dibatalkan              = cancelled only
 //
-// (3 tabs actually — "Semua Riwayat" + 2 status tabs)
+// ⭐ DB constraint (SQL 032e) hanya allow: pending, paid, processing, shipped, delivered, cancelled, expired
+//    Webhook Biteship map: delivered → 'delivered' (BUKAN 'completed' lagi)
 // ============================================================================
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
@@ -32,14 +33,17 @@ import { rupiah } from '../context/CartContext';
 import { friendlyErrorMessage } from '../lib/errorMessage';
 
 // ── Tab filter ──
+// ⭐ Tab key pakai 'delivered' (sesuai DB constraint), label tetap "Selesai"
 const STATUS_TABS = [
   { key: 'all', label: 'Semua Riwayat' },
-  { key: 'completed', label: 'Selesai' },
+  { key: 'delivered', label: 'Selesai' },
   { key: 'cancelled', label: 'Dibatalkan' },
 ];
 
+// ⭐ STATUS_BADGE: key utama 'delivered', plus 'completed' untuk backward compat
 const STATUS_BADGE = {
-  completed: { text: 'Selesai', cls: 'bg-green-50 text-green-600', banner: 'bg-green-500' },
+  delivered: { text: 'Selesai', cls: 'bg-green-50 text-green-600', banner: 'bg-green-500' },
+  completed: { text: 'Selesai', cls: 'bg-green-50 text-green-600', banner: 'bg-green-500' }, // legacy fallback
   cancelled: { text: 'Dibatalkan', cls: 'bg-red-50 text-red-600', banner: 'bg-red-500' },
 };
 
@@ -80,12 +84,12 @@ function shortId(uuid) {
 
 // ⭐ Helper: get "tanggal selesai" untuk order
 // Priority:
-//   1. completed → midtrans_settlement_time (kalau ada) atau created_at
+//   1. delivered → midtrans_settlement_time (kalau ada) atau created_at
 //   2. cancelled → created_at (waktu order dibuat, karna kita gak track cancel_at)
 //   (orders table gak punya updated_at column)
 function getSelesaiDate(order) {
   if (!order) return null;
-  if (order.status === 'completed') {
+  if (order.status === 'delivered' || order.status === 'completed') {
     return order.midtrans_settlement_time || order.created_at;
   }
   return order.created_at;
@@ -115,9 +119,9 @@ const HistoryCard = ({ order, onOpen, onRefund }) => {
   const totalQty = items.reduce((sum, it) => sum + Number(it.quantity || 0), 0);
   const cfg = STATUS_BADGE[order.status] || { cls: 'bg-gray-100 text-gray-600' };
 
-  // Tanggal selesai = midtrans_settlement_time (untuk completed) atau created_at (fallback)
+  // Tanggal selesai = midtrans_settlement_time (untuk delivered) atau created_at (fallback)
   const selesaiDate = getSelesaiDate(order);
-  const selesaiLabel = order.status === 'completed' ? 'Selesai pada' : 'Dibatalkan pada';
+  const selesaiLabel = (order.status === 'delivered' || order.status === 'completed') ? 'Selesai pada' : 'Dibatalkan pada';
 
   return (
     <div className="bg-white rounded-xl border border-gray-100 overflow-hidden hover:shadow-md hover:border-eglux-secondary/30 transition-all">
@@ -187,8 +191,8 @@ const HistoryCard = ({ order, onOpen, onRefund }) => {
           </div>
         </div>
         <div className="flex gap-2">
-          {/* Ajukan Pengembalian — only for completed orders (cancelled gak perlu refund) */}
-          {order.status === 'completed' && (
+          {/* Ajukan Pengembalian — only for delivered orders (cancelled gak perlu refund) */}
+          {(order.status === 'delivered' || order.status === 'completed') && (
             <button
               onClick={() => onRefund(order)}
               className="flex-1 px-3 py-2 bg-white border border-eglux-secondary/30 text-eglux-secondary rounded-lg text-xs font-semibold hover:bg-eglux-secondary hover:text-white transition-colors cursor-pointer flex items-center justify-center gap-1.5"
@@ -235,19 +239,8 @@ const HistoryDetailPanel = ({ order, onClose, onRefund }) => {
   const navigate = useNavigate();
   const items = order.order_items || [];
   const statusCfg = STATUS_BADGE[order.status] || { banner: 'bg-gray-500' };
-  const canTrack = order.biteship_order_id || order.tracking_number || order.biteship_status;
-
-  // ⭐ Lacak Pesanan: direct ke biteship_waybill_url (kalau ada), fallback ke /track page
-  const handleTrackOrder = () => {
-    if (order.biteship_waybill_url) {
-      // Direct ke Biteship tracking page (gratis, no API call)
-      window.open(order.biteship_waybill_url, '_blank', 'noopener,noreferrer');
-    } else {
-      // Fallback: buka track order page (untuk lihat status dari DB)
-      onClose();
-      navigate(`/track?order=${order.id}`);
-    }
-  };
+  // ⭐ canTrack: tombol "Lacak Pesanan" HANYA muncul kalau biteship_waybill_url ADA di DB.
+  const canTrack = Boolean(order.biteship_waybill_url);
 
   const handleProductClick = (e, productId) => {
     e.preventDefault();
@@ -291,7 +284,7 @@ const HistoryDetailPanel = ({ order, onClose, onRefund }) => {
           <div className={`${statusCfg.banner} rounded-xl px-4 py-3 text-white`}>
             <p className="text-sm font-bold">{(STATUS_BADGE[order.status] || {}).text || order.status}</p>
             <p className="text-[0.7rem] opacity-90 mt-0.5">
-              {order.status === 'completed' ? 'Selesai pada' : 'Dibatalkan pada'} {formatDateTime(getSelesaiDate(order))}
+              {(order.status === 'delivered' || order.status === 'completed') ? 'Selesai pada' : 'Dibatalkan pada'} {formatDateTime(getSelesaiDate(order))}
             </p>
           </div>
 
@@ -322,9 +315,11 @@ const HistoryDetailPanel = ({ order, onClose, onRefund }) => {
                 )}
               </div>
               {canTrack && (
-                <button
-                  onClick={handleTrackOrder}
-                  className="mt-3 w-full px-4 py-2.5 bg-eglux-primary text-white rounded-lg text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer border-none flex items-center justify-center gap-2"
+                <a
+                  href={order.biteship_waybill_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-3 w-full px-4 py-2.5 bg-eglux-primary text-white rounded-lg text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer border-none flex items-center justify-center gap-2 no-underline"
                 >
                   <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <rect x="1" y="3" width="15" height="13" />
@@ -333,7 +328,7 @@ const HistoryDetailPanel = ({ order, onClose, onRefund }) => {
                     <circle cx="18.5" cy="18.5" r="2.5" />
                   </svg>
                   Lacak Pesanan
-                </button>
+                </a>
               )}
             </div>
           )}
@@ -504,13 +499,13 @@ const HistoryDetailPanel = ({ order, onClose, onRefund }) => {
             <button
               onClick={() => onRefund(order)}
               className={`flex-1 px-4 py-2.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer border flex items-center justify-center gap-1.5 ${
-                order.status === 'completed'
+                (order.status === 'delivered' || order.status === 'completed')
                   ? 'bg-white border-eglux-secondary/30 text-eglux-secondary hover:bg-eglux-secondary hover:text-white'
                   : 'bg-white border-gray-300 text-gray-600 hover:bg-gray-100'
               }`}
             >
               <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                {order.status === 'completed' ? (
+                {(order.status === 'delivered' || order.status === 'completed') ? (
                   <>
                     <polyline points="1 4 1 10 7 10" />
                     <path d="M3.51 15a9 9 0 102.13-9.36L1 10" />
@@ -519,7 +514,7 @@ const HistoryDetailPanel = ({ order, onClose, onRefund }) => {
                   <path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z" />
                 )}
               </svg>
-              {order.status === 'completed' ? 'Ajukan Pengembalian' : 'Tiket Bantuan'}
+              {(order.status === 'delivered' || order.status === 'completed') ? 'Ajukan Pengembalian' : 'Tiket Bantuan'}
             </button>
             <button
               onClick={onClose}
@@ -576,13 +571,14 @@ const OrderHistoryPage = () => {
           )
         )
       `;
-      // ⭐ Hanya fetch completed + cancelled (archive)
-      // Order by created_at DESC (orders table gak punya updated_at column)
+      // ⭐ Hanya fetch delivered + cancelled (archive)
+      // DB constraint (SQL 032e) hanya allow 'delivered' (BUKAN 'completed' lagi)
+      // Tapi tetap include 'completed' di filter untuk backward compat dengan data lama
       const { data, error: fetchErr } = await supabase
         .from('orders')
         .select(selectFields)
         .eq('customer.email', user.email)
-        .in('status', ['completed', 'cancelled'])
+        .in('status', ['delivered', 'completed', 'cancelled'])
         .order('created_at', { ascending: false })
         .limit(100);
 
@@ -597,7 +593,7 @@ const OrderHistoryPage = () => {
         if (allErr) throw allErr;
         setOrders((allData || []).filter(o =>
           o.customer?.email === user.email &&
-          ['completed', 'cancelled'].includes(o.status)
+          ['delivered', 'completed', 'cancelled'].includes(o.status)
         ));
       } else {
         setOrders(data || []);
@@ -655,6 +651,10 @@ const OrderHistoryPage = () => {
 
   const filteredOrders = useMemo(() => {
     if (activeTab === 'all') return orders;
+    // ⭐ Backward compat: tab "delivered" juga show "completed" (legacy data)
+    if (activeTab === 'delivered') {
+      return orders.filter(o => o.status === 'delivered' || o.status === 'completed');
+    }
     return orders.filter(o => o.status === activeTab);
   }, [orders, activeTab]);
 
@@ -662,7 +662,12 @@ const OrderHistoryPage = () => {
     const counts = { all: orders.length };
     for (const tab of STATUS_TABS) {
       if (tab.key === 'all') continue;
-      counts[tab.key] = orders.filter(o => o.status === tab.key).length;
+      // ⭐ Backward compat: tab "delivered" juga count "completed" (legacy data)
+      if (tab.key === 'delivered') {
+        counts[tab.key] = orders.filter(o => o.status === 'delivered' || o.status === 'completed').length;
+      } else {
+        counts[tab.key] = orders.filter(o => o.status === tab.key).length;
+      }
     }
     return counts;
   }, [orders]);
@@ -676,8 +681,9 @@ const OrderHistoryPage = () => {
   if (!user) {
     return (
       <>
-        <HeaderProducts onCartOpen={openCart} />
-        <section className="max-w-container mx-auto px-4 md:px-8 py-16 text-center">
+        {/* ⭐ forceScrolled — header selalu putih (gak ada hero section di page ini) */}
+        <HeaderProducts onCartOpen={openCart} forceScrolled />
+        <section className="max-w-container mx-auto px-4 md:px-8 pt-24 pb-16 text-center">
           <p className="text-gray-500 mb-4">Kamu perlu masuk dulu untuk melihat riwayat pesanan.</p>
           <Link to="/admin" className="text-eglux-secondary font-semibold hover:underline">
             Masuk ke akun
@@ -690,9 +696,10 @@ const OrderHistoryPage = () => {
 
   return (
     <>
-      <HeaderProducts onCartOpen={openCart} />
+      {/* ⭐ forceScrolled — header selalu putih, gak transparan menumpuk konten */}
+      <HeaderProducts onCartOpen={openCart} forceScrolled />
 
-      <section className="max-w-container mx-auto px-4 md:px-8 py-8 md:py-12">
+      <section className="max-w-container mx-auto px-4 md:px-8 pt-24 md:pt-28 pb-8 md:pb-12">
         {/* Header dengan back link ke Pesanan Saya */}
         <div className="flex items-center justify-between mb-6 gap-4 flex-wrap">
           <div>

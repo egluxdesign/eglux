@@ -22,10 +22,10 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
 async function runTests() {
-  console.log('🧪 MEMULAI TEST CHECKOUT FLOW\n');
+  // console.log('🧪 MEMULAI TEST CHECKOUT FLOW\n');
 
   // Step 1: Ambil varian untuk test
-  console.log('1️⃣ Mengambil sample varian...');
+  // console.log('1️⃣ Mengambil sample varian...');
   
   // FIX: Cek error dan data terpisah
   // Ganti query di test
@@ -34,8 +34,8 @@ async function runTests() {
     .select('id, sku, stock, name')  // ← ga perlu join
     .limit(3);
 
-  console.log('   Raw data:', variants);
-  console.log('   Raw error:', vError);
+  // console.log('   Raw data:', variants);
+  // console.log('   Raw error:', vError);
 
   if (vError) {
     console.error('❌ Query error:', vError.message);
@@ -51,17 +51,17 @@ async function runTests() {
   }
 
   const testVariant = variants[0];
-  console.log(`   ✅ Varian test: ${testVariant.sku} (stok: ${testVariant.stock})`);
+  // console.log(`   ✅ Varian test: ${testVariant.sku} (stok: ${testVariant.stock})`);
 
   // Step 2: Set stok test = 10
-  console.log('\n2️⃣ Set stok test = 10...');
+  // console.log('\n2️⃣ Set stok test = 10...');
   await supabaseAdmin
     .from('product_variants')
     .update({ stock: 10 })
     .eq('id', testVariant.id);
 
   // Step 3: Test A - Order sukses (quantity 2)
-  console.log('\n3️⃣ TEST A: Order sukses (qty: 2)...');
+  // console.log('\n3️⃣ TEST A: Order sukses (qty: 2)...');
   const orderA = await createTestOrder(testVariant.id, 2);
   
   if (!orderA.success) {
@@ -69,11 +69,11 @@ async function runTests() {
     return;
   }
 
-  console.log(`   ✅ Order created: ${orderA.orderId}`);
+  // console.log(`   ✅ Order created: ${orderA.orderId}`);
 
   // Panggil Edge Function
   const resultA = await callDeductStock(orderA.orderId);
-  console.log(`   📤 Edge Function response:`, JSON.stringify(resultA, null, 2));
+  // console.log(`   📤 Edge Function response:`, JSON.stringify(resultA, null, 2));
 
   // Cek stok berkurang
   const { data: afterA } = await supabase
@@ -82,12 +82,12 @@ async function runTests() {
     .eq('id', testVariant.id)
     .single();
 
-  console.log(`   📊 Stok setelah: ${afterA.stock} (harusnya: 8)`);
+  // console.log(`   📊 Stok setelah: ${afterA.stock} (harusnya: 8)`);
   const testAPass = afterA.stock === 8 && resultA.success;
-  console.log(`   ${testAPass ? '✅ TEST A PASS' : '❌ TEST A FAIL'}`);
+  // console.log(`   ${testAPass ? '✅ TEST A PASS' : '❌ TEST A FAIL'}`);
 
   // Step 4: Test B - Order gagal stok habis (quantity 20)
-  console.log('\n4️⃣ TEST B: Order gagal stok habis (qty: 20)...');
+  // console.log('\n4️⃣ TEST B: Order gagal stok habis (qty: 20)...');
   const orderB = await createTestOrder(testVariant.id, 20);
   
   if (!orderB.success) {
@@ -96,7 +96,7 @@ async function runTests() {
   }
 
   const resultB = await callDeductStock(orderB.orderId);
-  console.log(`   📤 Edge Function response:`, JSON.stringify(resultB, null, 2));
+  // console.log(`   📤 Edge Function response:`, JSON.stringify(resultB, null, 2));
 
   // Cek order status = cancelled
   const { data: orderBData } = await supabase
@@ -105,12 +105,12 @@ async function runTests() {
     .eq('id', orderB.orderId)
     .single();
 
-  console.log(`   📊 Order status: ${orderBData.status} (harusnya: cancelled)`);
+  // console.log(`   📊 Order status: ${orderBData.status} (harusnya: cancelled)`);
   const testBPass = orderBData.status === 'cancelled' && !resultB.success;
-  console.log(`   ${testBPass ? '✅ TEST B PASS' : '❌ TEST B FAIL'}`);
+  // console.log(`   ${testBPass ? '✅ TEST B PASS' : '❌ TEST B FAIL'}`);
 
   // Step 5: Cleanup - reset stok
-  console.log('\n5️⃣ Cleanup: Reset stok...');
+  // console.log('\n5️⃣ Cleanup: Reset stok...');
   await supabaseAdmin
     .from('product_variants')
     .update({ stock: testVariant.stock })
@@ -121,11 +121,11 @@ async function runTests() {
   console.log('   ✅ Cleanup selesai');
 
   // Summary
-  console.log('\n📋 SUMMARY');
-  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  console.log(`Test A (Sukses):  ${testAPass ? '✅ PASS' : '❌ FAIL'}`);
-  console.log(`Test B (Gagal):   ${testBPass ? '✅ PASS' : '❌ FAIL'}`);
-  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  // console.log('\n📋 SUMMARY');
+  // console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  // console.log(`Test A (Sukses):  ${testAPass ? '✅ PASS' : '❌ FAIL'}`);
+  // console.log(`Test B (Gagal):   ${testBPass ? '✅ PASS' : '❌ FAIL'}`);
+  // console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 }
 
 async function createTestOrder(variantId, quantity) {

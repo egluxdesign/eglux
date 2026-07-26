@@ -208,7 +208,7 @@ export const CartProvider = ({ children }) => {
       });
 
       if (hasChanges) {
-        console.log('[CartContext] ✓ Cart prices recomputed (changes detected)');
+        // console.log('[CartContext] ✓ Cart prices recomputed (changes detected)');
       }
     } catch (e) {
       console.warn('[CartContext] recomputeCartPrices error:', e.message);

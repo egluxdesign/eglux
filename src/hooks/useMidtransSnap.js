@@ -123,9 +123,9 @@ function loadSnapScript() {
       // Verify snap object tersedia
       if (window.snap && typeof window.snap.pay === 'function') {
         snapLoaded = true;
-        console.log(
-          `[useMidtransSnap] ✓ Snap.js loaded (${env.MIDTRANS_MODE_LABEL} mode)`
-        );
+        // console.log(
+        //   `[useMidtransSnap] ✓ Snap.js loaded (${env.MIDTRANS_MODE_LABEL} mode)`
+        // );
         resolve();
       } else {
         const err = new Error(

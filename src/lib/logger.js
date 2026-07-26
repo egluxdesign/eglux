@@ -28,7 +28,7 @@ const isDev = import.meta.env?.DEV === true;
  */
 export function log(...args) {
   if (isDev) {
-    console.log(...args);
+    // console.log(...args);
   }
 }
 

@@ -41,12 +41,18 @@ function mapBiteshipToEgluxStatus(biteshipStatus: string): string | null {
 
   // ⭐ IMPORTANT: EGLUX orders.status check constraint (SQL 032e) hanya allow:
   //   pending, paid, processing, shipped, delivered, cancelled, expired
+  //
+  // Biteship status flow:
+  //   confirmed → allocated → picking_up → picked → in_transit → dropping_off → delivered
+  //                ↓             ↓           ↓          ↓            ↓
+  //              processing    shipped     shipped   shipped     shipped    → delivered
   switch (normalized) {
     case "confirmed":
     case "allocated":
-    case "pickingUp":
     case "processing":
       return "processing";
+    // ⭐ picking_up = kurir menuju lokasi pickup → SUDAH DALAM PENGIRIMAN → shipped
+    case "pickingUp":
     case "picked":
     case "inTransit":
     case "droppingOff":

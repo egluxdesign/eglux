@@ -174,14 +174,23 @@ const UserMenu = ({ isScrolled }) => {
 // ============================================================================
 // MAIN
 // ============================================================================
-const HeaderProducts = ({ onCartOpen }) => {
+const HeaderProducts = ({ onCartOpen, forceScrolled = false }) => {
   const { totalQty } = useCart();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
   const { pathname } = useLocation();
 
   // ⭐ Transition when section touches header
+  // Logic: threshold = viewport height - header height (untuk homepage dengan hero)
+  // Tapi kalau forceScrolled=true (untuk /orders, /order-history), header selalu
+  // tampil dalam mode "scrolled" (putih, logo kecil) — supaya gak transparan
+  // menumpuk konten dan block klik di card pertama.
   useEffect(() => {
+    if (forceScrolled) {
+      setIsScrolled(true);
+      return; // skip scroll listener — always scrolled
+    }
+
     const handleScroll = () => {
       const headerHeight = window.innerWidth >= 768 ? 72 : 60;
       const threshold = window.innerHeight - headerHeight;
@@ -194,7 +203,7 @@ const HeaderProducts = ({ onCartOpen }) => {
       window.removeEventListener('scroll', handleScroll);
       window.removeEventListener('resize', handleScroll);
     };
-  }, []);
+  }, [forceScrolled]);
 
   const headerBg = isScrolled ? 'bg-white' : 'bg-transparent';
   const headerShadow = isScrolled ? 'shadow-[0_1px_8px_rgba(0,0,0,0.06)]' : 'shadow-none';

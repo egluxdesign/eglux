@@ -9,7 +9,8 @@ const OrdersPage = () => {
   const { openCart } = useCartActions();
   return (
     <>
-      <HeaderProducts onCartOpen={openCart} />
+      {/* ⭐ forceScrolled — header selalu putih, gak transparan */}
+      <HeaderProducts onCartOpen={openCart} forceScrolled />
 
       <main>
         <OrdersList />

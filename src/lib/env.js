@@ -152,6 +152,6 @@ if (import.meta.env.DEV) {
     console.warn('  3. Restart Vite dev server:  npm run dev');
     console.groupEnd();
   } else {
-    console.log('✓ EGLUX — All required env vars configured');
+    // console.log('✓ EGLUX — All required env vars configured');
   }
 }
