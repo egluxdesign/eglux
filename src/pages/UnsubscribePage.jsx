@@ -2,8 +2,13 @@
 // ============================================================================
 // UnsubscribePage — Halaman untuk unsubscribe newsletter
 // ============================================================================
-// URL: /unsubscribe?token=<subscriber_id>&email=<email>
-// User klik "Unsubscribe" link di email → landing page ini → confirm → done
+// URL: /unsubscribe?token=<subscriber_id>
+// User klik "Unsubscribe" link di email → landing page ini → auto-confirm → done
+//
+// ⚠️ Security (v2):
+//   - Email TIDAK lagi di-expose di URL (sebelumnya ?token=xxx&email=yyy)
+//   - Cukup token (UUID) untuk unsubscribe — edge function lookup by ID saja
+//   - Email TIDAK di-render ke layar — hindari PII leak via screenshots
 // ============================================================================
 
 import { useState, useEffect } from 'react';
@@ -15,20 +20,19 @@ import { supabase } from '../lib/supabaseClient';
 const UnsubscribePage = () => {
   const [searchParams] = useSearchParams();
   const token = searchParams.get('token');
-  const email = searchParams.get('email');
 
   const [status, setStatus] = useState('idle'); // idle | loading | success | error
   const [message, setMessage] = useState('');
 
   useEffect(() => {
-    // Auto-confirm kalau token + email ada di URL
-    if (!token || !email) return;
+    // Auto-confirm kalau token ada di URL
+    if (!token) return;
 
     const doUnsubscribe = async () => {
       setStatus('loading');
       try {
         const { data, error } = await supabase.functions.invoke('unsubscribe-newsletter', {
-          body: { token, email },
+          body: { token },
         });
 
         if (error) throw new Error(error.message);
@@ -45,7 +49,7 @@ const UnsubscribePage = () => {
     };
 
     doUnsubscribe();
-  }, [token, email]);
+  }, [token]);
 
   return (
     <>
@@ -77,8 +81,9 @@ const UnsubscribePage = () => {
             <div className="text-5xl mb-4">✓</div>
             <h1 className="text-2xl font-bold text-eglux-primary mb-3">Berhasil Unsubscribe</h1>
             <p className="text-gray-500 mb-2">{message}</p>
+            {/* ⭐ Email TIDAK di-render ke layar (PII protection via screenshot) */}
             <p className="text-sm text-gray-400 mb-8">
-              Email <strong className="text-gray-600">{email}</strong> tidak akan menerima newsletter EGLUX lagi.
+              Kamu tidak akan menerima newsletter EGLUX lagi.
             </p>
             <div className="flex gap-3 justify-center flex-wrap">
               <Link

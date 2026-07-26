@@ -42,7 +42,9 @@ function json(obj: unknown, status = 200) {
 // HTML email template — EGLUX branded
 // ============================================================================
 function buildWelcomeEmail(email: string, subscriberId: string): string {
-  const unsubscribeUrl = `${APP_URL}/unsubscribe?token=${subscriberId}&email=${encodeURIComponent(email)}`;
+  // ⭐ Security: unsubscribe URL TIDAK lagi include email (PII protection)
+  // Hanya token (UUID) yang cukup untuk unsubscribe-newsletter lookup
+  const unsubscribeUrl = `${APP_URL}/unsubscribe?token=${subscriberId}`;
 
   return `<!DOCTYPE html>
 <html lang="id">

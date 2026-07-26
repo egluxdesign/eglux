@@ -281,10 +281,10 @@ const OrderDetailPanel = ({ order: orderProp, onClose, onOrderUpdated }) => {
         let errMsg = 'Gagal membuat transaksi pembayaran';
         if (data?.error) {
           errMsg = data.error;
-          // Kalau ada debug info, tampilkan juga
+          // ⭐ Security: debug info hanya di-log ke console, JANGAN di-show ke user
+          // (debug bisa contain SQL error / schema internal yang reveal backend structure)
           if (data.debug) {
-            console.error('[OrdersList] Debug info:', data.debug);
-            errMsg += ` (debug: ${JSON.stringify(data.debug)})`;
+            console.error('[OrdersList] Debug info (server-side only, not shown to user):', data.debug);
           }
         } else if (fnError?.message) {
           errMsg = fnError.message;

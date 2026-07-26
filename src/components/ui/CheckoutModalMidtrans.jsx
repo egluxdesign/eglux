@@ -670,7 +670,9 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
           showToast('Menunggu pembayaran. Cek WA/email untuk instruksi, atau bayar via Pesanan Saya.', 'info');
         },
         onError: (result) => {
-          console.error('[Midtrans] Payment error:', result);
+          // ⭐ Security: log hanya non-sensitive identifiers, BUKAN full result object
+          // (result berisi masked_card, bank, fraud_status, dll — bisa expose PII ke DevTools)
+          console.error('[Midtrans] Payment error — transaction_id:', result?.transaction_id, 'status_code:', result?.status_code);
           document.body.style.overflow = '';
           showToast('Pembayaran gagal. Bayar ulang via menu Pesanan Saya.', 'error');
         },

@@ -5,12 +5,18 @@
 //
 // Cara panggil:
 //   POST /functions/v1/unsubscribe-newsletter
-//   Body: { "token": "subscriber_uuid", "email": "user@example.com" }
+//   Body: { "token": "subscriber_uuid" }
 //
 // Flow:
-//   1. Cari subscriber by ID (token) + email match
+//   1. Cari subscriber by ID (token) — TIDAK perlu email match (PII protection)
 //   2. Update status → 'unsubscribed'
-//   3. Return success
+//   3. Return success (tanpa expose email di response)
+//
+// ⚠️ Security (v2):
+//   - Email TIDAK lagi di-expose di URL unsubscribe (sebelumnya ?token=xxx&email=yyy)
+//   - Lookup hanya by token (UUID) — token sudah unik, tidak perlu email match
+//   - Email TIDAK di-return di response — frontend tidak perlu render email
+//   - Cegah email bocor ke: browser history, server logs, Referer header
 // ============================================================================
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
@@ -37,24 +43,24 @@ serve(async (req: Request) => {
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
 
   try {
-    const { token, email } = await req.json();
+    const { token } = await req.json();
 
-    if (!token || !email) {
-      return json({ error: "Token dan email wajib diisi" }, 400);
+    if (!token) {
+      return json({ error: "Token wajib diisi" }, 400);
     }
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-    // Cari subscriber by ID + email (verify token match)
+    // ⭐ Lookup subscriber by ID (token) saja — tidak perlu email match
+    // Token (UUID) sudah unik, jadi email match redundant & expose PII
     const { data: subscriber, error: findErr } = await supabase
       .from("newsletter_subscribers")
-      .select("id, email, status")
+      .select("id, status")
       .eq("id", token)
-      .eq("email", email.trim().toLowerCase())
       .maybeSingle();
 
     if (findErr || !subscriber) {
-      return json({ error: "Token atau email tidak valid" }, 404);
+      return json({ error: "Token tidak valid" }, 404);
     }
 
     if (subscriber.status === "unsubscribed") {
@@ -75,7 +81,7 @@ serve(async (req: Request) => {
       return json({ error: "Gagal unsubscribe" }, 500);
     }
 
-    console.log("[unsubscribe-newsletter] ✓ Unsubscribed:", subscriber.email);
+    console.log("[unsubscribe-newsletter] ✓ Unsubscribed subscriber:", subscriber.id);
 
     return json({
       success: true,
