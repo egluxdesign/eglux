@@ -277,25 +277,59 @@ serve(async (req: Request) => {
   // ⭐ FIELD PRIORITY untuk tracking number (nomor resi):
   //   1. courier_waybill_id    → actual courier AWB / nomor resi (e.g., "WYB-1784104672443")
   //   2. courier_tracking_id   → Biteship internal ID (fallback)
+  //   3. data.courier.waybill_id → nested fallback (kalau struktur berubah)
+  //   4. data.courier.tracking_id → nested fallback
   const trackingNumber =
     body.courier_waybill_id ||
     body.courier_tracking_id ||
     body.data?.courier?.waybill_id ||
     body.data?.courier?.tracking_id ||
+    body.waybill_id ||  // ⭐ fallback untuk order.waybill_id event
     null;
 
-  // ⭐ courier_link = URL tracking Biteship (bukan waybill PDF URL)
-  // Biteship gak kirim waybill_url langsung di webhook ini — pakai courier_link
-  const waybillUrl = body.courier_link || body.waybill_url || body.data?.waybill_url || null;
+  // ⭐ TRACKING URL extraction — Biteship kirim di beberapa kemungkinan field:
+  //   - courier_link     → flat (order.status event, standard)
+  //   - waybill_url      → flat (order.waybill_id event)
+  //   - data.courier_link → nested fallback
+  //   - data.waybill_url  → nested fallback
+  //   - tracking_url      → alternative field name
+  //   - data.tracking_url → nested alternative
+  //
+  // ⚠️ Field naming confusing:
+  //   - "courier_link" = URL tracking Biteship (track.biteship.com/...) — INI YANG KITA MAU
+  //   - "waybill_url" = URL PDF shipping label — bukan untuk customer
+  //   Tapi karena kita simpan di kolom "biteship_waybill_url", kita prioritize courier_link.
+  const waybillUrl =
+    body.courier_link ||           // ⭐ priority 1: tracking URL (order.status event)
+    body.waybill_url ||            // priority 2: waybill URL (order.waybill_id event)
+    body.tracking_url ||           // priority 3: alternative field name
+    body.data?.courier_link ||     // nested fallback
+    body.data?.waybill_url ||      // nested fallback
+    body.data?.tracking_url ||     // nested alternative
+    body.data?.courier?.link ||    // deep nested fallback
+    null;
+
   const pickupCode = body.pickup_code || body.data?.pickup_code || null;
 
-  // Log semua top-level keys untuk debugging struktur payload
+  // ⭐ ENHANCED LOGGING untuk debug: log semua top-level keys + values yang relevan
   console.log("[biteship-webhook] 🔍 Top-level body keys:", Object.keys(body || {}));
+  console.log("[biteship-webhook] 🔍 Body values yang relevan:", {
+    event: body.event,
+    order_id: body.order_id,
+    courier_link: body.courier_link,
+    waybill_url: body.waybill_url,
+    tracking_url: body.tracking_url,
+    courier_waybill_id: body.courier_waybill_id,
+    courier_tracking_id: body.courier_tracking_id,
+    status: body.status,
+    pickup_code: body.pickup_code,
+  });
   console.log("[biteship-webhook] 📋 Extracted:", {
     biteship_order_id: biteshipOrderId,
     tracking_number: trackingNumber,
     status: body.status,
     courier_link: waybillUrl,
+    pickup_code: pickupCode,
   });
 
   // STATUS extraction logic
@@ -303,9 +337,11 @@ serve(async (req: Request) => {
   let biteshipStatus: string | null = body.status || data.status || null;
 
   if (eventType === "order.status") {
-    console.log(`[biteship-webhook] order.status event → status=${biteshipStatus}`);
+    console.log(`[biteship-webhook] order.status event → status=${biteshipStatus}, courier_link=${waybillUrl || 'null'}`);
   } else if (eventType === "order.waybill_id") {
-    console.log(`[biteship-webhook] order.waybill_id event → waybill_url=${waybillUrl}`);
+    console.log(`[biteship-webhook] order.waybill_id event → waybill_url=${waybillUrl || 'null'}, tracking_number=${trackingNumber || 'null'}`);
+    // ⭐ order.waybill_id event biasanya kirim waybill_url (URL PDF label)
+    // Tapi untuk tracking customer, kita juga simpan sebagai biteship_waybill_url
   } else if (eventType === "order.price") {
     console.log(`[biteship-webhook] order.price event → skip (not relevant)`);
     return json({
@@ -416,7 +452,16 @@ serve(async (req: Request) => {
     new_status: updatedOrder.status,
     new_biteship_status: updatedOrder.biteship_status,
     updated_fields: Object.keys(updatePayload),
+    // ⭐ Log values yang tersimpan untuk verify
+    saved_tracking_number: updatePayload.tracking_number || '(not updated)',
+    saved_biteship_waybill_url: updatePayload.biteship_waybill_url || '(not updated)',
+    saved_pickup_code: updatePayload.biteship_pickup_code || '(not updated)',
   });
+
+  // ⭐ WARNING kalau waybillUrl ada tapi gak ke-update (defensive check)
+  if (waybillUrl && !updatePayload.biteship_waybill_url) {
+    console.warn("[biteship-webhook] ⚠️ waybillUrl ada tapi gak masuk ke updatePayload! waybillUrl:", waybillUrl);
+  }
 
   return json({
     success: true,
