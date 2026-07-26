@@ -34,18 +34,28 @@ const BITESHIP_API_KEY = Deno.env.get("BITESHIP_API_KEY")!;
 
 // ⭐ Reuse mapping dari biteship-webhook (sama persis)
 function mapBiteshipToEgluxStatus(biteshipStatus: string): string | null {
-  switch (biteshipStatus) {
+  // Normalize: convert snake_case ke camelCase sekali untuk matching
+  const normalized = (biteshipStatus || "")
+    .toLowerCase()
+    .replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+
+  // ⭐ IMPORTANT: EGLUX orders.status check constraint (SQL 032e) hanya allow:
+  //   pending, paid, processing, shipped, delivered, cancelled, expired
+  switch (normalized) {
     case "confirmed":
     case "allocated":
     case "pickingUp":
+    case "processing":
       return "processing";
     case "picked":
     case "inTransit":
     case "droppingOff":
     case "onHold":
-      return "shipping";
+    case "shipping":
+      return "shipped";
     case "delivered":
-      return "completed";
+    case "completed":
+      return "delivered";
     case "cancelled":
     case "returned":
     case "rejected":

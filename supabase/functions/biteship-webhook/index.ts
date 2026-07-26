@@ -85,21 +85,28 @@ function mapBiteshipToEgluxStatus(biteshipStatus: string): string | null {
     // snake_case → camelCase
     .replace(/_([a-z])/g, (_, c) => c.toUpperCase());
 
+  // ⭐ IMPORTANT: EGLUX orders.status check constraint (SQL 032e) hanya allow:
+  //   pending, paid, processing, shipped, delivered, cancelled, expired
+  //
+  // Mapping dari Biteship status (camelCase + snake_case) ke EGLUX status:
   switch (normalized) {
     // Pre-pickup (courier belum ambil paket) → processing
     case "confirmed":
     case "allocated":
     case "pickingUp":
+    case "processing":  // ⭐ Biteship juga kirim "processing" untuk tahap penyiapan
       return "processing";
-    // Pickup done, dalam perjalanan → shipping
+    // Pickup done, dalam perjalanan → shipped (BUKAN "shipping" — constraint gak allow)
     case "picked":
     case "inTransit":
     case "droppingOff":
     case "onHold":
-      return "shipping";
-    // Sampai tujuan → completed
+    case "shipping":  // ⭐ Biteship webhook kirim "shipping" (snake_case tidak, tapi just in case)
+      return "shipped";
+    // Sampai tujuan → delivered (BUKAN "completed" — constraint gak allow)
     case "delivered":
-      return "completed";
+    case "completed":  // ⭐ fallback kalau Biteship kirim "completed"
+      return "delivered";
     // Semua status cancelled-like → cancelled
     case "cancelled":
     case "returned":
