@@ -618,7 +618,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
         // Kalau cart gak di-clear dan user close popup sebelum bayar, cart tetap
         // berisi item yang sama → user bisa accidentally checkout duplicate order.
         clearCart();
-        showToast('Pesanan dibuat! Selesaikan pembayaran sekarang atau nanti via menu Pesanan Saya.', 'info');
+        showToast('Pesanan dibuat, selesaikan pembayaran sekarang!', 'info');
       }
 
       // ⭐ STEP 1: Ensure Snap.js loaded (mirror OrdersList pattern).
@@ -879,9 +879,9 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
           </section>
 
           {/* === Data Pembeli === */}
-          <section className="space-y-4">
+          <section className="space-y-4 pb-2">
             <h4 className="text-[0.78rem] uppercase tracking-[1px] text-[#666] font-semibold flex items-center gap-1.5">
-              <User className="w-3.5 h-3.5" />Data Pembeli
+              <User className="w-3.5 h-3.5" />Data Pemesanan
             </h4>
 
             {/* Name */}
@@ -1020,7 +1020,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
           </section>
 
           {/* === Alamat Pengiriman === */}
-          <section className="space-y-4">
+          <section className="space-y-4 pt-8 pb-2">
             <h4 className="text-[0.78rem] uppercase tracking-[1px] text-[#666] font-semibold flex items-center gap-1.5">
               <MapPin className="w-3.5 h-3.5" />Alamat Pengiriman
             </h4>
@@ -1136,13 +1136,13 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
             {/* Not found */}
             {showAreaNotFound && (
               <p className="text-[0.78rem] text-red-500">
-                Kode pos tidak ditemukan. Periksa kembali.
+                Kode pos tidak ditemukan. Harap periksa kembali.
               </p>
             )}
           </section>
 
           {/* === Pilih Kurir === */}
-          <section className="space-y-3">
+          <section className="space-y-4 pt-8 pb-2">
             <h4 className="text-[0.78rem] uppercase tracking-[1px] text-[#666] font-semibold flex items-center gap-1.5">
               <Truck className="w-3.5 h-3.5" />Pilih Kurir
             </h4>
@@ -1209,7 +1209,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
 
           {/* === Catatan === */}
           <section>
-            <label className="block text-[0.8rem] font-semibold text-eglux-primary uppercase tracking-[0.5px] mb-1.5">
+            <label className="block text-[0.8rem] font-semibold text-eglux-primary uppercase tracking-[0.5px] mb-1.5 pt-8">
               Catatan (opsional)
             </label>
             <textarea
