@@ -1,13 +1,16 @@
 // supabase/functions/export-products-csv/index.ts
 // ============================================================================
-// Export current products + variants from DB as 2 CSV files (zipped or separate)
+// Export products as SUMMARY CSV (single file)
 // ============================================================================
-// Returns: JSON with 2 base64-encoded CSV strings (products_csv, variants_csv)
-// Frontend akan trigger download dari base64 string.
+// Output columns (sesuai request admin):
+//   Name, Category, Price Range, Discounts, Badge, Active, Variants, Updated
 //
 // Cara panggil:
 //   POST /functions/v1/export-products-csv
 //   Body: { } (empty)
+//
+// Returns: JSON dengan 1 base64-encoded CSV string (products_summary)
+// Frontend akan trigger download dari base64 string.
 // ============================================================================
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
@@ -39,6 +42,63 @@ function buildCsv(headers: string[], rows: any[][]): string {
 }
 
 // ============================================================================
+// Format rupiah (tanpa desimal)
+// ============================================================================
+function formatRupiah(value: number | null | undefined): string {
+  if (value === null || value === undefined) return "—";
+  return "Rp " + Number(value).toLocaleString("id-ID");
+}
+
+// ============================================================================
+// Format timestamp ke "YYYY-MM-DD HH:MM" (Asia/Jakarta)
+// ============================================================================
+function formatDate(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  try {
+    const d = new Date(iso);
+    return new Intl.DateTimeFormat("id-ID", {
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", hour12: false,
+      timeZone: "Asia/Jakarta",
+    }).format(d);
+  } catch {
+    return iso;
+  }
+}
+
+// ============================================================================
+// Cek apakah discount variant sedang aktif (time-window check)
+// ============================================================================
+function isDiscountActive(variant: any): boolean {
+  if (!variant.discount_type || !variant.discount_value) return false;
+  const now = new Date();
+  const startAt = variant.discount_start_at ? new Date(variant.discount_start_at) : null;
+  const endAt = variant.discount_end_at ? new Date(variant.discount_end_at) : null;
+  if (startAt && now < startAt) return false;
+  if (endAt && now > endAt) return false;
+  return true;
+}
+
+// ============================================================================
+// Hitung discount percent untuk variant (untuk display di CSV)
+// ============================================================================
+function getDiscountPercent(variant: any): number {
+  if (!isDiscountActive(variant)) return 0;
+  const originalPrice = Number(variant.price) || 0;
+  if (originalPrice <= 0) return 0;
+  const value = Number(variant.discount_value);
+  let currentPrice = originalPrice;
+  switch (variant.discount_type) {
+    case "percentage": currentPrice = Math.max(0, Math.round(originalPrice - (originalPrice * value / 100))); break;
+    case "nominal":    currentPrice = Math.max(0, originalPrice - value); break;
+    case "final_price":currentPrice = Math.max(0, value); break;
+    default: return 0;
+  }
+  if (originalPrice <= currentPrice) return 0;
+  return Math.round(((originalPrice - currentPrice) / originalPrice) * 100);
+}
+
+// ============================================================================
 // MAIN
 // ============================================================================
 serve(async (req: Request) => {
@@ -58,86 +118,98 @@ serve(async (req: Request) => {
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-    // 1. Fetch all products
+    // 1. Fetch all products dengan variants + discounts (single query, nested join)
     const { data: products, error: pErr } = await supabase
       .from("products")
-      .select("id, name, slug, description, category, base_price, is_active, badge, weight_in_gram, updated_at")
+      .select(`
+        id, name, slug, category, badge, is_active, updated_at,
+        product_variants (
+          id, name, price, stock, is_active,
+          discount_type, discount_value, discount_start_at, discount_end_at
+        )
+      `)
       .order("updated_at", { ascending: false });
 
     if (pErr) throw new Error(`Failed to fetch products: ${pErr.message}`);
 
-    // 2. Fetch all variants
-    const { data: variants, error: vErr } = await supabase
-      .from("product_variants")
-      .select("id, product_id, name, attributes, price, stock, sku, is_active, weight_in_gram, length_cm, width_cm, height_cm")
-      .order("created_at", { ascending: true });
-
-    if (vErr) throw new Error(`Failed to fetch variants: ${vErr.message}`);
-
-    // 3. Build product_id → slug map (for variant CSV)
-    const productIdToSlug = new Map(
-      (products || []).map((p: any) => [p.id, p.slug])
-    );
-
-    // 4. Build products CSV
-    const productsHeaders = [
-      "slug", "name", "category", "base_price", "weight_in_gram",
-      "badge", "is_active", "description"
+    // 2. Build summary CSV dengan kolom yang diminta admin
+    const summaryHeaders = [
+      "Name",
+      "Category",
+      "Price Range",
+      "Discounts",
+      "Badge",
+      "Active",
+      "Variants",
+      "Updated",
     ];
-    const productsRows = (products || []).map((p: any) => [
-      p.slug,
-      p.name,
-      p.category || "",
-      p.base_price,
-      p.weight_in_gram || "",
-      p.badge || "",
-      p.is_active,
-      p.description || "",
-    ]);
-    const productsCsv = buildCsv(productsHeaders, productsRows);
 
-    // 5. Build variants CSV
-    const variantsHeaders = [
-      "product_slug", "name", "attributes", "price", "stock",
-      "sku", "is_active", "weight_in_gram", "length_cm", "width_cm", "height_cm"
-    ];
-    const variantsRows = (variants || []).map((v: any) => [
-      productIdToSlug.get(v.product_id) || "",
-      v.name || "",
-      v.attributes ? JSON.stringify(v.attributes) : "{}",
-      v.price,
-      v.stock,
-      v.sku || "",
-      v.is_active,
-      v.weight_in_gram || "",
-      v.length_cm || "",
-      v.width_cm || "",
-      v.height_cm || "",
-    ]);
-    const variantsCsv = buildCsv(variantsHeaders, variantsRows);
+    const summaryRows = (products || []).map((p: any) => {
+      const variants = p.product_variants || [];
+      const activeVariants = variants.filter((v: any) => v.is_active);
 
-    // 6. Return base64-encoded CSVs (frontend trigger download)
+      // Price Range: min-max dari active variants
+      const prices = activeVariants
+        .map((v: any) => Number(v.price) || 0)
+        .filter((price: number) => price > 0);
+      let priceRange = "—";
+      if (prices.length > 0) {
+        const minPrice = Math.min(...prices);
+        const maxPrice = Math.max(...prices);
+        if (minPrice === maxPrice) {
+          priceRange = formatRupiah(minPrice);
+        } else {
+          priceRange = `${formatRupiah(minPrice)} - ${formatRupiah(maxPrice)}`;
+        }
+      }
+
+      // Discounts: summary discount aktif dari active variants
+      const discountPercents = activeVariants
+        .map((v: any) => getDiscountPercent(v))
+        .filter((pct: number) => pct > 0);
+      let discountsSummary = "—";
+      if (discountPercents.length > 0) {
+        const minPct = Math.min(...discountPercents);
+        const maxPct = Math.max(...discountPercents);
+        if (minPct === maxPct) {
+          discountsSummary = `-${minPct}% (${discountPercents.length} varian)`;
+        } else {
+          discountsSummary = `-${minPct}% to -${maxPct}% (${discountPercents.length} varian)`;
+        }
+      }
+
+      // Variants: count (active / total)
+      const variantsSummary = `${activeVariants.length} active / ${variants.length} total`;
+
+      return [
+        p.name || "",
+        p.category || "—",
+        priceRange,
+        discountsSummary,
+        p.badge || "—",
+        p.is_active ? "Active" : "Inactive",
+        variantsSummary,
+        formatDate(p.updated_at),
+      ];
+    });
+
+    const summaryCsv = buildCsv(summaryHeaders, summaryRows);
+
+    // 3. Return base64-encoded CSV (frontend trigger download)
     const encoder = new TextEncoder();
-    const productsBase64 = btoa(String.fromCharCode(...encoder.encode(productsCsv)));
-    const variantsBase64 = btoa(String.fromCharCode(...encoder.encode(variantsCsv)));
+    const summaryBase64 = btoa(String.fromCharCode(...encoder.encode(summaryCsv)));
 
     return json({
       success: true,
       exported_at: new Date().toISOString(),
       counts: {
         products: products?.length || 0,
-        variants: variants?.length || 0,
       },
       files: {
-        products_csv: {
-          filename: "products_template.csv",
-          content_base64: productsBase64,
+        products_summary: {
+          filename: `products_summary_${new Date().toISOString().slice(0, 10)}.csv`,
+          content_base64: summaryBase64,
           rows: products?.length || 0,
-        },
-        variants_csv: {
-          filename: "product_variants_template.csv",
-          content_base64: variantsBase64,
-          rows: variants?.length || 0,
         },
       },
     });

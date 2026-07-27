@@ -20,11 +20,10 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { supabase } from '../lib/supabaseClient';
-import { friendlyErrorMessage } from '../lib/errorMessage';
 import AdminLayout from '../components/admin/layout/AdminLayout';
 import EditProductPanel from '../components/admin/EditProductPanel';
 import AddProductPanel from '../components/admin/AddProductPanel';
-import HomepageContentPanel from '../components/admin/HomepageContentPanel';
+// ⭐ HomepageContentPanel import dihapus — sekarang punya route sendiri (/homepage-admin)
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -55,32 +54,8 @@ const downloadBase64Csv = (base64Content, filename) => {
   URL.revokeObjectURL(url);
 };
 
-// Parse XLSX file menggunakan SheetJS (load dinamis supaya nggak perlu install kalau nggak dipakai)
-async function parseXlsxFile(file) {
-  // Load SheetJS dynamically dari CDN (nggak perlu npm install)
-  // SheetJS official CDN: https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js
-  if (!window.XLSX) {
-    await new Promise((resolve, reject) => {
-      const script = document.createElement('script');
-      script.src = 'https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js';
-      script.onload = resolve;
-      script.onerror = () => reject(new Error('Gagal load SheetJS dari CDN. Cek koneksi internet.'));
-      document.head.appendChild(script);
-    });
-  }
-
-  const XLSX = window.XLSX;
-  const arrayBuffer = await file.arrayBuffer();
-  const workbook = XLSX.read(arrayBuffer, { type: 'array' });
-
-  // Ambil sheet pertama
-  const firstSheetName = workbook.SheetNames[0];
-  const worksheet = workbook.Sheets[firstSheetName];
-
-  // Convert ke CSV
-  const csv = XLSX.utils.sheet_to_csv(worksheet);
-  return csv;
-}
+// ⭐ parseXlsxFile helper dihapus (Bulk Upload section dihapus dari UI).
+//    Kalau nanti butuh import XLSX lagi, tinggal restore helper ini + section UI.
 
 // ============================================================================
 // PHOTO UPLOAD COMPONENT (supports product + variant photos)
@@ -287,8 +262,7 @@ const AdminProductsPage = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // ⭐ Tab view: 'products' | 'homepage'
-  const [activeTab, setActiveTab] = useState('products');
+  // ⭐ Tab view dihapus — Homepage Content sekarang route sendiri (/homepage-admin)
 
   // Search + filter
   const [searchQuery, setSearchQuery] = useState('');
@@ -320,13 +294,8 @@ const AdminProductsPage = () => {
   const [deleteConfirm, setDeleteConfirm] = useState(null); // { productIds: [], productNames: [], isBulk: bool }
   const [deleting, setDeleting] = useState(false);
 
-  // CSV/XLSX upload
-  const [uploadFormat, setUploadFormat] = useState('csv'); // 'csv' | 'xlsx'
-  const [productsFile, setProductsFile] = useState(null);
-  const [variantsFile, setVariantsFile] = useState(null);
-  const [csvMode, setCsvMode] = useState('validate');
-  const [uploading, setUploading] = useState(false);
-  const [uploadResult, setUploadResult] = useState(null);
+  // ⭐ Bulk Upload CSV/XLSX state dihapus (section dihapus dari UI).
+  // Produk ditambah manual via tombol "Tambah Produk".
 
   // Export
   const [exporting, setExporting] = useState(false);
@@ -362,7 +331,7 @@ const AdminProductsPage = () => {
       if (error) throw error;
       setProducts(data || []);
     } catch (e) {
-      setError(friendlyErrorMessage(e, 'Memuat produk'));
+      setError(e.message);
     } finally {
       setLoading(false);
     }
@@ -647,72 +616,11 @@ const AdminProductsPage = () => {
   };
 
   // ============================================================================
-  // CSV/XLSX UPLOAD
+  // ⭐ CSV/XLSX UPLOAD dihapus — produk ditambah manual via tombol "Tambah Produk"
   // ============================================================================
-  const handleFileUpload = async () => {
-    if (!productsFile) {
-      showToast('Pilih file dulu', 'error');
-      return;
-    }
-
-    setUploading(true);
-    setUploadResult(null);
-
-    try {
-      const formData = new FormData();
-      formData.append('mode', csvMode);
-
-      // Convert XLSX to CSV kalau perlu
-      if (uploadFormat === 'xlsx') {
-        const csvText = await parseXlsxFile(productsFile);
-        const csvBlob = new Blob([csvText], { type: 'text/csv' });
-        formData.append('products_csv', csvBlob, 'products.csv');
-
-        if (variantsFile) {
-          const variantsCsvText = await parseXlsxFile(variantsFile);
-          const variantsBlob = new Blob([variantsCsvText], { type: 'text/csv' });
-          formData.append('variants_csv', variantsBlob, 'variants.csv');
-        }
-      } else {
-        // CSV langsung
-        formData.append('products_csv', productsFile);
-        if (variantsFile) formData.append('variants_csv', variantsFile);
-      }
-
-      const resp = await fetch(`${SUPABASE_URL}/functions/v1/import-products-csv`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${ANON_KEY}` },
-        body: formData,
-      });
-
-      const result = await resp.json();
-      setUploadResult(result);
-
-      if (resp.ok && result.errors?.length === 0) {
-        showToast(
-          csvMode === 'execute'
-            ? `✓ Import berhasil! Products: ${result.db_changes?.products?.upserted || 0}, Variants: ${result.db_changes?.variants?.upserted || 0}`
-            : `✓ Validation pass! ${result.parsed.products_valid} products + ${result.parsed.variants_valid} variants ready.`,
-          'success'
-        );
-        if (csvMode === 'execute') await fetchProducts();
-      } else {
-        showToast(`Validation failed: ${result.errors?.length || 0} error(s)`, 'error');
-      }
-    } catch (e) {
-      // Handle SheetJS not installed
-      if (e.message?.includes('xlsx') || e.message?.includes('Module')) {
-        showToast('❌ SheetJS belum di-install. Run: npm install xlsx', 'error');
-      } else {
-        showToast(`✗ Upload error: ${e.message}`, 'error');
-      }
-    } finally {
-      setUploading(false);
-    }
-  };
 
   // ============================================================================
-  // EXPORT
+  // EXPORT — download summary CSV (Name, Category, Price Range, Discounts, Badge, Active, Variants, Updated)
   // ============================================================================
   const handleExport = async () => {
     setExporting(true);
@@ -728,11 +636,27 @@ const AdminProductsPage = () => {
       const result = await resp.json();
 
       if (result.success) {
-        downloadBase64Csv(result.files.products_csv.content_base64, result.files.products_csv.filename);
-        setTimeout(() => {
-          downloadBase64Csv(result.files.variants_csv.content_base64, result.files.variants_csv.filename);
-        }, 500);
-        showToast(`✓ Export: ${result.counts.products} products + ${result.counts.variants} variants`, 'success');
+        // ⭐ Format baru: single CSV file (products_summary.csv)
+        // Format lama: 2 files (products_csv + variants_csv) — backward compat
+        if (result.files?.products_summary) {
+          // Format baru (summary CSV)
+          downloadBase64Csv(
+            result.files.products_summary.content_base64,
+            result.files.products_summary.filename
+          );
+          showToast(`✓ Export: ${result.counts.products} products`, 'success');
+        } else if (result.files?.products_csv) {
+          // Format lama (fallback) — download both files
+          downloadBase64Csv(result.files.products_csv.content_base64, result.files.products_csv.filename);
+          if (result.files.variants_csv) {
+            setTimeout(() => {
+              downloadBase64Csv(result.files.variants_csv.content_base64, result.files.variants_csv.filename);
+            }, 500);
+          }
+          showToast(`✓ Export: ${result.counts.products} products + ${result.counts.variants || 0} variants`, 'success');
+        } else {
+          showToast('✗ Export: format response tidak dikenal', 'error');
+        }
       } else {
         showToast(`✗ Export failed: ${result.error}`, 'error');
       }
@@ -760,204 +684,22 @@ const AdminProductsPage = () => {
   // ============================================================================
   const subtitle = `${products.length} total · ${products.filter(p => p.is_active).length} active · ${products.filter(p => !p.is_active).length} inactive`;
 
-  const actions = (
-    <>
-      <button
-        onClick={() => setShowAddPanel(true)}
-        className="hidden md:inline-block px-4 py-2 text-sm font-bold text-white bg-eglux-primary rounded-md hover:opacity-90"
-      >
-        + Tambah Produk
-      </button>
-      <button
-        onClick={handleExport}
-        disabled={exporting}
-        className="hidden md:inline-block px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50"
-      >
-        {exporting ? 'Exporting...' : '⬇ Export'}
-      </button>
-      <button
-        onClick={fetchProducts}
-        className="hidden md:inline-block px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
-      >
-        ↻ Refresh
-      </button>
-      {/* Mobile compact */}
-      <button
-        onClick={() => setShowAddPanel(true)}
-        className="md:hidden px-3 py-2 text-sm font-bold text-white bg-eglux-primary rounded-md"
-      >+</button>
-      <button
-        onClick={handleExport}
-        disabled={exporting}
-        className="md:hidden px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md disabled:opacity-50"
-      >⬇</button>
-      <button
-        onClick={fetchProducts}
-        className="md:hidden px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md"
-      >↻</button>
-    </>
-  );
+  // ⭐ Tombol "Tambah Produk", "Export", "Refresh" dipindah dari header ke section
+  //    di bawah search (lihat <section className="...actions..."> di bawah).
+  //    Header sekarang kosong — gak ada actions di AdminLayout.
+  const actions = null;
 
   return (
     <AdminLayout title="Products Admin" subtitle={subtitle} actions={actions}>
-        {/* ⭐ Tab switcher */}
-        <div className="flex gap-2 mb-6 border-b border-gray-200">
-          <button
-            onClick={() => setActiveTab('products')}
-            className={`px-4 py-2 text-sm font-semibold border-b-2 cursor-pointer transition-colors ${
-              activeTab === 'products' ? 'border-eglux-primary text-eglux-primary' : 'border-transparent text-gray-400 hover:text-gray-600'
-            }`}
-          >
-            📦 Produk
-          </button>
-          <button
-            onClick={() => setActiveTab('homepage')}
-            className={`px-4 py-2 text-sm font-semibold border-b-2 cursor-pointer transition-colors ${
-              activeTab === 'homepage' ? 'border-eglux-primary text-eglux-primary' : 'border-transparent text-gray-400 hover:text-gray-600'
-            }`}
-          >
-            🏠 Homepage Content
-          </button>
-        </div>
-
-        {/* ═══════════════════════════════════════════════════════════
-            HOMEPAGE CONTENT TAB
-            ═══════════════════════════════════════════════════════════ */}
-        {activeTab === 'homepage' && (
-          <HomepageContentPanel showToast={showToast} />
-        )}
+        {/* ⭐ Tab switcher + Homepage Content dihapus dari sini.
+            Homepage Content sekarang punya route sendiri: /homepage-admin
+            (lihat AdminLayout sidebar untuk navigasi) */}
 
         {/* ═══════════════════════════════════════════════════════════
             PRODUCTS TAB (existing content)
             ═══════════════════════════════════════════════════════════ */}
-        {activeTab === 'products' && (
-          <>
-        {/* === UPLOAD SECTION === */}
-        <section className="bg-white border border-gray-200 rounded-lg p-6 mb-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">📦 Bulk Upload (CSV / XLSX)</h2>
-
-          {/* Format selector */}
-          <div className="flex gap-4 mb-4">
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="radio"
-                checked={uploadFormat === 'csv'}
-                onChange={() => setUploadFormat('csv')}
-              />
-              <span className="text-sm font-medium">📄 CSV (.csv)</span>
-            </label>
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="radio"
-                checked={uploadFormat === 'xlsx'}
-                onChange={() => setUploadFormat('xlsx')}
-              />
-              <span className="text-sm font-medium">📊 Excel (.xlsx)</span>
-              <span className="text-xs text-gray-400">(auto-load dari CDN)</span>
-            </label>
-          </div>
-
-          {/* File inputs */}
-          <div className="grid grid-cols-2 gap-4 mb-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Products File <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="file"
-                accept={uploadFormat === 'csv' ? '.csv' : '.xlsx,.xls'}
-                onChange={(e) => setProductsFile(e.target.files[0])}
-                className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
-              />
-              {productsFile && <p className="text-xs text-green-600 mt-1">✓ {productsFile.name} ({(productsFile.size / 1024).toFixed(1)} KB)</p>}
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Variants File <span className="text-gray-400">(optional)</span>
-              </label>
-              <input
-                type="file"
-                accept={uploadFormat === 'csv' ? '.csv' : '.xlsx,.xls'}
-                onChange={(e) => setVariantsFile(e.target.files[0])}
-                className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
-              />
-              {variantsFile && <p className="text-xs text-green-600 mt-1">✓ {variantsFile.name}</p>}
-            </div>
-          </div>
-
-          {/* Mode + Upload */}
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2">
-              <label className="text-sm font-medium text-gray-700">Mode:</label>
-              <select
-                value={csvMode}
-                onChange={(e) => setCsvMode(e.target.value)}
-                className="px-3 py-1.5 text-sm border border-gray-300 rounded-md"
-              >
-                <option value="validate">Validate (dry run)</option>
-                <option value="execute">Execute (update DB)</option>
-              </select>
-            </div>
-            <button
-              onClick={handleFileUpload}
-              disabled={uploading}
-              className={`px-6 py-2 text-sm font-medium rounded-md text-white ${
-                csvMode === 'execute' ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'
-              } disabled:opacity-50`}
-            >
-              {uploading ? '⏳ Processing...' : csvMode === 'execute' ? '⚠ Execute Import' : '🔍 Validate Only'}
-            </button>
-          </div>
-
-          {/* Upload result */}
-          {uploadResult && (
-            <div className="mt-4 p-4 bg-gray-50 rounded-md border border-gray-200">
-              <h3 className="text-sm font-semibold mb-2">
-                {uploadResult.errors?.length === 0 ? '✅ Validation Report' : '❌ Validation Errors'}
-              </h3>
-              <div className="text-xs text-gray-600 mb-2">
-                Parsed: {uploadResult.parsed?.products_valid || 0} products valid,
-                {' '}{uploadResult.parsed?.variants_valid || 0} variants valid
-              </div>
-              {uploadResult.message && <p className="text-xs mb-2">{uploadResult.message}</p>}
-              {uploadResult.errors?.length > 0 && (
-                <div className="mt-2 max-h-48 overflow-y-auto">
-                  <table className="w-full text-xs">
-                    <thead className="bg-gray-100 sticky top-0">
-                      <tr>
-                        <th className="px-2 py-1 text-left">Row</th>
-                        <th className="px-2 py-1 text-left">Table</th>
-                        <th className="px-2 py-1 text-left">Slug</th>
-                        <th className="px-2 py-1 text-left">Field</th>
-                        <th className="px-2 py-1 text-left">Error</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {uploadResult.errors.slice(0, 50).map((err, i) => (
-                        <tr key={i} className="border-b border-gray-100">
-                          <td className="px-2 py-1">{err.row}</td>
-                          <td className="px-2 py-1">{err.table}</td>
-                          <td className="px-2 py-1 truncate max-w-[120px]">{err.slug || err.product_slug || '-'}</td>
-                          <td className="px-2 py-1">{err.field || '-'}</td>
-                          <td className="px-2 py-1 text-red-600">{err.error}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  {uploadResult.errors.length > 50 && (
-                    <p className="text-xs text-gray-500 mt-2">...dan {uploadResult.errors.length - 50} error lainnya</p>
-                  )}
-                </div>
-              )}
-              {uploadResult.db_changes && (
-                <div className="mt-2 text-xs text-green-700">
-                  DB: Products {uploadResult.db_changes.products?.inserted || 0} new + {uploadResult.db_changes.products?.updated || 0} updated ·
-                  Variants {uploadResult.db_changes.variants?.inserted || 0} new + {uploadResult.db_changes.variants?.updated || 0} updated
-                </div>
-              )}
-            </div>
-          )}
-        </section>
+        <>
+        {/* ⭐ Bulk Upload section dihapus — produk ditambah manual via tombol "Tambah Produk" */}
 
         {/* === SEARCH + FILTER === */}
         <section className="bg-white border border-gray-200 rounded-lg p-4 mb-4">
@@ -991,6 +733,37 @@ const AdminProductsPage = () => {
               {filteredProducts.length} of {products.length}
             </span>
           </div>
+        </section>
+
+        {/* === ACTIONS SECTION (dipindah dari header) === */}
+        {/* ⭐ Tombol Tambah Produk, Export CSV, Refresh — sekarang di bawah search */}
+        <section className="bg-white border border-gray-200 rounded-lg p-4 mb-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowAddPanel(true)}
+                className="px-4 py-2 text-sm font-bold text-white bg-eglux-primary rounded-md hover:opacity-90 transition-opacity cursor-pointer"
+              >
+                + Tambah Produk
+              </button>
+              <button
+                onClick={fetchProducts}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors cursor-pointer"
+              >
+                ↻ Refresh
+              </button>
+            </div>
+            <button
+              onClick={handleExport}
+              disabled={exporting}
+              className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
+            >
+              {exporting ? '⏳ Exporting...' : '⬇ Export CSV'}
+            </button>
+          </div>
+          <p className="text-xs text-gray-400 mt-2">
+            Export akan download CSV dengan kolom: Name, Category, Price Range, Discounts, Badge, Active, Variants, Updated
+          </p>
         </section>
 
         {/* === BULK ACTIONS === */}
@@ -1245,8 +1018,7 @@ const AdminProductsPage = () => {
         <p className="text-xs text-gray-400 mt-4 text-center">
           EGLUX Admin — hidden page. All operations via edge functions (service_role). Auto-save per cell.
         </p>
-          </>
-        )}
+        </>
 
       {/* Edit Product Panel (Shopee-style slide-in) */}
       {editingProduct && (

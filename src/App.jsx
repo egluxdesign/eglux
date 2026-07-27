@@ -18,7 +18,6 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
 import { CartProvider } from './context/CartContext';
 import CartPage from './pages/CartPage';
-import { useDisableNumberInputScroll } from './hooks/useDisableNumberInputScroll';
 
 // Pages
 import HomePage from './pages/HomePage';
@@ -30,21 +29,16 @@ import RegisterPage from './pages/RegisterPage';
 import AdminPage from './pages/AdminPage';
 import AdminProductsPage from './pages/AdminProductsPage';
 import OrdersPage from './pages/OrdersPage';
-import TrackOrderPage from './pages/TrackOrderPage';
 import OrderHistoryPage from './pages/OrderHistoryPage';
+import TrackOrderPage from './pages/TrackOrderPage';
+import HomepageAdminPage from './pages/HomepageAdminPage';
+import DiscountAdminPage from './pages/DiscountAdminPage';
 import UnsubscribePage from './pages/UnsubscribePage';
-
-import PrivacyPage from './pages/PrivacyPage';
-import TermsPage from './pages/TermsPage';
 
 // Protected route wrapper
 import ProtectedRoute from './components/ui/ProtectedRoute';
 
 const App = () => {
-  // Cegah scroll wheel mengubah value di semua <input type="number">
-  // di seluruh aplikasi (berlaku global, tidak perlu diulang per form).
-  useDisableNumberInputScroll();
-
   return (
     <AuthProvider>
       <CartProvider>
@@ -62,29 +56,37 @@ const App = () => {
               <Route path="/about" element={<AboutPage />} />
               <Route path="/affiliate" element={<AffiliatePage />} />
 
-              <Route path="/privacy" element={<PrivacyPage />} />
-              <Route path="/terms" element={<TermsPage />} />
-
               {/* ── Standalone routes (tanpa storefront layout) ── */}
               <Route path="/register" element={<RegisterPage />} />
               <Route path="/admin" element={<AdminPage />} />
-
-              {/* ── Account routes ──
-                  Terbuka untuk semua role yang sudah login (tidak pakai
-                  ProtectedRoute). OrdersPage/OrdersList sudah handle sendiri
-                  kasus user belum login (tampil pesan + link masuk). */}
               <Route path="/orders" element={<OrdersPage />} />
-              <Route path="/track" element={<TrackOrderPage />} />
               <Route path="/order-history" element={<OrderHistoryPage />} />
+              <Route path="/track" element={<TrackOrderPage />} />
               <Route path="/unsubscribe" element={<UnsubscribePage />} />
 
-              {/* ── Protected admin route ──
+              {/* ── Protected admin routes ──
                   Hanya bisa diakses oleh role: team_dev, master, admin. */}
               <Route
                 path="/products-admin"
                 element={
                   <ProtectedRoute roles={['team_dev', 'master', 'admin']}>
                     <AdminProductsPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/homepage-admin"
+                element={
+                  <ProtectedRoute roles={['team_dev', 'master', 'admin']}>
+                    <HomepageAdminPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/discount-admin"
+                element={
+                  <ProtectedRoute roles={['team_dev', 'master', 'admin']}>
+                    <DiscountAdminPage />
                   </ProtectedRoute>
                 }
               />

@@ -16,6 +16,7 @@ import { useAuth } from '../../context/AuthContext';
 import Sidebar from './Sidebar';
 import { NAV_LINKS } from '../../data';
 import ProfileModal from '../ui/ProfileModal';
+import UserMenu from '../ui/UserMenu';
 import logoImg from '../../assets/img/Logo1.png';
 import '/src/assets/styles/eglux-design-system.css';
 
@@ -47,133 +48,8 @@ const NAV_ICONS = {
 };
 const NAV_LINKS_COMPACT = NAV_LINKS.filter((l) => l.key !== 'home');
 
-// ── UserMenu ──
-const UserMenu = ({ isScrolled }) => {
-  const { user, profile, logout, isAdmin } = useAuth();
-  const [dropdownOpen, setDropdownOpen] = useState(false);
-  const [profileModalOpen, setProfileModalOpen] = useState(false);
-  const dropdownRef = useRef(null);
+// ⭐ UserMenu di-import dari '../ui/UserMenu' (shared component — dipakai juga di AdminLayout)
 
-  useEffect(() => {
-    const handler = (e) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) setDropdownOpen(false);
-    };
-    document.addEventListener('click', handler);
-    return () => document.removeEventListener('click', handler);
-  }, []);
-
-  if (!user) {
-    return (
-      <div className="flex items-center gap-2 md:gap-3">
-        <Link
-          to="/admin"
-          className={`text-[0.65rem] md:text-[0.72rem] font-medium uppercase tracking-[0.1em] no-underline transition-colors duration-500 ${isScrolled ? 'text-eglux-primary' : 'text-white'} hover:opacity-70 whitespace-nowrap`}
-        >
-          Masuk
-        </Link>
-        <Link
-          to="/register"
-          className={`text-[0.65rem] md:text-[0.72rem] font-medium uppercase tracking-[0.1em] no-underline transition-colors duration-500 ${isScrolled ? 'text-eglux-secondary' : 'text-white/80'} hover:opacity-70 whitespace-nowrap hidden xs:inline-block sm:inline-block`}
-        >
-          Daftar
-        </Link>
-      </div>
-    );
-  }
-
-  const displayName = profile?.full_name || user.email?.split('@')[0] || 'Akun';
-  const textColor = isScrolled ? 'text-eglux-primary' : 'text-white';
-
-  // User account menu items (atas) — mulai dari Profil Saya
-  const USER_MENU_ITEMS = [
-    { label: 'Profil Saya', href: null, icon: IconUser, action: () => { setDropdownOpen(false); setProfileModalOpen(true); } },
-    { label: 'Pesanan Saya', href: '/orders', icon: IconPackage2 },
-    { label: 'Lacak Pesanan', href: '/track', icon: IconTruck },
-    { label: 'Riwayat Order', href: '/order-history', icon: IconClipboard },
-    { label: 'Tiket Bantuan', href: '/tickets', icon: IconTicket },
-  ];
-  // ⭐ Page links (Blog/Tentang/Kontak/Affiliate) dihapus dari user menu —
-  //    akses ke page-page tersebut tetap via Sidebar (hamburger menu).
-  //    Logo di header sudah link ke home/produk, jadi link "Produk" juga dihapus.
-
-  return (
-    <div className="relative" ref={dropdownRef}>
-      <button
-        onClick={() => setDropdownOpen(!dropdownOpen)}
-        className={`flex items-center gap-1.5 transition-colors duration-500 cursor-pointer border-none bg-transparent relative z-[2100] ${textColor} hover:opacity-70`}
-      >
-        {profile?.avatar_url ? (
-          <img src={profile.avatar_url} alt="" className="w-7 h-7 rounded-full object-cover" />
-        ) : (
-          <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-medium ${isScrolled ? 'bg-eglux-secondary/10 text-eglux-secondary' : 'bg-white/20 text-white'}`}>
-            {displayName.charAt(0).toUpperCase()}
-          </div>
-        )}
-      </button>
-
-      {dropdownOpen && (
-        <div className="absolute right-0 top-full mt-2 w-56 bg-white rounded-xl shadow-2xl border border-[#eee] overflow-hidden z-[2000]">
-          {/* Header with name + email + role */}
-          <div className="px-4 py-3 border-b border-[#eee] bg-[var(--eglux-accent)]">
-            <p className="text-[0.78rem] font-medium text-eglux-primary truncate">{displayName}</p>
-            <p className="text-[0.68rem] text-gray-500 truncate">{user.email}</p>
-            <span className="inline-block mt-1 text-[0.55rem] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-eglux-secondary/10 text-eglux-secondary">
-              {profile?.role || 'verified'}
-            </span>
-          </div>
-
-          {/* Admin panel link (atas, hanya untuk admin) */}
-          {isAdmin && (
-            <div className="py-1">
-              <a href="/products-admin" className="flex items-center gap-3 px-4 py-2.5 text-[0.78rem] font-semibold text-eglux-secondary hover:bg-eglux-secondary/5 transition-colors no-underline">
-                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" /><rect x="14" y="14" width="7" height="7" /><rect x="3" y="14" width="7" height="7" /></svg>
-                Admin Panel
-              </a>
-            </div>
-          )}
-
-          {/* User account menu (atas) — Profil Saya, Pesanan, Lacak, Riwayat, Tiket */}
-          <div className="py-1">
-            {USER_MENU_ITEMS.map((item) => {
-              const Icon = item.icon;
-              if (item.action) {
-                return (
-                  <button key={item.label} onClick={item.action} className="w-full flex items-center gap-3 px-4 py-2.5 text-[0.78rem] text-eglux-primary hover:bg-[var(--eglux-accent)] transition-colors cursor-pointer border-none bg-transparent text-left">
-                    <Icon className="w-4 h-4" /> {item.label}
-                  </button>
-                );
-              }
-              return (
-                <a key={item.label} href={item.href} className="flex items-center gap-3 px-4 py-2.5 text-[0.78rem] text-eglux-primary hover:bg-[var(--eglux-accent)] transition-colors no-underline">
-                  <Icon className="w-4 h-4" /> {item.label}
-                </a>
-              );
-            })}
-          </div>
-
-          {/* Page links (Blog/Tentang/Kontak/Affiliate) dihapus dari sini.
-              Akses ke page tersebut tetap via Sidebar (hamburger menu).
-              Spasi sebelum logout tetap dipertahankan di bawah ini. */}
-
-          {/* Extra space before logout */}
-          <div className="h-3 bg-white" />
-
-          {/* Logout */}
-          <div className="border-t border-[#eee] py-1">
-            <button onClick={async () => { await logout(); setDropdownOpen(false); window.location.href = '/'; }} className="w-full flex items-center gap-3 px-4 py-2.5 text-[0.78rem] text-red-500 hover:bg-red-50 transition-colors cursor-pointer border-none bg-transparent">
-              <IconLogOut className="w-4 h-4" /> Keluar
-            </button>
-          </div>
-        </div>
-      )}
-      {profileModalOpen && <ProfileModal isOpen={profileModalOpen} onClose={() => setProfileModalOpen(false)} />}
-    </div>
-  );
-};
-
-// ============================================================================
-// MAIN
-// ============================================================================
 const HeaderProducts = ({ onCartOpen, forceScrolled = false }) => {
   const { totalQty } = useCart();
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -181,16 +57,12 @@ const HeaderProducts = ({ onCartOpen, forceScrolled = false }) => {
   const { pathname } = useLocation();
 
   // ⭐ Transition when section touches header
-  // Logic: threshold = viewport height - header height (untuk homepage dengan hero)
-  // Tapi kalau forceScrolled=true (untuk /orders, /order-history), header selalu
-  // tampil dalam mode "scrolled" (putih, logo kecil) — supaya gak transparan
-  // menumpuk konten dan block klik di card pertama.
+  // Kalau forceScrolled=true (untuk /orders, /order-history, /track), header selalu putih
   useEffect(() => {
     if (forceScrolled) {
       setIsScrolled(true);
-      return; // skip scroll listener — always scrolled
+      return;
     }
-
     const handleScroll = () => {
       const headerHeight = window.innerWidth >= 768 ? 72 : 60;
       const threshold = window.innerHeight - headerHeight;
