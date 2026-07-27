@@ -309,7 +309,7 @@ const HistoryDetailPanel = ({ order, onClose, onRefund }) => {
                 )}
                 {order.biteship_status && (
                   <div className="flex justify-between">
-                    <span className="text-gray-500">Status Biteship</span>
+                    <span className="text-gray-500">Status</span>
                     <span className="font-medium text-gray-900 capitalize">{order.biteship_status}</span>
                   </div>
                 )}

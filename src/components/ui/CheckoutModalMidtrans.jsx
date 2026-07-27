@@ -360,7 +360,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
           setSelectedAreaId(String(data.areas[0].id));
         }
         if (resp.ok && (!data.areas || data.areas.length === 0)) {
-          showToast(`Kode pos ${postal} tidak ditemukan di Biteship.`);
+          showToast(`Kode pos ${postal} tidak ditemukan.`);
         }
       } catch (err) {
         let msg = err.message;
@@ -749,7 +749,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
           <div className="min-w-0 pr-2">
             <h3 className="text-[1rem] md:text-[1.1rem] font-bold text-eglux-primary truncate">Checkout</h3>
             <p className="text-[0.72rem] text-gray-500 mt-0.5 flex items-center gap-1 truncate">
-              <ShieldCheck className="w-3 h-3 flex-shrink-0" /> Midtrans · Biteship
+              <ShieldCheck className="w-3 h-3 flex-shrink-0" /> EGLUX Payment
             </p>
           </div>
           <button
@@ -990,7 +990,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
               </div>
               <InlineError msg={formErrors.phone} />
               <p className="text-[0.72rem] text-gray-500 mt-1">
-                Klik bendera untuk ganti negara (default Indonesia +62). Ketik nomor tanpa kode negara.
+                {/* sample text */}
               </p>
             </div>
 
@@ -1014,7 +1014,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
               />
               <InlineError msg={formErrors.email} />
               <p className="text-[0.72rem] text-gray-500 mt-1">
-                Email opsional — Midtrans akan kirim e-receipt jika diisi.
+                {/* sample text */}
               </p>
             </div>
           </section>
@@ -1063,7 +1063,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
               />
               <InlineError msg={formErrors.city} />
               <p className="text-[0.72rem] text-gray-500 mt-1">
-                97 kota di Indonesia · ketik untuk cari (misal: "bandung", "jakarta", "surabaya")
+                {/* sample text */}
               </p>
             </div>
 
@@ -1091,7 +1091,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
             {/* Loading area lookup */}
             {areasLoading && (
               <div className="text-[0.78rem] text-gray-500 flex items-center gap-2">
-                <Loader2 className="w-3.5 h-3.5 animate-spin" /> Mencari area Biteship...
+                <Loader2 className="w-3.5 h-3.5 animate-spin" /> Mencari area...
               </div>
             )}
 
@@ -1136,7 +1136,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
             {/* Not found */}
             {showAreaNotFound && (
               <p className="text-[0.78rem] text-red-500">
-                Kode pos tidak ditemukan di Biteship. Periksa kembali.
+                Kode pos tidak ditemukan. Periksa kembali.
               </p>
             )}
           </section>
