@@ -298,10 +298,11 @@ h1, h2, h3, h4, h5, h6,
      - 100svh: small viewport (most conservative — for mobile keyboards etc.)
      Order matters: last supported value wins. */
   height: 100vh;
+  height: 100dvh;
   width: 100%;
   /* ⭐ Banner goes BEHIND transparent header — no top padding/margin */
-  margin: 0;
-  padding: 0;
+  margin-top: 0;
+  padding-top: 0;
   z-index: 0;
   overflow: hidden;
   background: var(--eglux-accent);
@@ -539,4 +540,24 @@ body {
     min-height: 280px;
     border-radius: 1rem;
   }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Number Input — Hide spinner arrows + prevent scroll change
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Hide spinner arrows (Chrome, Safari, Edge, Firefox) */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+/* Prevent scroll from changing number input value */
+input[type="number"]:focus {
+  pointer-events: auto;
 }

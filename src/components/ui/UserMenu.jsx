@@ -14,6 +14,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
+import { useCartActions } from '../../pages/CartPage';
 import ProfileModal from './ProfileModal';
 
 // ── Icons ──
@@ -74,6 +75,9 @@ const UserMenu = ({ variant = 'storefront', isScrolled = true }) => {
     ? 'bg-eglux-secondary/10 text-eglux-secondary'
     : (isScrolled ? 'bg-eglux-secondary/10 text-eglux-secondary' : 'bg-white/20 text-white');
 
+  // ⭐ Hooks HARUS dipanggil sebelum any early return (React rules of hooks)
+  const { openTicket } = useCartActions();
+
   useEffect(() => {
     const handler = (e) => {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target)) setDropdownOpen(false);
@@ -109,7 +113,7 @@ const UserMenu = ({ variant = 'storefront', isScrolled = true }) => {
     { label: 'Pesanan Saya', href: '/orders', icon: IconPackage2 },
     { label: 'Lacak Pesanan', href: '/track', icon: IconTruck },
     { label: 'Riwayat Order', href: '/order-history', icon: IconClipboard },
-    { label: 'Tiket Bantuan', href: '/tickets', icon: IconTicket },
+    { label: 'Tiket Bantuan', href: null, icon: IconTicket, action: () => { setDropdownOpen(false); openTicket(); } },
   ];
 
   return (

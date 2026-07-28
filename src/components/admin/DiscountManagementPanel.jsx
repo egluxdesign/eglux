@@ -208,7 +208,7 @@ const VoucherForm = ({ onClose, onSaved, showToast }) => {
                 {form.validity_type === 'days_after_claim' && (
                   <div className="flex items-center gap-1 ml-2">
                     <button onClick={() => update('validity_days', Math.max(1, form.validity_days - 1))} className="w-8 h-8 border border-gray-300 rounded flex items-center justify-center cursor-pointer">−</button>
-                    <input type="number" value={form.validity_days} onChange={e => update('validity_days', Number(e.target.value))} className="w-16 text-center px-2 py-1.5 text-sm border-y border-gray-300" />
+                    <input type="number" value={form.validity_days} onChange={e => update('validity_days', Number(e.target.value))} onWheel={e => e.target.blur()} className="w-16 text-center px-2 py-1.5 text-sm border-y border-gray-300 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none" />
                     <button onClick={() => update('validity_days', form.validity_days + 1)} className="w-8 h-8 border border-gray-300 rounded flex items-center justify-center cursor-pointer">+</button>
                     <span className="text-sm text-gray-500 ml-1">hari</span>
                   </div>
@@ -264,11 +264,11 @@ const VoucherForm = ({ onClose, onSaved, showToast }) => {
               {form.discount_type === 'fixed' ? (
                 <div className="flex items-center">
                   <span className="px-3 py-2 text-sm text-gray-500 bg-gray-100 border border-r-0 border-gray-300 rounded-l-md">Rp</span>
-                  <input type="number" value={form.discount_value} onChange={e => update('discount_value', e.target.value)} placeholder="Masukkan angka" className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-r-md" />
+                  <input type="number" value={form.discount_value} onChange={e => update('discount_value', e.target.value)} onWheel={e => e.target.blur()} placeholder="Masukkan angka" className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-r-md [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none" />
                 </div>
               ) : (
                 <div className="flex items-center">
-                  <input type="number" value={form.discount_value} onChange={e => update('discount_value', e.target.value)} placeholder="Masukkan angka" className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-l-md" />
+                  <input type="number" value={form.discount_value} onChange={e => update('discount_value', e.target.value)} onWheel={e => e.target.blur()} placeholder="Masukkan angka" className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-l-md [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none" />
                   <span className="px-3 py-2 text-sm text-gray-500 bg-gray-100 border border-l-0 border-gray-300 rounded-r-md">%</span>
                 </div>
               )}
@@ -278,7 +278,7 @@ const VoucherForm = ({ onClose, onSaved, showToast }) => {
                   <label className="block text-xs text-gray-500 mb-1">Maksimal diskon (opsional, untuk cap persentase)</label>
                   <div className="flex items-center">
                     <span className="px-3 py-2 text-sm text-gray-500 bg-gray-100 border border-r-0 border-gray-300 rounded-l-md">Rp</span>
-                    <input type="number" value={form.max_discount} onChange={e => update('max_discount', e.target.value)} placeholder="Tanpa batas" className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-r-md" />
+                    <input type="number" value={form.max_discount} onChange={e => update('max_discount', e.target.value)} onWheel={e => e.target.blur()} placeholder="Tanpa batas" className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-r-md [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none" />
                   </div>
                 </div>
               )}
@@ -295,7 +295,7 @@ const VoucherForm = ({ onClose, onSaved, showToast }) => {
                 {form.min_purchase_type === 'set' && (
                   <div className="flex items-center ml-6">
                     <span className="px-3 py-2 text-sm text-gray-500 bg-gray-100 border border-r-0 border-gray-300 rounded-l-md">Rp</span>
-                    <input type="number" value={form.min_purchase} onChange={e => update('min_purchase', e.target.value)} placeholder="Masukkan angka" className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-r-md" />
+                    <input type="number" value={form.min_purchase} onChange={e => update('min_purchase', e.target.value)} onWheel={e => e.target.blur()} placeholder="Masukkan angka" className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-r-md [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none" />
                   </div>
                 )}
                 <label className="flex items-center gap-2 cursor-pointer">
@@ -313,7 +313,7 @@ const VoucherForm = ({ onClose, onSaved, showToast }) => {
               {/* Kuota Klaim */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Kuota Klaim</label>
-                <input type="number" value={form.quota_total} onChange={e => update('quota_total', e.target.value)} placeholder="Kosongkan untuk unlimited" max={9999999} className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md" />
+                <input type="number" value={form.quota_total} onChange={e => update('quota_total', e.target.value)} onWheel={e => e.target.blur()} placeholder="Kosongkan untuk unlimited" max={9999999} className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none" />
                 <p className="text-xs text-gray-400 mt-1">Maksimal 9.999.999 voucher bisa diklaim</p>
               </div>
               {/* Perkiraan biaya */}
@@ -326,7 +326,7 @@ const VoucherForm = ({ onClose, onSaved, showToast }) => {
                 <label className="block text-sm font-medium text-gray-700 mb-1">Batas klaim per pengguna ⓘ</label>
                 <div className="flex items-center gap-1">
                   <button onClick={() => update('quota_per_user', Math.max(1, form.quota_per_user - 1))} className="w-8 h-8 border border-gray-300 rounded flex items-center justify-center cursor-pointer">−</button>
-                  <input type="number" value={form.quota_per_user} onChange={e => update('quota_per_user', Number(e.target.value))} className="w-20 text-center px-2 py-1.5 text-sm border-y border-gray-300" />
+                  <input type="number" value={form.quota_per_user} onChange={e => update('quota_per_user', Number(e.target.value))} onWheel={e => e.target.blur()} className="w-20 text-center px-2 py-1.5 text-sm border-y border-gray-300 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none" />
                   <button onClick={() => update('quota_per_user', form.quota_per_user + 1)} className="w-8 h-8 border border-gray-300 rounded flex items-center justify-center cursor-pointer">+</button>
                 </div>
               </div>

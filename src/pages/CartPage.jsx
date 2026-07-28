@@ -28,6 +28,7 @@ import { useToast }   from '../hooks/useToast';
 import CartPanel      from '../components/ui/CartPanel';
 import CheckoutModal         from '../components/ui/CheckoutModal';
 import CheckoutModalMidtrans from '../components/ui/CheckoutModalMidtrans';
+import TicketModal    from '../components/ui/TicketModal';
 import Toast          from '../components/ui/Toast';
 
 // ── Checkout intent key ──
@@ -52,6 +53,7 @@ const CartPage = ({ children }) => {
   const [cartOpen,     setCartOpen]     = useState(false);
   const [checkoutOpen, setCheckoutOpen] = useState(false);          // modal WhatsApp (CheckoutModal)
   const [midtransCheckoutOpen, setMidtransCheckoutOpen] = useState(false); // modal Bayar Sekarang (Midtrans)
+  const [ticketOpen,   setTicketOpen]   = useState(false);           // modal Tiket Bantuan
 
   // ── Auth helper ──
   // Cek apakah user sudah login. Kalau belum, simpan intent + redirect ke /admin.
@@ -156,6 +158,7 @@ const CartPage = ({ children }) => {
         openCheckout,
         openMidtransCheckout,
         handleCheckoutNowMidtrans,
+        openTicket: () => { setTicketOpen(true); document.body.style.overflow = 'hidden'; },
       }}
     >
       {children}
@@ -182,6 +185,12 @@ const CartPage = ({ children }) => {
           showToast={showToast}
         />
       )}
+
+      {/* ⭐ TicketModal — global, muncul di atas page manapun */}
+      <TicketModal
+        isOpen={ticketOpen}
+        onClose={() => { setTicketOpen(false); document.body.style.overflow = ''; }}
+      />
 
       <Toast toast={toast} onClose={closeToast} />
     </CartActionsContext.Provider>

@@ -20,6 +20,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import logo2 from '/src/assets/img/Logo2.png';
 import { supabase } from '../../lib/supabaseClient';
+import { useCartActions } from '../../pages/CartPage';
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 
@@ -69,11 +70,9 @@ const SOCIAL_LINKS = [
 // ── Navigation links data ──
 const NAV_LINKS = [
   { label: 'Beranda',      href: '/'          },
-  { label: 'Produk',       href: '/products'  },
   { label: 'Blog',         href: '/blog'      },
   { label: 'Tentang Kami', href: '/about'     },
   { label: 'Kontak',       href: '/contact'   },
-  { label: 'Affiliate',    href: '/affiliate' },
 ];
 
 const HELP_LINKS = [
@@ -81,8 +80,8 @@ const HELP_LINKS = [
   { label: 'Lacak Pesanan',    href: '/track'          },
   { label: 'Riwayat Order',    href: '/order-history'  },
   { label: 'Tiket Bantuan',    href: '/tickets'        },
-  { label: 'Pengiriman',       href: '/contact?section=shipping' },
-  { label: 'Kebijakan Return', href: '/contact?section=returns'  },
+  // { label: 'Pengiriman',       href: '/contact?section=shipping' },
+  // { label: 'Kebijakan Return', href: '/contact?section=returns'  },
 ];
 
 // ── Helper: cek internal vs external link ──

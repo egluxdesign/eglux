@@ -1,28 +1,32 @@
+// src/pages/ContactPage.jsx
+// ============================================================================
+// Contact Page — Info+Map (1 section, 2 column) + FAQ
+// Header pakai forceScrolled
+// ============================================================================
+
 import React from 'react';
 import HeaderProducts from '../components/layout/HeaderProducts';
-import DuplicateNav from '../components/layout/DuplicateNav';
 import Footer from '../components/layout/Footer';
 import { useCartActions } from './CartPage';
-// import PageHeader from '../components/sections/ContactPage/PageHeader';
 import ContactSection from '../components/sections/ContactPage/ContactSection';
 import FAQSection from '../components/sections/ContactPage/FAQSection';
-import MapSection from '../components/sections/ContactPage/MapSection';
 
 import '../assets/styles/contact.css';
 import '../assets/styles/globals.css';
 
 const Contact = () => {
   const { openCart } = useCartActions();
+
   return (
     <>
-      <HeaderProducts onCartOpen={openCart} />
-      {/* <PageHeader /> */}
-      <DuplicateNav activePage="contact" />
-      <main>
+      <HeaderProducts onCartOpen={openCart} forceScrolled />
+
+      <main style={{ paddingTop: '5rem' }}>
+        {/* ContactSection — Info kontak (kiri) + Map (kanan), 2 column */}
         <ContactSection />
-        <MapSection />
         <FAQSection />
       </main>
+
       <Footer />
     </>
   );

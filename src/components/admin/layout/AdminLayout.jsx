@@ -27,6 +27,9 @@ const ADMIN_NAV_ITEMS = [
   { label: '📦 Products Admin', href: '/products-admin' },
   { label: '🏠 Homepage Content', href: '/homepage-admin' },
   { label: '🏷️ Discount & Voucher', href: '/discount-admin' },
+  { label: '📝 Blog', href: '/blog-admin' },
+  { label: 'ℹ️ About Page', href: '/about-admin' },
+  { label: '📞 Contact Page', href: '/contact-admin' },
 ];
 
 // ============================================================================
