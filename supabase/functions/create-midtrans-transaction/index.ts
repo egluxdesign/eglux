@@ -86,6 +86,7 @@ serve(async (req: Request) => {
         shipping_address, shipping_city, shipping_postal_code,
         courier_code, courier_service, notes,
         payment_status, snap_token, midtrans_transaction_id,
+        voucher_code, voucher_discount,
         customer:customers(name, phone, email),
         items:order_items(product_name_snapshot, variant_name_snapshot, unit_price_snapshot, quantity)
       `)
@@ -170,6 +171,18 @@ serve(async (req: Request) => {
         id: "SHIPPING",
         name: `Ongkir ${order.courier_code || ""} ${order.courier_service || ""}`.trim().slice(0, 50),
         price: shippingCost,
+        quantity: 1,
+      });
+    }
+
+    // ⭐ Voucher discount as a NEGATIVE line item (so gross_amount = subtotal + shipping - voucher)
+    // Midtrans support negative price di item_details untuk discount.
+    const voucherDiscount = Math.round(Number((order as any).voucher_discount) || 0);
+    if (voucherDiscount > 0) {
+      item_details.push({
+        id: "VOUCHER",
+        name: `Voucher ${(order as any).voucher_code || ""}`.trim().slice(0, 50),
+        price: -voucherDiscount, // ⭐ NEGATIVE price untuk discount
         quantity: 1,
       });
     }

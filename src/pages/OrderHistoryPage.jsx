@@ -699,11 +699,11 @@ const OrderHistoryPage = () => {
       {/* ⭐ forceScrolled — header selalu putih, gak transparan menumpuk konten */}
       <HeaderProducts onCartOpen={openCart} forceScrolled />
 
-      <section className="max-w-container mx-auto px-4 md:px-8 pt-24 md:pt-28 pb-8 md:pb-12">
+      <section className="max-w-3xl mx-auto px-4 md:px-6 pt-24 md:pt-28 pb-8">
         {/* Header dengan back link ke Pesanan Saya */}
         <div className="flex items-center justify-between mb-6 gap-4 flex-wrap">
           <div>
-            <h1 className="text-xl md:text-2xl font-bold text-eglux-primary">Riwayat Order</h1>
+            <h1 className="text-2xl font-bold text-eglux-primary">Riwayat Order</h1>
             <p className="text-sm text-gray-500 mt-0.5">Pesanan yang sudah selesai atau dibatalkan</p>
           </div>
           <Link to="/orders" className="text-xs text-eglux-secondary font-medium hover:underline whitespace-nowrap">

@@ -68,6 +68,7 @@ const VoucherForm = ({ onClose, onSaved, showToast }) => {
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({
     name: `Voucher ${new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}`,
+    code: '', // ⭐ Manual code (kosong = auto-generate). Untuk referral voucher, isi manual (mis. "REFERRAL-BUDI")
     start_date: new Date().toISOString().slice(0, 10),
     start_time: '00:00',
     end_date: '',
@@ -101,6 +102,7 @@ const VoucherForm = ({ onClose, onSaved, showToast }) => {
         body: JSON.stringify({
           action: 'create',
           name: form.name,
+          code: form.code.trim() || undefined, // ⭐ Manual code (untuk referral) atau auto-generate
           start_at, end_at,
           channel: 'all',
           validity_type: form.validity_type,
@@ -163,6 +165,19 @@ const VoucherForm = ({ onClose, onSaved, showToast }) => {
                   className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md"
                 />
                 <p className="text-xs text-gray-400 text-right mt-1">{form.name.length}/50</p>
+              </div>
+              {/* ⭐ Kode voucher (manual — untuk referral voucher) */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Kode voucher <span className="text-gray-400 font-normal">(opsional)</span></label>
+                <input
+                  type="text" value={form.code} onChange={e => update('code', e.target.value.toUpperCase())}
+                  placeholder="Kosongkan untuk auto-generate (mis. EGLUX-ABC123)"
+                  maxLength={30}
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md font-mono uppercase"
+                />
+                <p className="text-xs text-gray-400 mt-1">
+                  Isi manual untuk voucher referral (mis. "REFERRAL-BUDI"). Kosongkan untuk auto-generate.
+                </p>
               </div>
               {/* Waktu mulai */}
               <div>

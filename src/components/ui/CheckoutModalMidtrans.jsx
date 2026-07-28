@@ -42,7 +42,7 @@ import Select from 'react-select';
 import { INDONESIAN_CITIES } from '../../data/indonesianCities';
 import { COUNTRIES, DEFAULT_COUNTRY } from '../../data/countries';
 import { ensureSnapLoaded } from '../../hooks/useMidtransSnap';
-import { friendlyErrorMessage } from '../../lib/errorMessage';
+import VoucherClaimModal from './VoucherClaimModal';
 
 // Key untuk sessionStorage — sinyal agar parent page auto-buka checkout modal
 // setelah user berhasil login dari halaman /admin.
@@ -174,6 +174,15 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
   const [formErrors, setFormErrors] = useState({});
   const [submitting, setSubmitting] = useState(false);
   const [orderId, setOrderId] = useState(null);
+
+  // ⭐ Voucher state
+  const [voucherCode, setVoucherCode] = useState('');
+  const [voucherDiscount, setVoucherDiscount] = useState(0);
+  const [voucherValid, setVoucherValid] = useState(false);
+  const [voucherError, setVoucherError] = useState('');
+  const [voucherLoading, setVoucherLoading] = useState(false);
+  const [appliedVoucher, setAppliedVoucher] = useState(null);
+  const [showVoucherClaimModal, setShowVoucherClaimModal] = useState(false);
 
   // Phone country selector state
   const [selectedCountry, setSelectedCountry] = useState(DEFAULT_COUNTRY);
@@ -360,7 +369,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
           setSelectedAreaId(String(data.areas[0].id));
         }
         if (resp.ok && (!data.areas || data.areas.length === 0)) {
-          showToast(`Kode pos ${postal} tidak ditemukan.`);
+          showToast(`Kode pos ${postal} tidak ditemukan di Biteship.`);
         }
       } catch (err) {
         let msg = err.message;
@@ -511,19 +520,89 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
     return true;
   };
 
+  // ===== Voucher validation =====
+  const handleApplyVoucher = async () => {
+    if (!voucherCode.trim()) return;
+    setVoucherLoading(true);
+    setVoucherError('');
+    setVoucherValid(false);
+    setVoucherDiscount(0);
+    setAppliedVoucher(null);
+
+    try {
+      const token = (await supabase.auth.getSession()).data?.session?.access_token;
+      if (!token) { setVoucherError('Sesi login habis'); return; }
+
+      const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/validate-voucher`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: voucherCode.trim(), subtotal: totalPrice }),
+      });
+      const result = await resp.json();
+
+      if (result.valid) {
+        setVoucherValid(true);
+        setVoucherDiscount(result.discount_amount);
+        setAppliedVoucher(result.voucher);
+      } else {
+        setVoucherError(result.error || 'Voucher tidak valid');
+      }
+    } catch (e) {
+      setVoucherError('Gagal validasi: ' + e.message);
+    } finally {
+      setVoucherLoading(false);
+    }
+  };
+
+  const handleRemoveVoucher = () => {
+    setVoucherCode('');
+    setVoucherValid(false);
+    setVoucherDiscount(0);
+    setVoucherError('');
+    setAppliedVoucher(null);
+  };
+
+  // ⭐ Auto-apply voucher dari VoucherClaimModal (langsung pilih, gak perlu input code)
+  const handleUseVoucherFromClaim = async (voucher) => {
+    setVoucherCode(voucher.code);
+    setVoucherError('');
+    setVoucherLoading(true);
+
+    try {
+      const token = (await supabase.auth.getSession()).data?.session?.access_token;
+      if (!token) { setVoucherError('Sesi login habis'); return; }
+
+      const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/validate-voucher`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: voucher.code, subtotal: totalPrice }),
+      });
+      const result = await resp.json();
+
+      if (result.valid) {
+        setVoucherValid(true);
+        setVoucherDiscount(result.discount_amount);
+        setAppliedVoucher(result.voucher);
+      } else {
+        setVoucherError(result.error || 'Voucher tidak valid');
+      }
+    } catch (e) {
+      setVoucherError('Gagal validasi: ' + e.message);
+    } finally {
+      setVoucherLoading(false);
+    }
+  };
+
   // ===== Persist order ke Supabase =====
   const saveOrderToSupabase = async () => {
-    // ── Pakai edge function create-order (auth-gated, bypass RLS) ──
-    // Setelah SQL 006 (tighten RLS), anon key gak bisa INSERT ke
-    // customers/orders/order_items. Edge function pakai service_role.
     const shippingCost = selectedShipping?.price || 0;
-    const grandTotal = totalPrice + shippingCost;
+    const grandTotal = totalPrice + shippingCost - voucherDiscount;
     const selectedArea = areas.find((a) => String(a.id) === String(selectedAreaId));
 
     const payload = {
       customer: {
         name: form.name.trim(),
-        phone: form.phone.trim(), // E.164: +628xxxxxxxxxx
+        phone: form.phone.trim(),
         email: form.email.trim() || null,
         address: form.address.trim(),
       },
@@ -541,6 +620,9 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
         courier_duration: selectedShipping?.duration || null,
         courier_rate: shippingCost,
         notes: form.notes.trim() || null,
+        // ⭐ Voucher fields
+        voucher_code: voucherValid ? voucherCode.trim() : null,
+        voucher_discount: voucherDiscount,
       },
       items: cart.map((item) => ({
         product_id: item.productId,
@@ -548,11 +630,26 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
         product_name_snapshot: item.name,
         variant_name_snapshot: item.variantName ?? null,
         unit_price_snapshot: item.price || 0,
+        // ⭐ original_unit_price: harga asli SEBELUM discount
+        // Fallback: kalau originalPrice undefined (cart lama dari localStorage),
+        // pakai item.price (sama dengan unit_price — no discount shown)
+        original_unit_price: (item.originalPrice != null && item.originalPrice > 0)
+          ? item.originalPrice
+          : (item.price || 0),
         quantity: item.qty,
         subtotal: (item.price || 0) * item.qty,
         weight_gram: item.weight_in_gram || 500,
       })),
     };
+
+    // ⭐ Debug: log items untuk verify originalPrice
+    console.log('[Checkout] Cart items being sent to create-order:', cart.map(item => ({
+      name: item.name,
+      price: item.price,
+      originalPrice: item.originalPrice,
+      isDiscounted: item.isDiscounted,
+      originalPriceExists: 'originalPrice' in item,
+    })));
 
     const { data: result, error: fnError } = await supabase.functions.invoke(
       'create-order',
@@ -618,7 +715,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
         // Kalau cart gak di-clear dan user close popup sebelum bayar, cart tetap
         // berisi item yang sama → user bisa accidentally checkout duplicate order.
         clearCart();
-        showToast('Pesanan dibuat, selesaikan pembayaran sekarang!', 'info');
+        showToast('Pesanan dibuat! Selesaikan pembayaran sekarang atau nanti via menu Pesanan Saya.', 'info');
       }
 
       // ⭐ STEP 1: Ensure Snap.js loaded (mirror OrdersList pattern).
@@ -659,7 +756,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
       // ⭐ STEP 4: Open Midtrans Snap popup — same callbacks as before
       window.snap.pay(data.token, {
         onSuccess: (result) => {
-          // // console.log('[Midtrans] Payment success:', result.transaction_id);
+          console.log('[Midtrans] Payment success:', result.transaction_id);
           // ⭐ Defensive: reset body scroll lock yang mungkin di-set oleh Snap popup
           // (Snap popup set body overflow:hidden saat render, kadang gak ke-release
           // otomatis setelah auto-close → web "stuck" sampai refresh)
@@ -671,9 +768,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
           showToast('Menunggu pembayaran. Cek WA/email untuk instruksi, atau bayar via Pesanan Saya.', 'info');
         },
         onError: (result) => {
-          // ⭐ Security: log hanya non-sensitive identifiers, BUKAN full result object
-          // (result berisi masked_card, bank, fraud_status, dll — bisa expose PII ke DevTools)
-          console.error('[Midtrans] Payment error — transaction_id:', result?.transaction_id, 'status_code:', result?.status_code);
+          console.error('[Midtrans] Payment error:', result);
           document.body.style.overflow = '';
           showToast('Pembayaran gagal. Bayar ulang via menu Pesanan Saya.', 'error');
         },
@@ -683,9 +778,8 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
         },
       });
     } catch (err) {
-      console.error('[Midtrans Checkout] Gagal:', err?.message);
-      // ⭐ Pakai friendlyErrorMessage untuk cegah raw error bocor ke user
-      showToast(friendlyErrorMessage(err, 'Checkout'), 'error');
+      console.error('[Midtrans Checkout] Gagal:', err);
+      showToast(`Gagal: ${err.message}`);
       setSubmitting(false);
     }
   };
@@ -720,7 +814,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
     return null;
   }
 
-  const grandTotal = totalPrice + (selectedShipping?.price || 0);
+  const grandTotal = totalPrice + (selectedShipping?.price || 0) - voucherDiscount;
   const isLocked = !!orderId;
   const showAreaDropdown = !areasLoading && areas.length > 1;
   const showAreaAutoSelected = !areasLoading && areas.length === 1 && selectedAreaId;
@@ -749,7 +843,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
           <div className="min-w-0 pr-2">
             <h3 className="text-[1rem] md:text-[1.1rem] font-bold text-eglux-primary truncate">Checkout</h3>
             <p className="text-[0.72rem] text-gray-500 mt-0.5 flex items-center gap-1 truncate">
-              <ShieldCheck className="w-3 h-3 flex-shrink-0" /> EGLUX Payment
+              <ShieldCheck className="w-3 h-3 flex-shrink-0" /> Midtrans · Biteship
             </p>
           </div>
           <button
@@ -817,7 +911,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
               const shippingCost = selectedShipping?.price || 0;
               // Reserve untuk tax/admin fee (kalau ada di masa depan)
               const taxFee = 0;
-              const grandTotalV3 = discountedSubtotal + shippingCost + taxFee;
+              const grandTotalV3 = discountedSubtotal + shippingCost + taxFee - voucherDiscount;
 
               return (
                 <>
@@ -853,6 +947,14 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
                     </div>
                   )}
 
+                  {/* Voucher discount */}
+                  {voucherValid && voucherDiscount > 0 && (
+                    <div className="flex justify-between mt-1 text-[0.82rem]">
+                      <span className="text-green-600">🎟️ {appliedVoucher?.name || voucherCode}</span>
+                      <span className="font-medium text-green-600">− {rupiah(voucherDiscount)}</span>
+                    </div>
+                  )}
+
                   {/* Tax / Admin Fee (reserve untuk masa depan) */}
                   {taxFee > 0 && (
                     <div className="flex justify-between mt-1 text-[0.82rem]">
@@ -868,9 +970,9 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
                   </div>
 
                   {/* Hint hemat */}
-                  {hasAnyDiscount && (
+                  {(hasAnyDiscount || voucherDiscount > 0) && (
                     <p className="text-[0.65rem] text-green-600 mt-1.5 text-right">
-                      🎉 Kamu hemat {rupiah(totalDiscount)} dari diskon!
+                      🎉 Kamu hemat {rupiah(totalDiscount + voucherDiscount)}!
                     </p>
                   )}
                 </>
@@ -878,10 +980,58 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
             })()}
           </section>
 
+          {/* === VOUCHER INPUT SECTION === */}
+          <section className="bg-eglux-accent/50 rounded-xl p-4 space-y-2">
+            <div className="flex items-center justify-between">
+              <p className="text-[0.78rem] font-semibold text-eglux-primary flex items-center gap-1.5">
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/><path d="M13 5v2"/><path d="M13 17v2"/><path d="M13 11v2"/></svg>
+                Voucher
+              </p>
+              <button
+                onClick={() => setShowVoucherClaimModal(true)}
+                className="text-[0.72rem] font-semibold text-eglux-secondary hover:underline cursor-pointer border-none bg-transparent"
+              >
+                Lihat Voucher Saya →
+              </button>
+            </div>
+            {voucherValid ? (
+              <div className="flex items-center justify-between bg-green-50 border border-green-200 rounded-lg p-2.5">
+                <div className="flex items-center gap-2">
+                  <span className="text-green-600 text-sm">✓</span>
+                  <div>
+                    <p className="text-xs font-semibold text-green-700">{appliedVoucher?.name || voucherCode}</p>
+                    <p className="text-[0.7rem] text-green-600">Hemat {rupiah(voucherDiscount)}</p>
+                  </div>
+                </div>
+                <button onClick={handleRemoveVoucher} className="text-xs text-red-500 hover:underline cursor-pointer border-none bg-transparent">Hapus</button>
+              </div>
+            ) : (
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={voucherCode}
+                  onChange={(e) => { setVoucherCode(e.target.value); setVoucherError(''); }}
+                  placeholder="Masukkan kode voucher"
+                  className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md uppercase"
+                />
+                <button
+                  onClick={handleApplyVoucher}
+                  disabled={voucherLoading || !voucherCode.trim()}
+                  className="px-4 py-2 text-sm font-semibold text-white bg-eglux-primary rounded-md hover:opacity-90 disabled:opacity-50 cursor-pointer border-none"
+                >
+                  {voucherLoading ? '⏳' : 'Terapkan'}
+                </button>
+              </div>
+            )}
+            {voucherError && (
+              <p className="text-[0.7rem] text-red-500">{voucherError}</p>
+            )}
+          </section>
+
           {/* === Data Pembeli === */}
-          <section className="space-y-4 pb-2">
+          <section className="space-y-4">
             <h4 className="text-[0.78rem] uppercase tracking-[1px] text-[#666] font-semibold flex items-center gap-1.5">
-              <User className="w-3.5 h-3.5" />Data Pemesanan
+              <User className="w-3.5 h-3.5" />Data Pembeli
             </h4>
 
             {/* Name */}
@@ -990,7 +1140,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
               </div>
               <InlineError msg={formErrors.phone} />
               <p className="text-[0.72rem] text-gray-500 mt-1">
-                {/* sample text */}
+                Klik bendera untuk ganti negara (default Indonesia +62). Ketik nomor tanpa kode negara.
               </p>
             </div>
 
@@ -1014,13 +1164,13 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
               />
               <InlineError msg={formErrors.email} />
               <p className="text-[0.72rem] text-gray-500 mt-1">
-                {/* sample text */}
+                Email opsional — Midtrans akan kirim e-receipt jika diisi.
               </p>
             </div>
           </section>
 
           {/* === Alamat Pengiriman === */}
-          <section className="space-y-4 pt-8 pb-2">
+          <section className="space-y-4">
             <h4 className="text-[0.78rem] uppercase tracking-[1px] text-[#666] font-semibold flex items-center gap-1.5">
               <MapPin className="w-3.5 h-3.5" />Alamat Pengiriman
             </h4>
@@ -1063,7 +1213,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
               />
               <InlineError msg={formErrors.city} />
               <p className="text-[0.72rem] text-gray-500 mt-1">
-                {/* sample text */}
+                97 kota di Indonesia · ketik untuk cari (misal: "bandung", "jakarta", "surabaya")
               </p>
             </div>
 
@@ -1091,7 +1241,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
             {/* Loading area lookup */}
             {areasLoading && (
               <div className="text-[0.78rem] text-gray-500 flex items-center gap-2">
-                <Loader2 className="w-3.5 h-3.5 animate-spin" /> Mencari area...
+                <Loader2 className="w-3.5 h-3.5 animate-spin" /> Mencari area Biteship...
               </div>
             )}
 
@@ -1136,13 +1286,13 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
             {/* Not found */}
             {showAreaNotFound && (
               <p className="text-[0.78rem] text-red-500">
-                Kode pos tidak ditemukan. Harap periksa kembali.
+                Kode pos tidak ditemukan di Biteship. Periksa kembali.
               </p>
             )}
           </section>
 
           {/* === Pilih Kurir === */}
-          <section className="space-y-4 pt-8 pb-2">
+          <section className="space-y-3">
             <h4 className="text-[0.78rem] uppercase tracking-[1px] text-[#666] font-semibold flex items-center gap-1.5">
               <Truck className="w-3.5 h-3.5" />Pilih Kurir
             </h4>
@@ -1209,7 +1359,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
 
           {/* === Catatan === */}
           <section>
-            <label className="block text-[0.8rem] font-semibold text-eglux-primary uppercase tracking-[0.5px] mb-1.5 pt-8">
+            <label className="block text-[0.8rem] font-semibold text-eglux-primary uppercase tracking-[0.5px] mb-1.5">
               Catatan (opsional)
             </label>
             <textarea
@@ -1248,6 +1398,14 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
           </p>
         </div>
       </div>
+
+      {/* ⭐ Voucher Claim Modal — browse + claim + pilih voucher */}
+      <VoucherClaimModal
+        isOpen={showVoucherClaimModal}
+        onClose={() => setShowVoucherClaimModal(false)}
+        onUseVoucher={handleUseVoucherFromClaim}
+        subtotal={totalPrice}
+      />
     </div>
     </>
   );

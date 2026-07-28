@@ -459,8 +459,46 @@ serve(async (req: Request) => {
   }
 
   // 4. Trigger downstream actions berdasarkan status
-  // Payment success → trigger WABA notif + auto-create Biteship order
+  // Payment success → record voucher usage + trigger WABA notif + auto-create Biteship order
   if (isPaymentSuccess) {
+    // ⭐ STEP 3.6: Record voucher usage (jika order pakai voucher)
+    try {
+      const { data: orderData } = await supabase
+        .from("orders")
+        .select("id, voucher_code, customer_id")
+        .eq("id", order_id)
+        .single();
+
+      if (orderData?.voucher_code) {
+        // Find voucher by code
+        const { data: voucher } = await supabase
+          .from("vouchers")
+          .select("id")
+          .eq("code", orderData.voucher_code)
+          .maybeSingle();
+
+        if (voucher) {
+          // Find user_id from customer
+          const { data: customer } = await supabase
+            .from("customers")
+            .select("user_id")
+            .eq("id", orderData.customer_id)
+            .maybeSingle();
+
+          if (customer?.user_id) {
+            await supabase.from("voucher_usages").insert({
+              voucher_id: voucher.id,
+              user_id: customer.user_id,
+              order_id: order_id,
+            });
+            console.log("[midtrans-webhook] ✓ Voucher usage recorded:", orderData.voucher_code);
+          }
+        }
+      }
+    } catch (voucherErr) {
+      console.warn("[midtrans-webhook] Voucher usage record failed:", voucherErr?.message);
+    }
+
     console.log("[midtrans-webhook] Payment success → trigger WABA notification");
 
     try {

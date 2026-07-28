@@ -182,6 +182,9 @@ serve(async (req: Request) => {
       courier_duration: order.courier_duration || null,
       courier_rate: Number(order.courier_rate),
       notes: order.notes?.trim() || null,
+      // ⭐ Voucher fields (optional — dari checkout)
+      voucher_code: order.voucher_code?.trim() || null,
+      voucher_discount: Number(order.voucher_discount) || 0,
     });
     if (orderError) {
       // Cleanup: hapus customer yang baru di-insert (order gagal)
@@ -190,17 +193,33 @@ serve(async (req: Request) => {
     }
 
     // 3. Insert order_items
-    const itemsPayload = items.map((item: any) => ({
-      order_id: orderId,
-      product_id: item.product_id,
-      variant_id: item.variant_id ?? null,
-      product_name_snapshot: item.product_name_snapshot,
-      variant_name_snapshot: item.variant_name_snapshot ?? null,
-      unit_price_snapshot: Number(item.unit_price_snapshot) || 0,
-      quantity: Number(item.quantity),
-      subtotal: Number(item.subtotal),
-      weight_gram: Number(item.weight_gram) || 500,
-    }));
+    // ⭐ Simpan original_unit_price + discount_amount untuk transparent discount display
+    const itemsPayload = items.map((item: any) => {
+      const unitPrice = Number(item.unit_price_snapshot) || 0;
+      // ⭐ Explicit null check — jangan pakai Number(x) || null karena 0 jadi null
+      const originalPrice = (item.original_unit_price !== null && item.original_unit_price !== undefined && item.original_unit_price !== "")
+        ? Number(item.original_unit_price)
+        : null;
+      const qty = Number(item.quantity) || 1;
+      // discount_amount = (original - unit) * qty — hanya kalau original > unit
+      const discountAmount = (originalPrice !== null && originalPrice > unitPrice)
+        ? Math.round((originalPrice - unitPrice) * qty)
+        : 0;
+
+      return {
+        order_id: orderId,
+        product_id: item.product_id,
+        variant_id: item.variant_id ?? null,
+        product_name_snapshot: item.product_name_snapshot,
+        variant_name_snapshot: item.variant_name_snapshot ?? null,
+        unit_price_snapshot: unitPrice,
+        original_unit_price: originalPrice,
+        discount_amount: discountAmount,
+        quantity: qty,
+        subtotal: Number(item.subtotal),
+        weight_gram: Number(item.weight_gram) || 500,
+      };
+    });
     const { error: itemsError } = await supabase.from("order_items").insert(itemsPayload);
     if (itemsError) {
       // Cleanup: hapus order + customer (items gagal)

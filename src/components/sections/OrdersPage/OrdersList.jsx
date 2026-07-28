@@ -33,9 +33,7 @@ import ChangeCourierModal from '../../ui/ChangeCourierModal';
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 
-// ── Status tabs (ACTIVE ONLY — delivered/cancelled pindah ke /order-history) ──
-// ⭐ DB constraint (SQL 032e) hanya allow: pending, paid, processing, shipped, delivered, cancelled, expired
-//    Webhook Biteship map: picking_up/picked/in_transit → 'shipped', delivered → 'delivered'
+// ── Status tabs (ACTIVE ONLY — completed/cancelled pindah ke /order-history) ──
 const STATUS_TABS = [
   { key: 'all_active', label: 'Semua Active' },
   { key: 'pending', label: 'Menunggu' },
@@ -43,12 +41,11 @@ const STATUS_TABS = [
   { key: 'shipped', label: 'Dikirim' },
 ];
 
-// Active statuses (yang ditampilkan di /orders) — shipped = Dikirim
+// Active statuses (yang ditampilkan di /orders)
 const ACTIVE_STATUSES = ['pending', 'processing', 'shipped'];
 
-// ⚠️ NOTE: orders.status vocab (sesuai constraint SQL 032e):
-//   pending, paid, processing, shipped, delivered, cancelled, expired
-// (webhook Biteship sudah map ke 'shipped' dan 'delivered' — BUKAN 'shipping'/'completed' lagi)
+// ⚠️ NOTE: orders.status vocab: pending, processing, shipping, completed, cancelled
+// (di midtrans-webhook mapOrderStatus pakai 'shipping' bukan 'shipped')
 const STATUS_BADGE = {
   pending:    { text: 'Menunggu Pembayaran', cls: 'bg-gray-100 text-gray-600', banner: 'bg-gray-500' },
   paid:       { text: 'Dibayar',              cls: 'bg-blue-50 text-blue-600',  banner: 'bg-blue-500' },
@@ -224,6 +221,7 @@ const OrderDetailPanel = ({ order: orderProp, onClose, onOrderUpdated }) => {
 
   const items = order.order_items || [];
   const statusCfg = STATUS_BADGE[order.status] || { banner: 'bg-gray-500' };
+  const canTrack = order.biteship_order_id || order.tracking_number || order.status === 'shipping' || order.status === 'shipped' || order.biteship_status;
   const isPending = order.status === 'pending' && order.payment_status !== 'paid';
 
   // ⭐ State untuk ChangeCourierModal + payment loading
@@ -231,25 +229,15 @@ const OrderDetailPanel = ({ order: orderProp, onClose, onOrderUpdated }) => {
   const [paying, setPaying] = useState(false);
   const [actionError, setActionError] = useState(null);
 
-  // ⭐ canTrack: tombol "Lacak Pesanan" HANYA muncul kalau biteship_waybill_url ADA di DB.
-  // Kalau belum ada (Biteship webhook belum fire courier_link), tombol tidak muncul sama sekali
-  // — lebih baik daripada tombol muncul tapi gak bisa diklik.
-  const canTrack = Boolean(order.biteship_waybill_url);
-
-  // ⭐ Lacak Pesanan: direct ke biteship_waybill_url dari DB (bukan ke /track page)
-  // Behavior:
-  //   - Kalau biteship_waybill_url ADA → buka tab baru ke Biteship tracking page
-  //   - Kalau TIDAK ADA → tampilkan info (jangan redirect ke /track)
-  // Alasan: /track page redundant dengan info yang sudah ada di detail panel.
-  //         User cukup klik tombol → langsung ke Biteship tracking.
+  // ⭐ Lacak Pesanan: direct ke biteship_waybill_url (kalau ada), fallback ke /track page
   const handleTrackOrder = () => {
     if (order.biteship_waybill_url) {
-      // ⭐ Direct ke Biteship tracking page (gratis, no API call)
+      // Direct ke Biteship tracking page (gratis, no API call)
       window.open(order.biteship_waybill_url, '_blank', 'noopener,noreferrer');
     } else {
-      // Waybill URL belum ada di DB (Biteship webhook belum fire courier_link event)
-      // Tampilkan info — JANGAN redirect ke /track page
-      setActionError('Tracking belum tersedia. Pesanan sedang disiapkan kurir, coba lagi nanti.');
+      // Fallback: buka track order page (untuk lihat status dari DB)
+      onClose();
+      navigate(`/track?order=${order.id}`);
     }
   };
 
@@ -297,9 +285,11 @@ const OrderDetailPanel = ({ order: orderProp, onClose, onOrderUpdated }) => {
         let errMsg = 'Gagal membuat transaksi pembayaran';
         if (data?.error) {
           errMsg = data.error;
-          // ⭐ Security: debug info TIDAK di-log ke browser console (sebelumnya di-log
-          // dan bisa leak SQL error / schema internal ke DevTools).
-          // Kalau perlu debug, cek edge function logs di Supabase Dashboard (server-side).
+          // Kalau ada debug info, tampilkan juga
+          if (data.debug) {
+            console.error('[OrdersList] Debug info:', data.debug);
+            errMsg += ` (debug: ${JSON.stringify(data.debug)})`;
+          }
         } else if (fnError?.message) {
           errMsg = fnError.message;
         }
@@ -315,11 +305,11 @@ const OrderDetailPanel = ({ order: orderProp, onClose, onOrderUpdated }) => {
       const startPaymentPolling = (orderId) => {
         let pollCount = 0;
         const maxPolls = 60; // 60 polls × 3 detik = 3 menit max
-        // console.log('[OrdersList] Start polling payment status for', orderId);
+        console.log('[OrdersList] Start polling payment status for', orderId);
 
         const poll = async () => {
           if (pollCount >= maxPolls) {
-            // console.log('[OrdersList] Polling stopped (timeout)');
+            console.log('[OrdersList] Polling stopped (timeout)');
             return;
           }
           pollCount++;
@@ -336,13 +326,13 @@ const OrderDetailPanel = ({ order: orderProp, onClose, onOrderUpdated }) => {
             }
 
             if (data?.payment_status === 'paid') {
-              // console.log('[OrdersList] ✓ Payment confirmed via polling');
+              console.log('[OrdersList] ✓ Payment confirmed via polling');
               onOrderUpdated?.(); // refresh orders list
               // Stop polling
               return;
             }
             if (data?.payment_status === 'failed') {
-              // console.log('[OrdersList] Payment failed via polling');
+              console.log('[OrdersList] Payment failed via polling');
               onOrderUpdated?.();
               return;
             }
@@ -388,9 +378,11 @@ const OrderDetailPanel = ({ order: orderProp, onClose, onOrderUpdated }) => {
         },
       });
     } catch (e) {
-      console.error('[OrdersList] Lanjutkan Pembayaran error:', e?.message);
-      // ⭐ Pakai friendlyErrorMessage untuk cegah raw error bocor ke user
-      setActionError(friendlyErrorMessage(e, 'Lanjutkan Pembayaran'));
+      console.error('[OrdersList] Lanjutkan Pembayaran error:', e);
+      const msg = e.message?.includes('Failed to fetch') || e.message?.includes('CORS')
+        ? 'Gagal terhubung ke server pembayaran. Coba lagi beberapa saat.'
+        : e.message;
+      setActionError(msg);
       setPaying(false);
     }
   };
@@ -475,17 +467,15 @@ const OrderDetailPanel = ({ order: orderProp, onClose, onOrderUpdated }) => {
                 )}
                 {order.biteship_status && (
                   <div className="flex justify-between">
-                    <span className="text-gray-500">Status</span>
+                    <span className="text-gray-500">Status Biteship</span>
                     <span className="font-medium text-gray-900 capitalize">{order.biteship_status}</span>
                   </div>
                 )}
               </div>
               {canTrack && (
-                <a
-                  href={order.biteship_waybill_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="mt-3 w-full px-4 py-2.5 bg-eglux-primary text-white rounded-lg text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer border-none flex items-center justify-center gap-2 no-underline"
+                <button
+                  onClick={handleTrackOrder}
+                  className="mt-3 w-full px-4 py-2.5 bg-eglux-primary text-white rounded-lg text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer border-none flex items-center justify-center gap-2"
                 >
                   <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <rect x="1" y="3" width="15" height="13" />
@@ -494,7 +484,7 @@ const OrderDetailPanel = ({ order: orderProp, onClose, onOrderUpdated }) => {
                     <circle cx="18.5" cy="18.5" r="2.5" />
                   </svg>
                   Lacak Pesanan
-                </a>
+                </button>
               )}
             </div>
           )}
@@ -551,40 +541,66 @@ const OrderDetailPanel = ({ order: orderProp, onClose, onOrderUpdated }) => {
             </div>
           </div>
 
-          {/* Rincian Pembayaran (v3: transparent breakdown) */}
+          {/* Rincian Pembayaran — transparent breakdown
+              Layout: Harga Asli Produk → Diskon → Subtotal → Ongkir → Admin 3% → Voucher → Total
+              "Kamu hemat" = total diskon (variant discount + voucher) */}
           <div className="bg-white border border-gray-200 rounded-xl p-4">
             <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-3">Rincian Pembayaran</p>
             <div className="space-y-2 text-sm">
-              {/* Item list dengan harga per item (transparan) */}
+              {/* === Item list dengan harga asli (tanpa coret) + potongan diskon === */}
               {items.length > 0 && (
-                <div className="space-y-1.5 pb-2 mb-1 border-b border-gray-100">
+                <div className="space-y-2 pb-2 mb-1 border-b border-gray-100">
                   {items.map((item, idx) => {
-                    const itemUnitPrice = Number(item.unit_price_snapshot) || 0;
+                    const unitPrice = Number(item.unit_price_snapshot) || 0;
+                    const originalPrice = Number(item.original_unit_price) || unitPrice;
                     const itemQty = Number(item.quantity) || 1;
-                    const itemSubtotal = Number(item.subtotal) || (itemUnitPrice * itemQty);
+                    const hasDiscount = originalPrice > unitPrice;
+                    const itemOriginalSubtotal = originalPrice * itemQty;
+                    const itemDiscount = hasDiscount ? (originalPrice - unitPrice) * itemQty : 0;
+                    const itemFinalSubtotal = Number(item.subtotal) || (unitPrice * itemQty);
+
                     return (
-                      <div key={idx} className="flex justify-between text-xs">
-                        <span className="text-gray-600 flex-1 mr-2 truncate">
-                          {item.product_name_snapshot}
-                          {item.variant_name_snapshot && (
-                            <span className="text-gray-400"> · {item.variant_name_snapshot}</span>
-                          )}
-                          <span className="text-gray-400"> × {itemQty}</span>
-                        </span>
-                        <span className="text-gray-700 whitespace-nowrap">{rupiah(itemSubtotal)}</span>
+                      <div key={idx} className="text-xs space-y-0.5">
+                        {/* Nama produk + qty */}
+                        <div className="flex justify-between">
+                          <span className="text-gray-600 flex-1 mr-2 truncate">
+                            {item.product_name_snapshot}
+                            {item.variant_name_snapshot && (
+                              <span className="text-gray-400"> · {item.variant_name_snapshot}</span>
+                            )}
+                            <span className="text-gray-400"> × {itemQty}</span>
+                          </span>
+                        </div>
+                        {/* Harga asli (tanpa coret) */}
+                        <div className="flex justify-between pl-2">
+                          <span className="text-gray-500">Harga Asli</span>
+                          <span className="text-gray-600 whitespace-nowrap">{rupiah(itemOriginalSubtotal)}</span>
+                        </div>
+                        {/* Potongan diskon (hanya kalau ada) */}
+                        {hasDiscount && (
+                          <div className="flex justify-between pl-2">
+                            <span className="text-green-600">Potongan Diskon</span>
+                            <span className="text-green-600 whitespace-nowrap">− {rupiah(itemDiscount)}</span>
+                          </div>
+                        )}
+                        {/* Subtotal per item */}
+                        <div className="flex justify-between pl-2">
+                          <span className="text-gray-400">Subtotal Item</span>
+                          <span className="text-gray-700 whitespace-nowrap">{rupiah(itemFinalSubtotal)}</span>
+                        </div>
                       </div>
                     );
                   })}
                 </div>
               )}
 
-              {/* Subtotal item (harga final, setelah diskon kalau ada) */}
+              {/* Subtotal Produk (setelah diskon variant) */}
               <div className="flex justify-between">
                 <span className="text-gray-500">Subtotal Produk ({items.length} item)</span>
                 <span className="text-gray-900">{rupiah(order.subtotal)}</span>
               </div>
 
-              {/* Ongkir (courier) — TRANSPARAN */}
+              {/* Ongkir */}
               {Number(order.shipping_cost) > 0 && (
                 <div className="flex justify-between">
                   <span className="text-gray-500">
@@ -599,16 +615,33 @@ const OrderDetailPanel = ({ order: orderProp, onClose, onOrderUpdated }) => {
                 </div>
               )}
 
-              {/* Biaya lain kalau ada (courier_rate bisa beda dari shipping_cost kalau ada surcharge) */}
-              {Number(order.courier_rate) > 0 && Number(order.courier_rate) !== Number(order.shipping_cost) && (
+              {/* Biaya Admin & Tax (3% dari harga asli produk) */}
+              {(() => {
+                const originalSubtotal = items.reduce((s, item) => {
+                  const orig = Number(item.original_unit_price) || Number(item.unit_price_snapshot) || 0;
+                  return s + (orig * (Number(item.quantity) || 1));
+                }, 0);
+                const adminFee = Math.round(originalSubtotal * 0.03);
+                return (
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">Biaya Admin & Tax (3%)</span>
+                    <span className="text-gray-900">{rupiah(adminFee)}</span>
+                  </div>
+                );
+              })()}
+
+              {/* Voucher Discount */}
+              {Number(order.voucher_discount) > 0 && (
                 <div className="flex justify-between">
-                  <span className="text-gray-500">Biaya Kurir (Rate)</span>
-                  <span className="text-gray-900">{rupiah(order.courier_rate)}</span>
+                  <span className="text-green-600">
+                    🎟️ Voucher
+                    {order.voucher_code && (
+                      <span className="text-gray-400 ml-1">({order.voucher_code})</span>
+                    )}
+                  </span>
+                  <span className="text-green-600 font-medium">− {rupiah(Number(order.voucher_discount))}</span>
                 </div>
               )}
-
-              {/* Tax / Admin Fee (reserve — kalau ada di masa depan, tampilkan di sini) */}
-              {/* TODO: kalau ada kolom tax_fee / admin_fee di orders table, tampilkan di sini */}
 
               {/* Grand Total */}
               <div className="border-t border-gray-200 pt-2 mt-2 flex justify-between items-center">
@@ -616,12 +649,25 @@ const OrderDetailPanel = ({ order: orderProp, onClose, onOrderUpdated }) => {
                 <span className="text-lg font-bold text-eglux-secondary">{rupiah(order.total_amount)}</span>
               </div>
 
-              {/* Verifikasi: subtotal + shipping = total (untuk transaparency check) */}
-              {Number(order.subtotal) + Number(order.shipping_cost) !== Number(order.total_amount) && (
-                <p className="text-[0.65rem] text-amber-600 mt-1">
-                  ℹ Total termasuk biaya lain (selisih: {rupiah(Number(order.total_amount) - Number(order.subtotal) - Number(order.shipping_cost))})
-                </p>
-              )}
+              {/* ⭐ Hint hemat = total diskon (variant discount + voucher) */}
+              {(() => {
+                const variantDiscount = items.reduce((s, item) => {
+                  const orig = Number(item.original_unit_price) || 0;
+                  const unit = Number(item.unit_price_snapshot) || 0;
+                  const qty = Number(item.quantity) || 1;
+                  return s + (orig > unit ? (orig - unit) * qty : 0);
+                }, 0);
+                const voucherDiscount = Number(order.voucher_discount) || 0;
+                const totalSavings = variantDiscount + voucherDiscount;
+                if (totalSavings > 0) {
+                  return (
+                    <p className="text-[0.65rem] text-green-600 mt-1 text-right">
+                      🎉 Kamu hemat {rupiah(totalSavings)}!
+                    </p>
+                  );
+                }
+                return null;
+              })()}
             </div>
           </div>
 
@@ -719,17 +765,15 @@ const OrderDetailPanel = ({ order: orderProp, onClose, onOrderUpdated }) => {
               </div>
             )}
 
-            {/* Default actions: Lacak Pesanan (kalau ada waybill_url) + Tutup */}
+            {/* Default actions: Lacak Pesanan (kalau ada tracking) + Tutup */}
             <div className="flex gap-2">
               {canTrack && (
-                <a
-                  href={order.biteship_waybill_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex-1 px-4 py-2.5 bg-eglux-primary text-white rounded-lg text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer border-none no-underline text-center flex items-center justify-center"
+                <button
+                  onClick={handleTrackOrder}
+                  className="flex-1 px-4 py-2.5 bg-eglux-primary text-white rounded-lg text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer border-none"
                 >
                   Lacak Pesanan
-                </a>
+                </button>
               )}
               <button
                 onClick={onClose}
@@ -789,12 +833,13 @@ const OrdersList = () => {
         tracking_number,
         created_at, notes,
         payment_method,
+        voucher_code, voucher_discount,
         midtrans_payment_type, midtrans_payment_code, midtrans_settlement_time,
         midtrans_transaction_status,
         customer:customers!inner(email, name, phone),
         order_items (
           id, product_id, variant_id, product_name_snapshot, variant_name_snapshot,
-          unit_price_snapshot, quantity, subtotal, weight_gram,
+          unit_price_snapshot, original_unit_price, discount_amount, quantity, subtotal, weight_gram,
           product:products (
             id, name,
             product_images ( id, url, is_primary, variant_id )
@@ -828,9 +873,8 @@ const OrdersList = () => {
         setOrders(data || []);
       }
     } catch (e) {
-      console.error('[OrdersList] fetch error:', e?.message);
-      // ⭐ Pakai friendlyErrorMessage untuk cegah raw error bocor ke user
-      setError(friendlyErrorMessage(e, 'Memuat pesanan'));
+      console.error('[OrdersList] fetch error:', e);
+      setError(e.message);
     } finally {
       setLoading(false);
     }
@@ -882,13 +926,13 @@ const OrdersList = () => {
           fetchOrders();
         }
       )
-      // .subscribe((status) => {
-      //   if (status === 'SUBSCRIBED') {
-      //     console.log('[OrdersList] ✓ Realtime subscribed');
-      //   } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-      //     console.warn('[OrdersList] Realtime subscription issue:', status);
-      //   }
-      // });
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          console.log('[OrdersList] ✓ Realtime subscribed');
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          console.warn('[OrdersList] Realtime subscription issue:', status);
+        }
+      });
 
     return () => {
       supabase.removeChannel(channel);
@@ -924,7 +968,7 @@ const OrdersList = () => {
 
   if (!user) {
     return (
-      <section className="max-w-container mx-auto px-4 md:px-8 pt-24 pb-16 text-center">
+      <section className="max-w-container mx-auto px-4 md:px-8 py-16 text-center">
         <p className="text-gray-500 mb-4">Kamu perlu masuk dulu untuk melihat pesanan.</p>
         <Link to="/admin" className="text-eglux-secondary font-semibold hover:underline">
           Masuk ke akun
@@ -934,7 +978,7 @@ const OrdersList = () => {
   }
 
   return (
-    <section className="max-w-container mx-auto px-4 md:px-8 pt-24 md:pt-28 pb-8 md:pb-12">
+    <section className="max-w-container mx-auto px-4 md:px-8 py-8 md:py-12">
       <h1 className="text-xl md:text-2xl font-bold text-eglux-primary mb-6">Pesanan Saya</h1>
 
       {/* Status tabs — Active only (Semua Active / Menunggu / Diproses / Dikirim) */}
