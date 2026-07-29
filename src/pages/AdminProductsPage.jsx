@@ -398,10 +398,12 @@ const AdminProductsPage = () => {
     const fields = { [field]: processedValue };
 
     try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData?.session?.access_token;
       const resp = await fetch(`${SUPABASE_URL}/functions/v1/bulk-update-products`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${ANON_KEY}`,
+          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
@@ -504,10 +506,12 @@ const AdminProductsPage = () => {
     }
 
     try {
+      const { data: sessionData2 } = await supabase.auth.getSession();
+      const token2 = sessionData2?.session?.access_token;
       const resp = await fetch(`${SUPABASE_URL}/functions/v1/bulk-update-products`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${ANON_KEY}`,
+          'Authorization': `Bearer ${token2}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ updates }),
@@ -625,10 +629,19 @@ const AdminProductsPage = () => {
   const handleExport = async () => {
     setExporting(true);
     try {
+      // ⭐ Pakai user JWT token (bukan ANON_KEY) — edge function butuh requireAdmin
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData?.session?.access_token;
+      if (!token) {
+        showToast('Sesi login habis. Silakan login ulang.', 'error');
+        setExporting(false);
+        return;
+      }
+
       const resp = await fetch(`${SUPABASE_URL}/functions/v1/export-products-csv`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${ANON_KEY}`,
+          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({}),

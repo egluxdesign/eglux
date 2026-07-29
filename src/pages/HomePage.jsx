@@ -130,7 +130,21 @@ const HomePage = () => {
     setTimeout(() => setSelectedProduct(product), 500);
   };
 
-  const closeModal = () => setSelectedProduct(null);
+  const handleProductClick = (product) => {
+    setSelectedProduct(product);
+    // ⭐ Update URL supaya bisa di-share/bookmark
+    searchParams.set('open', product.id);
+    setSearchParams(searchParams, { replace: true });
+  };
+
+  const closeModal = () => {
+    setSelectedProduct(null);
+    // ⭐ Hapus ?open dari URL saat modal close
+    if (searchParams.get('open')) {
+      searchParams.delete('open');
+      setSearchParams(searchParams, { replace: true });
+    }
+  };
   const formatPrice = (v) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(v ?? 0);
 
   // Sticky filter header height
@@ -202,7 +216,7 @@ const HomePage = () => {
           "Lihat Lainnya" card hanya muncul kalau section punya >5 produk.
           ═══════════════════════════════════════════════════════════════ */}
       {(bestSellers.length > 0 || newArrivals.length > 0) && (
-        <section className="section-overlay bg-eglux-text-muted py-4 md:py-12">
+        <section className="section-overlay bg-white py-4 md:py-12">
           <div className="max-w-[1600px] mx-auto px-4 md:px-8 w-full">
 
             {newArrivals.length > 0 && (
@@ -327,7 +341,7 @@ const HomePage = () => {
 
           {!loading && !error && (
             paginatedProducts.length > 0 ? (
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6 mt-4 md:mt-8">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6 mt-4 md:mt-8 pt-12">
                 {paginatedProducts.map((product) => (
                   <ProductCard key={product.id} product={product} onClick={() => setSelectedProduct(product)} formatPrice={formatPrice} />
                 ))}
@@ -443,7 +457,7 @@ const HeroSwiper = ({ banners, onBannerClick }) => {
             <div className="hero-overlay" style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
               <div className="max-w-container mx-auto text-center">
                 {banner.subtitle && (
-                  <p className="text-white/80 text-[0.7rem] md:text-[0.85rem] font-light uppercase tracking-[0.25em] mb-4">
+                  <p className="hero-overlay__sub text-white text-[0.7rem] md:text-[0.85rem] font-light uppercase tracking-[0.25em] mb-4">
                     {banner.subtitle}
                   </p>
                 )}
@@ -451,7 +465,7 @@ const HeroSwiper = ({ banners, onBannerClick }) => {
                   <h2 className="hero-overlay__title text-[2rem] md:text-[4rem] text-center">{banner.title}</h2>
                 )}
                 {banner.cta_text && (
-                  <button className="hero-overlay__cta mt-8 hover:bg-white hover:text-eglux-primary hover:border-white">{banner.cta_text}</button>
+                  <button className="hero-overlay__cta mt-8 rounded-3xl hover:bg-eglux-secondary hover:text-white hover:border-eglux-secondary">{banner.cta_text}</button>
                 )}
               </div>
             </div>

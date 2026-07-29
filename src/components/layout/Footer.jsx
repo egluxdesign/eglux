@@ -144,7 +144,7 @@ const Footer = () => {
             <Link to="/" aria-label="EGLUX Beranda">
               <img src={logo2} alt="Eglux Logo" className="h-[48px] w-auto mb-4" />
             </Link>
-            <p className="text-white/50 text-[0.82rem] leading-relaxed">
+            <p className="text-white/65 text-[0.8rem] leading-relaxed pointer-events-none">
               Produk rumah tangga & dapur berkualitas.
               Keindahan bertemu fungsionalitas.
             </p>
@@ -152,14 +152,14 @@ const Footer = () => {
 
           {/* Navigation links (col-span-2) */}
           <div className="md:col-span-2 lg:col-span-2">
-            <h4 className="text-white/80 text-[0.78rem] font-semibold uppercase tracking-wide mb-4">Navigasi</h4>
+            <h4 className="text-white text-[0.8rem] font-semibold uppercase tracking-wide mb-4 pointer-events-none">Navigasi</h4>
             <ul className="space-y-2">
               {NAV_LINKS.map((link) => (
                 <li key={link.href + link.label}>
                   {isInternalLink(link.href) ? (
                     <Link
                       to={link.href}
-                      className="text-white/50 text-[0.82rem] no-underline transition-colors hover:text-white"
+                      className="text-white/65 text-[0.8rem] no-underline transition-colors hover:text-eglux-secondary"
                     >
                       {link.label}
                     </Link>
@@ -168,7 +168,7 @@ const Footer = () => {
                       href={link.href}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="text-white/50 text-[0.82rem] no-underline transition-colors hover:text-white"
+                      className="text-white/65 text-[0.8rem] no-underline transition-colors hover:text-eglux-secondary"
                     >
                       {link.label}
                     </a>
@@ -180,21 +180,21 @@ const Footer = () => {
 
           {/* Help links (col-span-2) */}
           <div className="md:col-span-2 lg:col-span-2">
-            <h4 className="text-white/80 text-[0.78rem] font-semibold uppercase tracking-wide mb-4">Bantuan</h4>
+            <h4 className="text-white text-[0.8rem] font-semibold uppercase tracking-wide mb-4 pointer-events-none">Bantuan</h4>
             <ul className="space-y-2">
               {HELP_LINKS.map((link) => (
                 <li key={link.label}>
                   {link.isTicket ? (
                     <button
                       onClick={openTicket}
-                      className="text-white/50 text-[0.82rem] no-underline transition-colors hover:text-white bg-transparent border-none cursor-pointer p-0"
+                      className="text-white/65 text-[0.8rem] no-underline transition-colors hover:text-eglux-secondary bg-transparent border-none cursor-pointer p-0"
                     >
                       {link.label}
                     </button>
                   ) : isInternalLink(link.href) ? (
                     <Link
                       to={link.href}
-                      className="text-white/50 text-[0.82rem] no-underline transition-colors hover:text-white"
+                      className="text-white/65 text-[0.8rem] no-underline transition-colors hover:text-eglux-secondary"
                     >
                       {link.label}
                     </Link>
@@ -203,7 +203,7 @@ const Footer = () => {
                       href={link.href}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="text-white/50 text-[0.82rem] no-underline transition-colors hover:text-white"
+                      className="text-white/65 text-[0.8rem] no-underline transition-colors hover:text-eglux-secondary"
                     >
                       {link.label}
                     </a>
@@ -215,7 +215,7 @@ const Footer = () => {
 
           {/* Social (col-span-2) */}
           <div className="md:col-span-2 lg:col-span-2">
-            <h4 className="text-white/80 text-[0.78rem] font-semibold uppercase tracking-wide mb-4">Ikuti Kami</h4>
+            <h4 className="text-white text-[0.8rem] font-semibold uppercase tracking-wide mb-4 pointer-events-none">Ikuti Kami</h4>
             <div className="flex gap-3">
               {SOCIAL_LINKS.map(({ label, href, Icon }) => (
                 <a
@@ -224,7 +224,7 @@ const Footer = () => {
                   target="_blank"
                   rel="noopener noreferrer"
                   aria-label={label}
-                  className="w-9 h-9 rounded-full border border-white/15 flex items-center justify-center text-white/50 transition-all hover:text-white hover:border-white/40"
+                  className="w-9 h-9 rounded-full border border-white/65 flex items-center justify-center text-white/65 transition-all hover:text-eglux-secondary hover:border-eglux-secondary"
                 >
                   <Icon className="w-4 h-4" />
                 </a>
@@ -234,15 +234,15 @@ const Footer = () => {
 
           {/* Newsletter (col-span-3) */}
           <div className="md:col-span-3 lg:col-span-4">
-            <h4 className="text-white text-[1rem] font-bold mb-2">Update Newsletter</h4>
-            <p className="text-white/50 text-[0.82rem] leading-relaxed mb-4">
+            <h4 className="text-white text-[1rem] font-bold mb-2 pointer-events-none">Update Newsletter</h4>
+            <p className="text-white/40 text-[0.82rem] leading-relaxed mb-4">
               Jadilah yang pertama menerima berita, penawaran, dan update produk terbaru dari EGLUX.
             </p>
 
             {/* Email input + Subscribe button */}
             <div className="flex gap-2 mb-3">
               <div className="flex-1 relative">
-                <div className="absolute left-3 top-1/2 -translate-y-1/2 text-white/30">
+                <div className="absolute left-3 top-1/2 -translate-y-1/2 text-white/40">
                   <IconMail className="w-4 h-4" />
                 </div>
                 <input
@@ -252,7 +252,7 @@ const Footer = () => {
                   onKeyDown={(e) => e.key === 'Enter' && handleSubscribe()}
                   placeholder="Email kamu"
                   disabled={subscribing}
-                  className="w-full pl-9 pr-3 py-2.5 bg-white/5 border border-white/15 rounded-lg text-white text-[0.85rem] placeholder:text-white/30 outline-none focus:border-eglux-secondary/50 transition-colors"
+                  className="w-full pl-9 pr-3 py-2.5 bg-white/5 border border-white/45 rounded-lg text-white text-[0.85rem] placeholder:text-white/30 outline-none focus:border-eglux-secondary/50 transition-colors"
                 />
               </div>
               <button
@@ -272,10 +272,10 @@ const Footer = () => {
                 onChange={(e) => setAgreed(e.target.checked)}
                 className="mt-0.5 cursor-pointer accent-eglux-secondary"
               />
-              <span className="text-white/40 text-[0.7rem] leading-relaxed">
+              <span className="text-white/45 text-[0.7rem] leading-relaxed">
                 Dengan klik Subscribe, saya setuju menerima newsletter EGLUX dengan update produk dan berita.
                 Saya bisa unsubscribe kapan saja via link di setiap email. Lihat{' '}
-                <a href="/privacy" className="text-white/60 underline hover:text-white">Privacy Policy</a>{' '}
+                <a href="/privacy" className="text-eglux-secondary underline hover:text-white">Privacy Policy</a>{' '}
                 untuk info lebih lanjut.
               </span>
             </label>
@@ -293,16 +293,16 @@ const Footer = () => {
       </div>
 
       {/* === Bottom bar === */}
-      <div className="border-t border-white/10">
+      <div className="border-t border-white/30">
         <div className="max-w-container mx-auto px-4 md:px-8 py-5 flex flex-col md:flex-row items-center justify-between gap-3">
-          <p className="text-white/40 text-[0.78rem]">
+          <p className="text-eglux-secondary/65 text-[0.78rem]">
             © 2026 EGLUX — All rights reserved.
           </p>
           <div className="flex items-center gap-5">
-            <a href="/terms" className="text-white/40 text-[0.78rem] no-underline transition-colors hover:text-white/70">
+            <a href="/terms" className="text-white/65 text-[0.78rem] no-underline transition-colors hover:text-eglux-secondary">
               Terms of Use
             </a>
-            <a href="/privacy" className="text-white/40 text-[0.78rem] no-underline transition-colors hover:text-white/70">
+            <a href="/privacy" className="text-white/65 text-[0.78rem] no-underline transition-colors hover:text-eglux-secondary">
               Privacy & Cookies
             </a>
           </div>

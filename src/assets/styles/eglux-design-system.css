@@ -16,20 +16,20 @@
  * Spacing: More generous whitespace between sections
  * Cards: Borderless, no shadow, clean
  * ============================================================================ */
+@import url('https://fonts.googleapis.com/css2?family=Libre+Baskerville:ital,wght@0,400..700;1,400..700&family=Poppins:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap');
+/* ── Typography ── */
+--font-heading: "Libre Baskerville", serif;
+--font-body: 'Poppins', -apple-system, BlinkMacSystemFont, sans-serif;
 
 :root {
   /* ── Color Palette ── */
-  --eglux-primary: #1a1a1a;
-  --eglux-secondary: #9a7d4a;
-  --eglux-accent: #f7f3ed;
+  --eglux-primary: #554521;
+  --eglux-secondary: #cba65a;
+  --eglux-accent: #f5f0e8;
   --eglux-text: #3a3944;
   --eglux-text-muted: #8a8a8a;
   --eglux-border: #e8e4df;
   --eglux-white: #ffffff;
-
-  /* ── Typography ── */
-  --font-heading: 'Playfair Display', Georgia, 'Times New Roman', serif;
-  --font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 
   /* ── Spacing ── */
   --space-section: 5rem;    /* 80px between sections (was 3rem/48px) */
@@ -48,17 +48,20 @@ body {
 /* ── Headings: Playfair Display ── */
 h1, h2, h3, h4, h5, h6,
 .font-heading {
-  font-family: var(--font-heading);
-  font-weight: 500;
+  font-family: "Libre Baskerville", serif;
+  font-optical-sizing: auto;
+  font-weight: <500>;
+  font-style: normal;
   letter-spacing: -0.02em;
   color: var(--eglux-primary);
 }
 
 /* ── Section titles (editorial style) ── */
 .section-title {
-  font-family: var(--font-heading);
-  font-size: 2rem;
-  font-weight: 500;
+  font-family: "Libre Baskerville", serif;
+  font-optical-sizing: auto;
+  font-weight: <500>;
+  font-style: normal;
   letter-spacing: -0.02em;
   color: var(--eglux-primary);
 }
@@ -158,9 +161,10 @@ h1, h2, h3, h4, h5, h6,
 }
 
 .hero-overlay__title {
-  font-family: var(--font-heading);
-  font-size: 2.5rem;
-  font-weight: 500;
+  font-family: "Libre Baskerville", serif;
+  font-optical-sizing: auto;
+  font-weight: <500>;
+  font-style: normal;
   color: #fff;
   letter-spacing: -0.02em;
   line-height: 1.2;
