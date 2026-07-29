@@ -87,6 +87,7 @@ serve(async (req: Request) => {
         courier_code, courier_service, notes,
         payment_status, snap_token, midtrans_transaction_id,
         voucher_code, voucher_discount,
+        tax_percent, tax_base, tax_amount,
         customer:customers(name, phone, email),
         items:order_items(product_name_snapshot, variant_name_snapshot, unit_price_snapshot, quantity)
       `)
@@ -187,6 +188,20 @@ serve(async (req: Request) => {
       });
     }
 
+    // ⭐ Tax / Biaya Admin as a positive line item (so gross_amount includes tax)
+    // Midtrans item_details gak boleh kosong dan gak boleh nama kosong.
+    // Tax dihitung dari base price (original_unit_price × qty) × tax_percent%.
+    const taxAmount = Math.round(Number((order as any).tax_amount) || 0);
+    if (taxAmount > 0) {
+      const taxPercent = Number((order as any).tax_percent) || 3;
+      item_details.push({
+        id: "TAX",
+        name: `Biaya Admin & Tax (${taxPercent}%)`.slice(0, 50),
+        price: taxAmount,
+        quantity: 1,
+      });
+    }
+
     // 3. Sanity check: gross_amount MUST equal order.total_amount
     // ⚠️ Toleransi mismatch sampai Rp 100 untuk handle rounding error dari
     // update-order-courier (subtotal + shipping_cost baru vs total_amount lama).
@@ -201,6 +216,8 @@ serve(async (req: Request) => {
       mismatch,
       subtotal: order.subtotal,
       shipping_cost: order.shipping_cost,
+      tax_amount: (order as any).tax_amount,
+      voucher_discount: (order as any).voucher_discount,
       total_amount: order.total_amount,
       courier_rate: order.courier_rate,
     });
@@ -221,6 +238,8 @@ serve(async (req: Request) => {
             order_total: order.total_amount,
             subtotal: order.subtotal,
             shipping_cost: order.shipping_cost,
+            tax_amount: (order as any).tax_amount,
+            voucher_discount: (order as any).voucher_discount,
             courier_rate: order.courier_rate,
           },
         },

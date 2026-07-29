@@ -383,6 +383,11 @@ const DiscountManagementPanel = ({ showToast }) => {
   const [vouchersLoading, setVouchersLoading] = useState(false);
   const [showVoucherForm, setShowVoucherForm] = useState(false);
 
+  // ⭐ Tax Settings state
+  const [taxSettings, setTaxSettings] = useState({ tax_enabled: true, tax_percent: 3, updated_at: null });
+  const [taxLoading, setTaxLoading] = useState(false);
+  const [taxSaving, setTaxSaving] = useState(false);
+
   // ── Fetch products ──
   const fetchProducts = useCallback(async () => {
     setLoading(true); setError(null);
@@ -416,6 +421,61 @@ const DiscountManagementPanel = ({ showToast }) => {
 
   useEffect(() => { fetchProducts(); }, [fetchProducts]);
   useEffect(() => { if (activeTab === 'voucher') fetchVouchers(); }, [activeTab, fetchVouchers]);
+  useEffect(() => { if (activeTab === 'tax') fetchTaxSettings(); }, [activeTab]);
+
+  // ── Fetch tax settings ──
+  const fetchTaxSettings = useCallback(async () => {
+    setTaxLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('app_settings')
+        .select('tax_enabled, tax_percent, updated_at')
+        .eq('id', 1)
+        .maybeSingle();
+      if (error) throw error;
+      if (data) {
+        setTaxSettings({
+          tax_enabled: data.tax_enabled !== false,
+          tax_percent: Number(data.tax_percent) || 0,
+          updated_at: data.updated_at,
+        });
+      }
+    } catch (e) {
+      console.error('[TaxSettings] fetch error:', e?.message);
+      showToast?.('Gagal memuat pengaturan tax', 'error');
+    } finally {
+      setTaxLoading(false);
+    }
+  }, [showToast]);
+
+  // ── Save tax settings ──
+  const handleSaveTaxSettings = useCallback(async (newEnabled, newPercent) => {
+    setTaxSaving(true);
+    try {
+      const token = (await supabase.auth.getSession()).data?.session?.access_token;
+      if (!token) throw new Error('Not authenticated');
+      const resp = await fetch(`${SUPABASE_URL}/functions/v1/manage-app-settings`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tax_enabled: newEnabled,
+          tax_percent: Number(newPercent),
+        }),
+      });
+      const result = await resp.json();
+      if (!result.success) throw new Error(result.error || 'Failed to save');
+      setTaxSettings({
+        tax_enabled: result.settings.tax_enabled !== false,
+        tax_percent: Number(result.settings.tax_percent) || 0,
+        updated_at: result.settings.updated_at,
+      });
+      showToast?.('✓ Pengaturan tax tersimpan', 'success');
+    } catch (e) {
+      showToast?.('Gagal simpan: ' + e.message, 'error');
+    } finally {
+      setTaxSaving(false);
+    }
+  }, [showToast]);
 
   const allVariants = useMemo(() => {
     const list = [];
@@ -486,6 +546,7 @@ const DiscountManagementPanel = ({ showToast }) => {
       <div className="flex gap-2 mb-6 border-b border-gray-200">
         <button onClick={() => setActiveTab('discount')} className={`px-4 py-2 text-sm font-semibold border-b-2 cursor-pointer transition-colors ${activeTab === 'discount' ? 'border-eglux-primary text-eglux-primary' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>🏷️ Discount</button>
         <button onClick={() => setActiveTab('voucher')} className={`px-4 py-2 text-sm font-semibold border-b-2 cursor-pointer transition-colors ${activeTab === 'voucher' ? 'border-eglux-primary text-eglux-primary' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>🎟️ Voucher</button>
+        <button onClick={() => setActiveTab('tax')} className={`px-4 py-2 text-sm font-semibold border-b-2 cursor-pointer transition-colors ${activeTab === 'tax' ? 'border-eglux-primary text-eglux-primary' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>📊 Tax Settings</button>
       </div>
 
       {/* === DISCOUNT TAB === */}
@@ -616,6 +677,178 @@ const DiscountManagementPanel = ({ showToast }) => {
 
       {/* Voucher Form */}
       {showVoucherForm && <VoucherForm onClose={() => setShowVoucherForm(false)} onSaved={() => { setShowVoucherForm(false); fetchVouchers(); }} showToast={showToast} />}
+
+      {/* === TAX SETTINGS TAB === */}
+      {activeTab === 'tax' && (
+        <TaxSettingsPanel
+          settings={taxSettings}
+          loading={taxLoading}
+          saving={taxSaving}
+          onSave={handleSaveTaxSettings}
+        />
+      )}
+    </div>
+  );
+};
+
+// ============================================================================
+// TaxSettingsPanel — Configurable tax (biaya admin) settings
+// ============================================================================
+// - Toggle tax_enabled (on/off)
+// - Input tax_percent (0-100)
+// - Display last updated timestamp
+// - Save via manage-app-settings edge function
+// ============================================================================
+const TaxSettingsPanel = ({ settings, loading, saving, onSave }) => {
+  const [enabled, setEnabled] = useState(settings.tax_enabled);
+  const [percent, setPercent] = useState(settings.tax_percent);
+  const [dirty, setDirty] = useState(false);
+
+  // Sync local state when settings prop changes (after fetch/save)
+  useEffect(() => {
+    setEnabled(settings.tax_enabled);
+    setPercent(settings.tax_percent);
+    setDirty(false);
+  }, [settings]);
+
+  const handleEnabledChange = (val) => {
+    setEnabled(val);
+    setDirty(true);
+  };
+
+  const handlePercentChange = (val) => {
+    const num = Math.max(0, Math.min(100, Number(val) || 0));
+    setPercent(num);
+    setDirty(true);
+  };
+
+  const handleSave = () => {
+    onSave(enabled, percent);
+    setDirty(false);
+  };
+
+  const handleReset = () => {
+    setEnabled(settings.tax_enabled);
+    setPercent(settings.tax_percent);
+    setDirty(false);
+  };
+
+  if (loading) {
+    return (
+      <div className="flex justify-center py-12">
+        <div className="w-8 h-8 border-3 border-eglux-secondary border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-2xl space-y-6">
+      {/* Header card */}
+      <section className="bg-white border border-gray-200 rounded-lg p-6">
+        <div className="flex items-start justify-between mb-4">
+          <div>
+            <h3 className="text-base font-bold text-gray-900">Biaya Admin & Tax</h3>
+            <p className="text-sm text-gray-500 mt-1">
+              Konfigurasi biaya admin yang ditambahkan ke setiap pesanan checkout.
+            </p>
+          </div>
+          {/* Toggle switch */}
+          <button
+            type="button"
+            onClick={() => handleEnabledChange(!enabled)}
+            className={`relative w-12 h-7 rounded-full transition-colors cursor-pointer flex-shrink-0 ${
+              enabled ? 'bg-green-500' : 'bg-gray-300'
+            }`}
+            aria-label={enabled ? 'Tax aktif' : 'Tax nonaktif'}
+          >
+            <span className={`absolute top-1 w-5 h-5 bg-white rounded-full transition-transform shadow ${
+              enabled ? 'translate-x-6' : 'translate-x-1'
+            }`} />
+          </button>
+        </div>
+
+        {/* Status badge */}
+        <div className="mb-4">
+          <span className={`inline-block px-3 py-1 rounded-full text-xs font-semibold ${
+            enabled
+              ? 'bg-green-50 text-green-700 border border-green-200'
+              : 'bg-gray-100 text-gray-600 border border-gray-200'
+          }`}>
+            {enabled ? '● Aktif' : '○ Nonaktif'}
+          </span>
+        </div>
+
+        {/* Percent input */}
+        <div className={`transition-opacity ${enabled ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}>
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Persentase Tax
+            <span className="text-gray-400 font-normal ml-1">(dari harga asli produk sebelum diskon)</span>
+          </label>
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              min="0"
+              max="100"
+              step="0.5"
+              value={percent}
+              onChange={(e) => handlePercentChange(e.target.value)}
+              disabled={!enabled}
+              className="w-32 px-3 py-2 text-sm border border-gray-300 rounded-md focus:border-eglux-secondary outline-none disabled:bg-gray-50"
+            />
+            <span className="text-sm font-medium text-gray-600">%</span>
+            <span className="text-xs text-gray-400 ml-2">
+              Range: 0–100 (default: 3)
+            </span>
+          </div>
+
+          {/* Example calc */}
+          {enabled && percent > 0 && (
+            <div className="mt-3 p-3 bg-gray-50 rounded-md text-xs text-gray-600">
+              <p className="font-medium text-gray-700 mb-1">Contoh perhitungan:</p>
+              <p>Produk Rp 100.000 × 2 qty = Rp 200.000 (base price)</p>
+              <p>Tax {percent}% × Rp 200.000 = <span className="font-bold text-eglux-secondary">Rp {Math.round(200000 * percent / 100).toLocaleString('id-ID')}</span></p>
+              <p className="text-gray-400 mt-1">Tax ditambahkan ke grand total pembayaran.</p>
+            </div>
+          )}
+        </div>
+
+        {/* Last updated */}
+        {settings.updated_at && (
+          <p className="text-xs text-gray-400 mt-4">
+            Terakhir diubah: {new Date(settings.updated_at).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}
+          </p>
+        )}
+      </section>
+
+      {/* Action buttons */}
+      <div className="flex gap-3">
+        <button
+          onClick={handleSave}
+          disabled={!dirty || saving}
+          className="px-5 py-2 text-sm font-bold text-white bg-eglux-primary rounded-md hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+        >
+          {saving ? '⏳ Menyimpan...' : '💾 Simpan Pengaturan'}
+        </button>
+        <button
+          onClick={handleReset}
+          disabled={!dirty || saving}
+          className="px-5 py-2 text-sm font-medium text-gray-600 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+        >
+          Reset
+        </button>
+      </div>
+
+      {/* Info card */}
+      <section className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+        <p className="text-sm text-blue-800 font-medium mb-2">ℹ️ Cara kerja:</p>
+        <ul className="text-xs text-blue-700 space-y-1 list-disc list-inside">
+          <li>Tax dihitung dari <strong>base price</strong> (harga asli produk sebelum diskon variant).</li>
+          <li>Persentase diterapkan ke subtotal harga asli, lalu ditambahkan ke grand total.</li>
+          <li>Perubahan berlaku untuk <strong>pesanan baru</strong> saja. Pesanan yang sudah dibuat tetap pakai tax saat itu dibuat.</li>
+          <li>Jika tax dimatikan, rincian pembayaran tidak menampilkan baris tax sama sekali.</li>
+          <li>Order history menampilkan tax yang <strong>tersimpan</strong> di order (tidak dihitung ulang).</li>
+        </ul>
+      </section>
     </div>
   );
 };

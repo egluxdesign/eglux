@@ -242,6 +242,18 @@ const HistoryDetailPanel = ({ order, onClose, onRefund }) => {
   // ⭐ canTrack: tombol "Lacak Pesanan" HANYA muncul kalau biteship_waybill_url ADA di DB.
   const canTrack = Boolean(order.biteship_waybill_url);
 
+  // ⭐ Lacak Pesanan: direct ke biteship_waybill_url (kalau ada), fallback ke /track page
+  const handleTrackOrder = () => {
+    if (order.biteship_waybill_url) {
+      // Direct ke Biteship tracking page (gratis, no API call)
+      window.open(order.biteship_waybill_url, '_blank', 'noopener,noreferrer');
+    } else {
+      // Fallback: buka track order page (untuk lihat status dari DB)
+      onClose();
+      navigate(`/track?order=${order.id}`);
+    }
+  };
+
   const handleProductClick = (e, productId) => {
     e.preventDefault();
     onClose();
@@ -439,8 +451,39 @@ const HistoryDetailPanel = ({ order, onClose, onRefund }) => {
                 </div>
               )}
 
-              {/* Tax / Admin Fee (reserve — kalau ada di masa depan) */}
-              {/* TODO: kalau ada kolom tax_fee / admin_fee di orders table, tampilkan di sini */}
+              {/* ⭐ Tax / Biaya Admin (3% dari base price) — pakai nilai persisten dari DB */}
+              {/* Fallback: kalau order lama (sebelum SQL 042), recalc dari items */}
+              {(() => {
+                let adminFee = Number(order.tax_amount) || 0;
+                let taxPercent = Number(order.tax_percent) || 3;
+                if (!adminFee && items.length > 0) {
+                  const originalSubtotal = items.reduce((s, item) => {
+                    const orig = Number(item.original_unit_price) || Number(item.unit_price_snapshot) || 0;
+                    return s + (orig * (Number(item.quantity) || 1));
+                  }, 0);
+                  adminFee = Math.round(originalSubtotal * taxPercent / 100);
+                }
+                if (adminFee <= 0) return null;
+                return (
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">Biaya Admin &amp; Tax ({taxPercent}%)</span>
+                    <span className="text-gray-900">{rupiah(adminFee)}</span>
+                  </div>
+                );
+              })()}
+
+              {/* Voucher Discount (kalau ada) */}
+              {Number(order.voucher_discount) > 0 && (
+                <div className="flex justify-between">
+                  <span className="text-green-600">
+                    🎟️ Voucher
+                    {order.voucher_code && (
+                      <span className="text-gray-400 ml-1">({order.voucher_code})</span>
+                    )}
+                  </span>
+                  <span className="text-green-600 font-medium">− {rupiah(Number(order.voucher_discount))}</span>
+                </div>
+              )}
 
               {/* Grand Total */}
               <div className="border-t border-gray-200 pt-2 mt-2 flex justify-between items-center">
@@ -561,6 +604,8 @@ const OrderHistoryPage = () => {
         payment_method,
         midtrans_payment_type, midtrans_payment_code, midtrans_settlement_time,
         midtrans_transaction_status,
+        voucher_code, voucher_discount,
+        tax_percent, tax_base, tax_amount,
         customer:customers!inner(email, name, phone),
         order_items (
           id, product_id, variant_id, product_name_snapshot, variant_name_snapshot,

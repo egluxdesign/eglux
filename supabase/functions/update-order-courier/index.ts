@@ -74,6 +74,7 @@ serve(async (req: Request) => {
       .from("orders")
       .select(`
         id, status, subtotal, shipping_cost, total_amount,
+        tax_amount, voucher_discount,
         customer:customers(email)
       `)
       .eq("id", order_id)
@@ -98,9 +99,13 @@ serve(async (req: Request) => {
     }
 
     // ── CALCULATE NEW TOTAL ──
+    // Formula: subtotal + shipping_cost + tax_amount - voucher_discount
+    // (tax_amount tidak berubah saat courier berubah — tax dihitung dari base price produk)
     const newShippingCost = Number(courier.courier_rate);
     const subtotal = Number(order.subtotal) || 0;
-    const newTotal = subtotal + newShippingCost;
+    const taxAmount = Number((order as any).tax_amount) || 0;
+    const voucherDiscount = Number((order as any).voucher_discount) || 0;
+    const newTotal = subtotal + newShippingCost + taxAmount - voucherDiscount;
 
     // ── UPDATE ORDER ──
     const updatePayload = {

@@ -43,10 +43,16 @@ import { INDONESIAN_CITIES } from '../../data/indonesianCities';
 import { COUNTRIES, DEFAULT_COUNTRY } from '../../data/countries';
 import { ensureSnapLoaded } from '../../hooks/useMidtransSnap';
 import VoucherClaimModal from './VoucherClaimModal';
+import useAppSettings from '../../hooks/useAppSettings';
 
 // Key untuk sessionStorage — sinyal agar parent page auto-buka checkout modal
 // setelah user berhasil login dari halaman /admin.
 export const CHECKOUT_INTENT_KEY = 'eglux_checkout_intent';
+
+// ⭐ Tax fallback — dipakai HANYA kalau settings DB gagal load.
+// Default 3% (sesuai default SQL 043 app_settings.tax_percent)
+// Untuk ubah tax permanently tanpa admin panel: edit nilai ini + update DB.
+export const TAX_PERCENT_FALLBACK = 3;
 
 const INITIAL_FORM = {
   name: '',
@@ -157,6 +163,13 @@ const selectStyles = {
 const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
   // ⭐ v3: pakai recomputeCartPrices untuk refresh prices saat checkout modal buka
   const { cart, totalPrice, clearCart, recomputeCartPrices } = useCart();
+  // ⭐ App settings (tax_enabled, tax_percent) — fetched from DB, cached 60s
+  const { settings: appSettings, loading: appSettingsLoading } = useAppSettings();
+  // Resolve tax settings (with fallback to TAX_PERCENT_FALLBACK = 3)
+  const TAX_PERCENT = appSettings.tax_enabled
+    ? (appSettings.tax_percent || TAX_PERCENT_FALLBACK)
+    : 0;
+  const TAX_ENABLED = appSettings.tax_enabled !== false; // defensive: undefined → true
   // ⭐ Snap.js di-load dynamically via ensureSnapLoaded() di handlePay().
   // Gak perlu useMidtransSnap hook (auto-load) — kita load on-demand saat
   // user klik "Bayar Sekarang" saja, hemat resource di homepage/cart page.
@@ -594,9 +607,24 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
   };
 
   // ===== Persist order ke Supabase =====
+  // ⭐ Tax (biaya admin) dihitung dari BASE PRICE (harga asli sebelum diskon)
+  //   tax_base   = SUM(originalPrice × qty) untuk semua cart items
+  //   tax_amount = ROUND(tax_base × TAX_PERCENT / 100)
+  //   grandTotal = discountedSubtotal + shippingCost + tax_amount - voucherDiscount
+  //
+  //   Tax dihitung dari base price (BUKAN subtotal after-discount) supaya:
+  //     - Admin fee konsisten berapapun discount yang user dapat
+  //     - User tidak "berhemat" di admin fee hanya karena dapat diskon variant
+  //     - Match dengan display OrdersList.jsx (sudah pakai original_price)
   const saveOrderToSupabase = async () => {
     const shippingCost = selectedShipping?.price || 0;
-    const grandTotal = totalPrice + shippingCost - voucherDiscount;
+    // ⭐ Tax calc: dari base price (harga asli)
+    const taxBase = cart.reduce(
+      (s, i) => s + ((i.originalPrice != null && i.originalPrice > 0 ? i.originalPrice : i.price) * i.qty),
+      0
+    );
+    const taxAmount = Math.round(taxBase * TAX_PERCENT / 100);
+    const grandTotal = totalPrice + shippingCost + taxAmount - voucherDiscount;
     const selectedArea = areas.find((a) => String(a.id) === String(selectedAreaId));
 
     const payload = {
@@ -623,6 +651,10 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
         // ⭐ Voucher fields
         voucher_code: voucherValid ? voucherCode.trim() : null,
         voucher_discount: voucherDiscount,
+        // ⭐ Tax fields (biaya admin 3% dari base price)
+        tax_percent: TAX_PERCENT,
+        tax_base: taxBase,
+        tax_amount: taxAmount,
       },
       items: cart.map((item) => ({
         product_id: item.productId,
@@ -814,7 +846,15 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
     return null;
   }
 
-  const grandTotal = totalPrice + (selectedShipping?.price || 0) - voucherDiscount;
+  // ⭐ Grand total: discountedSubtotal + shippingCost + taxAmount - voucherDiscount
+  //   Tax dihitung dari base price (harga asli sebelum diskon)
+  const shippingCostForDisplay = selectedShipping?.price || 0;
+  const taxBaseForDisplay = cart.reduce(
+    (s, i) => s + ((i.originalPrice != null && i.originalPrice > 0 ? i.originalPrice : i.price) * i.qty),
+    0
+  );
+  const taxAmountForDisplay = Math.round(taxBaseForDisplay * TAX_PERCENT / 100);
+  const grandTotal = totalPrice + shippingCostForDisplay + taxAmountForDisplay - voucherDiscount;
   const isLocked = !!orderId;
   const showAreaDropdown = !areasLoading && areas.length > 1;
   const showAreaAutoSelected = !areasLoading && areas.length === 1 && selectedAreaId;
@@ -909,8 +949,9 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
               const totalDiscount = originalSubtotal - discountedSubtotal;
               const hasAnyDiscount = totalDiscount > 0;
               const shippingCost = selectedShipping?.price || 0;
-              // Reserve untuk tax/admin fee (kalau ada di masa depan)
-              const taxFee = 0;
+              // ⭐ Tax (biaya admin 3% dari base price = harga asli sebelum diskon)
+              const taxFee = taxAmountForDisplay;
+              const taxBase = taxBaseForDisplay;
               const grandTotalV3 = discountedSubtotal + shippingCost + taxFee - voucherDiscount;
 
               return (
@@ -955,10 +996,12 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
                     </div>
                   )}
 
-                  {/* Tax / Admin Fee (reserve untuk masa depan) */}
-                  {taxFee > 0 && (
+                  {/* ⭐ Tax / Biaya Admin (% dari base price) — hanya tampil kalau tax_enabled */}
+                  {TAX_ENABLED && taxFee > 0 && (
                     <div className="flex justify-between mt-1 text-[0.82rem]">
-                      <span className="text-gray-600">Biaya Admin / Tax</span>
+                      <span className="text-gray-600" title={`Dihitung dari harga asli: ${rupiah(taxBase)} × ${TAX_PERCENT}%`}>
+                        Biaya Admin &amp; Tax ({TAX_PERCENT}%)
+                      </span>
                       <span className="font-medium text-eglux-primary">{rupiah(taxFee)}</span>
                     </div>
                   )}

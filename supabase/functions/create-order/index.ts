@@ -23,11 +23,13 @@
 //       shipping_address, shipping_city, shipping_postal_code,
 //       shipping_area_id?, shipping_area_name?,
 //       courier_code, courier_service?, courier_duration?, courier_rate,
-//       notes?
+//       notes?,
+//       // ⭐ Tax (biaya admin) — optional, default 3% dari base price
+//       tax_percent?, tax_base?, tax_amount?
 //     },
 //     items: [
 //       { product_id, variant_id?, product_name_snapshot, variant_name_snapshot?,
-//         unit_price_snapshot, quantity, subtotal, weight_gram }
+//         unit_price_snapshot, original_unit_price?, quantity, subtotal, weight_gram }
 //     ]
 //   }
 //
@@ -161,6 +163,44 @@ serve(async (req: Request) => {
     // Kalau nanti mau link order ke user (untuk order history di user account),
     // tambah migration: ALTER TABLE orders ADD COLUMN user_id UUID REFERENCES auth.users(id).
     // Lalu uncomment baris user_id di bawah.
+
+    // ⭐ Tax calculation (defensive): read settings from DB.
+    // Frontend kirim tax_*, tapi backend VALIDATE ulang dari app_settings table.
+    // Kalau admin set tax_enabled=false → force tax_amount=0 (jangan percaya frontend).
+    const DEFAULT_TAX_PERCENT = 3;
+    let taxPercent = DEFAULT_TAX_PERCENT;
+    let taxEnabled = true;
+
+    try {
+      const { data: settingsRow } = await supabase
+        .from("app_settings")
+        .select("tax_enabled, tax_percent")
+        .eq("id", 1)
+        .maybeSingle();
+      if (settingsRow) {
+        taxEnabled = settingsRow.tax_enabled !== false;
+        taxPercent = Number(settingsRow.tax_percent) || DEFAULT_TAX_PERCENT;
+      }
+    } catch (settingsErr) {
+      console.warn("[create-order] Failed to read app_settings, using defaults:", settingsErr?.message);
+    }
+
+    let taxBase = 0;
+    let taxAmount = 0;
+
+    if (taxEnabled) {
+      // Compute tax_base dari items (sum original_price × qty)
+      taxBase = items.reduce((s, item) => {
+        const orig = (item.original_unit_price != null && item.original_unit_price !== "")
+          ? Number(item.original_unit_price)
+          : Number(item.unit_price_snapshot) || 0;
+        const qty = Number(item.quantity) || 1;
+        return s + (orig * qty);
+      }, 0);
+      taxAmount = Math.round(taxBase * taxPercent / 100);
+    }
+    // Jika tax disabled: taxBase=0, taxAmount=0 (frontend kirim apapun, di-ignore)
+
     const orderId = crypto.randomUUID();
     const { error: orderError } = await supabase.from("orders").insert({
       id: orderId,
@@ -185,6 +225,10 @@ serve(async (req: Request) => {
       // ⭐ Voucher fields (optional — dari checkout)
       voucher_code: order.voucher_code?.trim() || null,
       voucher_discount: Number(order.voucher_discount) || 0,
+      // ⭐ Tax fields (biaya admin % dari base price)
+      tax_percent: taxPercent,
+      tax_base: taxBase,
+      tax_amount: taxAmount,
     });
     if (orderError) {
       // Cleanup: hapus customer yang baru di-insert (order gagal)
