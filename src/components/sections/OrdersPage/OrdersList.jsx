@@ -928,7 +928,7 @@ const OrdersList = () => {
       )
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
-          console.log('[OrdersList] ✓ Realtime subscribed');
+          // console.log('[OrdersList] ✓ Realtime subscribed');
         } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
           console.warn('[OrdersList] Realtime subscription issue:', status);
         }

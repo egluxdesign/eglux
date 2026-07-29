@@ -148,7 +148,7 @@ const CartDrawer = ({ isOpen, onClose, showToast }) => {
 
       {/* Drawer panel */}
       <aside
-        className={`fixed top-0 right-0 h-full w-full max-w-[420px] bg-white z-[3001]
+        className={`fixed top-0 right-0 h-[100dvh] w-full max-w-[420px] bg-white z-[3001]
                     shadow-2xl flex flex-col transition-transform duration-300 ease-out
                     ${isOpen ? 'translate-x-0' : 'translate-x-full'}`}
         role="dialog"
@@ -276,7 +276,7 @@ const CartDrawer = ({ isOpen, onClose, showToast }) => {
 
         {/* Footer — subtotal + checkout button */}
         {cart.length > 0 && (
-          <div className="border-t border-[#eee] px-5 py-4 space-y-3 bg-[#faf6ef]">
+          <div className="border-t border-[#eee] px-4 py-3 space-y-2 bg-[#faf6ef] flex-shrink-0">
             <div className="flex items-center justify-between">
               <span className="text-[0.82rem] font-semibold text-gray-600 uppercase tracking-wide">
                 Subtotal
@@ -290,7 +290,7 @@ const CartDrawer = ({ isOpen, onClose, showToast }) => {
             </p>
             <button
               onClick={handleCheckout}
-              className="w-full py-3.5 bg-eglux-primary text-white rounded-xl text-[0.95rem] font-bold cursor-pointer transition-all hover:opacity-90 border-none"
+              className="w-full py-3 bg-eglux-primary text-white rounded-xl text-[0.95rem] font-bold cursor-pointer transition-all hover:opacity-90 border-none"
             >
               Bayar Sekarang
             </button>

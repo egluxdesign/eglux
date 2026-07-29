@@ -61,10 +61,9 @@ const IconMail = ({ className = 'w-4 h-4' }) => (
 
 // ── Social links data ──
 const SOCIAL_LINKS = [
-  { label: 'Instagram', href: 'https://instagram.com/eglux', Icon: IconInstagram },
-  { label: 'YouTube',   href: 'https://youtube.com/@eglux',  Icon: IconYouTube   },
-  { label: 'WhatsApp',  href: 'https://wa.me/6281234567890', Icon: IconWhatsApp  },
-  { label: 'TikTok',    href: 'https://tiktok.com/@eglux',   Icon: IconTikTok    },
+  { label: 'Instagram', href: 'https://www.instagram.com/eglux_id', Icon: IconInstagram },
+  { label: 'WhatsApp',  href: 'https://api.whatsapp.com/send?phone=628118988301&text=Halo%20EGLUX!', Icon: IconWhatsApp  },
+  { label: 'TikTok',    href: 'https://www.tiktok.com/@egluxdecor',   Icon: IconTikTok    },
 ];
 
 // ── Navigation links data ──
@@ -79,7 +78,7 @@ const HELP_LINKS = [
   { label: 'Pesanan Saya',     href: '/orders'         },
   { label: 'Lacak Pesanan',    href: '/track'          },
   { label: 'Riwayat Order',    href: '/order-history'  },
-  { label: 'Tiket Bantuan',    href: '/tickets'        },
+  { label: 'Tiket Bantuan',    href: null, isTicket: true },
   // { label: 'Pengiriman',       href: '/contact?section=shipping' },
   // { label: 'Kebijakan Return', href: '/contact?section=returns'  },
 ];
@@ -89,6 +88,7 @@ const isInternalLink = (href) => href && href.startsWith('/');
 
 const Footer = () => {
   // ── Newsletter state ──
+  const { openTicket } = useCartActions();
   const [email, setEmail] = useState('');
   const [subscribing, setSubscribing] = useState(false);
   const [message, setMessage] = useState(null); // { type: 'success' | 'error', text: string }
@@ -183,8 +183,15 @@ const Footer = () => {
             <h4 className="text-white/80 text-[0.78rem] font-semibold uppercase tracking-wide mb-4">Bantuan</h4>
             <ul className="space-y-2">
               {HELP_LINKS.map((link) => (
-                <li key={link.href + link.label}>
-                  {isInternalLink(link.href) ? (
+                <li key={link.label}>
+                  {link.isTicket ? (
+                    <button
+                      onClick={openTicket}
+                      className="text-white/50 text-[0.82rem] no-underline transition-colors hover:text-white bg-transparent border-none cursor-pointer p-0"
+                    >
+                      {link.label}
+                    </button>
+                  ) : isInternalLink(link.href) ? (
                     <Link
                       to={link.href}
                       className="text-white/50 text-[0.82rem] no-underline transition-colors hover:text-white"
@@ -227,9 +234,9 @@ const Footer = () => {
 
           {/* Newsletter (col-span-3) */}
           <div className="md:col-span-3 lg:col-span-4">
-            <h4 className="text-white text-[1rem] font-bold mb-2">Tetap Update</h4>
+            <h4 className="text-white text-[1rem] font-bold mb-2">Update Newsletter</h4>
             <p className="text-white/50 text-[0.82rem] leading-relaxed mb-4">
-              Jadilah yang pertama menerima penawaran dan update produk terbaru dari EGLUX.
+              Jadilah yang pertama menerima berita, penawaran, dan update produk terbaru dari EGLUX.
             </p>
 
             {/* Email input + Subscribe button */}
