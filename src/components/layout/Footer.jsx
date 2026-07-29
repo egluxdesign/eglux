@@ -295,7 +295,7 @@ const Footer = () => {
       {/* === Bottom bar === */}
       <div className="border-t border-white/30">
         <div className="max-w-container mx-auto px-4 md:px-8 py-5 flex flex-col md:flex-row items-center justify-between gap-3">
-          <p className="text-eglux-secondary/65 text-[0.78rem]">
+          <p className="text-white/65 text-[0.78rem]">
             © 2026 EGLUX — All rights reserved.
           </p>
           <div className="flex items-center gap-5">

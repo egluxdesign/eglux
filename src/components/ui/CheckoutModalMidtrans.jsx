@@ -831,7 +831,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
   return (
     <>
     <div
-      className="fixed inset-0 bg-black/60 z-[3500] flex items-center justify-center p-3 md:p-4"
+      className="fixed inset-0 bg-black/60 z-[3500] h-[100dvh] flex items-center justify-center p-3 md:p-4"
       onClick={(e) => e.target === e.currentTarget && onClose()}
       role="dialog"
       aria-modal="true"
@@ -843,7 +843,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
           <div className="min-w-0 pr-2">
             <h3 className="text-[1rem] md:text-[1.1rem] font-bold text-eglux-primary truncate">Checkout</h3>
             <p className="text-[0.72rem] text-gray-500 mt-0.5 flex items-center gap-1 truncate">
-              <ShieldCheck className="w-3 h-3 flex-shrink-0" /> Midtrans · Biteship
+              <ShieldCheck className="w-3 h-3 flex-shrink-0" /> EGLUX
             </p>
           </div>
           <button
@@ -860,7 +860,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
           {/* === Order Summary (v3: transparent breakdown) === */}
           <section className="bg-eglux-accent rounded-xl p-4 text-[0.85rem]">
             <h4 className="text-[0.78rem] uppercase tracking-[1px] text-[#666] mb-2 font-semibold flex items-center gap-1.5">
-              <Package className="w-3.5 h-3.5" />Ringkasan Pesanan
+              <Package className="w-3.5 h-3.5" />Detail Pesanan
             </h4>
 
             {/* Item list — tampilkan harga asli (strike) + harga diskon per item */}
@@ -1012,12 +1012,12 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
                   value={voucherCode}
                   onChange={(e) => { setVoucherCode(e.target.value); setVoucherError(''); }}
                   placeholder="Masukkan kode voucher"
-                  className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md uppercase"
+                  className="flex-1 px-3 py-2 text-[0.8rem] border border-gray-300 rounded-md uppercase"
                 />
                 <button
                   onClick={handleApplyVoucher}
                   disabled={voucherLoading || !voucherCode.trim()}
-                  className="px-4 py-2 text-sm font-semibold text-white bg-eglux-primary rounded-md hover:opacity-90 disabled:opacity-50 cursor-pointer border-none"
+                  className="px-4 py-2 text-sm font-semibold text-white bg-eglux-secondary rounded-md hover:bg-[#aaa] disabled: cursor-pointer border-none"
                 >
                   {voucherLoading ? '⏳' : 'Terapkan'}
                 </button>
@@ -1029,15 +1029,15 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
           </section>
 
           {/* === Data Pembeli === */}
-          <section className="space-y-4">
+          <section className="space-y-4 pt-8">
             <h4 className="text-[0.78rem] uppercase tracking-[1px] text-[#666] font-semibold flex items-center gap-1.5">
-              <User className="w-3.5 h-3.5" />Data Pembeli
+              <User className="w-3.5 h-3.5" />Info Pesanan
             </h4>
 
             {/* Name */}
             <div>
               <label className="block text-[0.8rem] font-semibold text-eglux-primary uppercase tracking-[0.5px] mb-1.5">
-                Nama Lengkap *
+                Nama Lengkap <span className="text-red-500">*</span>
               </label>
               <input
                 type="text"
@@ -1056,7 +1056,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
             {/* Phone — custom input dengan country selector (default +62, bisa ganti) */}
             <div>
               <label className="block text-[0.8rem] font-semibold text-eglux-primary uppercase tracking-[0.5px] mb-1.5">
-                WhatsApp *
+                WhatsApp <span className="text-red-500">*</span>
               </label>
               <div className="relative" ref={countryDropdownRef}>
                 {/* Country selector button — klik buka dropdown, TIDAK bisa di-backspace */}
@@ -1089,7 +1089,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
                   inputMode="numeric"
                   autoComplete="tel"
                   disabled={isLocked}
-                  className={`w-full py-3 pl-[90px] md:pl-[100px] pr-4 border-[1.5px] rounded-[10px] text-[0.88rem] text-eglux-primary bg-white outline-none focus:border-eglux-secondary transition-colors disabled:bg-[#f5f5f5] disabled:text-[#999] ${
+                  className={`w-full py-3 pl-[100px] md:pl-[100px] pr-4 border-[1.5px] rounded-[10px] text-[0.88rem] text-eglux-primary bg-white outline-none focus:border-eglux-secondary transition-colors disabled:bg-[#f5f5f5] disabled:text-[#999] ${
                     formErrors.phone ? 'border-red-500' : 'border-[#ddd]'
                   }`}
                 />
@@ -1125,10 +1125,10 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
                             }`}
                           >
                             <span className="text-base leading-none flex-shrink-0">{c.flag}</span>
-                            <span className="text-[0.85rem] text-eglux-primary flex-1 truncate">
+                            <span className="text-[0.8rem] text-eglux-primary flex-1 truncate">
                               {c.name}
                             </span>
-                            <span className="text-[0.78rem] text-gray-500 whitespace-nowrap flex-shrink-0">
+                            <span className="text-[0.8rem] text-gray-500 whitespace-nowrap flex-shrink-0">
                               +{c.dial}
                             </span>
                           </button>
@@ -1140,14 +1140,14 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
               </div>
               <InlineError msg={formErrors.phone} />
               <p className="text-[0.72rem] text-gray-500 mt-1">
-                Klik bendera untuk ganti negara (default Indonesia +62). Ketik nomor tanpa kode negara.
-              </p>
+                {/* Klik bendera untuk ganti negara (default Indonesia +62). Ketik nomor tanpa kode negara. */}
+              </p>  
             </div>
 
             {/* Email — full width + inline error */}
             <div>
               <label className="block text-[0.8rem] font-semibold text-eglux-primary uppercase tracking-[0.5px] mb-1.5">
-                Email
+                Email <span className="text-red-500">*</span>
               </label>
               <input
                 type="email"
@@ -1164,7 +1164,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
               />
               <InlineError msg={formErrors.email} />
               <p className="text-[0.72rem] text-gray-500 mt-1">
-                Email opsional — Midtrans akan kirim e-receipt jika diisi.
+                {/* Email opsional — Midtrans akan kirim e-receipt jika diisi. */}
               </p>
             </div>
           </section>
@@ -1178,7 +1178,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
             {/* Address */}
             <div>
               <label className="block text-[0.8rem] font-semibold text-eglux-primary uppercase tracking-[0.5px] mb-1.5">
-                Alamat Lengkap *
+                Alamat Lengkap <span className="text-red-500">*</span>
               </label>
               <textarea
                 name="address"
@@ -1196,7 +1196,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
             {/* City — react-select searchable dropdown */}
             <div>
               <label className="block text-[0.8rem] font-semibold text-eglux-primary uppercase tracking-[0.5px] mb-1.5">
-                Kota *
+                Kota <span className="text-red-500">*</span>
               </label>
               <Select
                 options={INDONESIAN_CITIES}
@@ -1204,23 +1204,23 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
                 onChange={onCityChange}
                 isDisabled={isLocked}
                 isSearchable
-                placeholder="Cari kota... (ketik nama kota atau provinsi)"
+                placeholder="Contoh: Tangerang, Jakarta, dll."
                 styles={selectStyles}
                 error={formErrors.city}
                 noOptionsMessage={() => 'Kota tidak ditemukan'}
-                className="text-[0.88rem]"
+                className="text-[0.8rem]"
                 classNamePrefix="react-select"
               />
               <InlineError msg={formErrors.city} />
               <p className="text-[0.72rem] text-gray-500 mt-1">
-                97 kota di Indonesia · ketik untuk cari (misal: "bandung", "jakarta", "surabaya")
+                {/* 97 kota di Indonesia · ketik untuk cari (misal: "bandung", "jakarta", "surabaya") */}
               </p>
             </div>
 
             {/* Postal code */}
             <div>
               <label className="block text-[0.8rem] font-semibold text-eglux-primary uppercase tracking-[0.5px] mb-1.5">
-                Kode Pos *
+                Kode Pos <span className="text-red-500">*</span>
               </label>
               <input
                 type="text"
@@ -1294,12 +1294,12 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
           {/* === Pilih Kurir === */}
           <section className="space-y-3">
             <h4 className="text-[0.78rem] uppercase tracking-[1px] text-[#666] font-semibold flex items-center gap-1.5">
-              <Truck className="w-3.5 h-3.5" />Pilih Kurir
+              <Truck className="w-3.5 h-3.5" />Pilih Kurir <span className="text-red-500">*</span>
             </h4>
 
             {!selectedAreaId && (
               <p className="text-[0.78rem] text-gray-500 italic">
-                Lengkapi kode pos & pilih area dulu untuk melihat opsi kurir.
+                Lengkapi Kota dan Kode Pos untuk melihat pilihan kurir.
               </p>
             )}
 
@@ -1366,7 +1366,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
               name="notes"
               value={form.notes}
               onChange={change}
-              placeholder="Warna, ukuran, atau permintaan khusus..."
+              placeholder="Tulis catatan di sini..."
               disabled={isLocked}
               className="w-full py-3 px-4 border-[1.5px] border-[#ddd] rounded-[10px] text-[0.88rem] text-eglux-primary bg-white outline-none resize-y min-h-[60px] focus:border-eglux-secondary transition-colors disabled:bg-[#f5f5f5] disabled:text-[#999]"
             />

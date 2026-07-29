@@ -76,7 +76,7 @@ const HomepageContentPanel = ({ showToast }) => {
         setCategories(data.categories || []);
       }
     } catch (e) {
-      console.error('[HomepageContentPanel] fetch error:', e?.message);
+      console.error('[HomepageContentPanel] fetch error:', e);
       showToast?.('Gagal memuat data: ' + e.message, 'error');
     } finally {
       setLoading(false);
@@ -493,9 +493,9 @@ const BannerCard = ({ banner, index, total, uploading, onUpdate, onDelete, onReo
                 className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg outline-none focus:border-eglux-secondary cursor-pointer"
               >
                 <option value="none">— Tidak ada link —</option>
-                <option value="filter">Filter Produk</option>
-                <option value="product">Buka Produk</option>
-                <option value="url">URL External</option>
+                <option value="filter">Filter Produk (scroll ke katalog)</option>
+                <option value="product">Buka Produk (modal detail)</option>
+                <option value="url">URL External (pindah halaman)</option>
               </select>
             </div>
           </div>
@@ -503,14 +503,22 @@ const BannerCard = ({ banner, index, total, uploading, onUpdate, onDelete, onReo
             <label className="block text-xs font-medium text-gray-500 mb-1">
               Nilai Link
               <span className="text-gray-400 ml-1 font-normal">
-                (filter: kitchen/storage/homedecor/bathroom/bestseller/produkbaru · product: UUID · url: https://...)
+                {banner.cta_link_type === 'filter' && '(pilih salah satu: kitchen / storage / homedecor / bathroom / bestseller / produkbaru)'}
+                {banner.cta_link_type === 'product' && '(UUID produk — copy dari Admin Produk, atau paste slug produk)'}
+                {banner.cta_link_type === 'url' && '(URL lengkap, mis. https://shopee.co.id/...)'}
+                {(!banner.cta_link_type || banner.cta_link_type === 'none') && '(pilih tipe link dulu)'}
               </span>
             </label>
             <input
               type="text"
               defaultValue={banner.cta_link_value || ''}
               onBlur={(e) => onUpdate(banner.id, { cta_link_value: e.target.value })}
-              placeholder="mis. kitchen"
+              placeholder={
+                banner.cta_link_type === 'filter' ? 'mis. kitchen'
+                : banner.cta_link_type === 'product' ? 'mis. 1234abcd-... atau panci-serbaguna'
+                : banner.cta_link_type === 'url' ? 'mis. https://shopee.co.id/...'
+                : 'pilih tipe link di atas dulu'
+              }
               className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg outline-none focus:border-eglux-secondary"
             />
           </div>

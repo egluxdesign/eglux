@@ -16,6 +16,8 @@ import Footer from '../components/layout/Footer';
 import ProductModal from '../components/ui/ProductModal';
 import { useCartActions } from './CartPage';
 import { supabase } from '../lib/supabaseClient';
+import useToast from '../hooks/useToast';
+import Toast from '../components/ui/Toast';
 import '/src/assets/styles/eglux-design-system.css';
 import useProducts from '../hooks/useProducts';
 
@@ -33,6 +35,7 @@ function filterProducts(products, filterValue) {
 const HomePage = () => {
   const { openCart, handleAddToCart } = useCartActions();
   const { products, filterButtons, loading, error } = useProducts();
+    const { toast, showToast, closeToast } = useToast();
 
   const [banners, setBanners] = useState([]);
   const [overlayTimedOut, setOverlayTimedOut] = useState(false);
@@ -110,16 +113,75 @@ const HomePage = () => {
 
   const handleFilterChange = (value) => { setActiveFilter(value); setCurrentPage(1); };
 
+  // ⭐ Helper: cek apakah nilai filter valid (ada di filterButtons atau badge/special values)
+  const isValidFilterValue = useCallback((value) => {
+    if (!value) return false;
+    const knownValues = ['all', 'produkbaru', 'bestseller', ...filterButtons.map((b) => b.value)];
+    return knownValues.includes(value);
+  }, [filterButtons]);
+
   const handleBannerClick = (banner) => {
-    if (banner.cta_link_type === 'filter' && banner.cta_link_value) {
-      setActiveFilter(banner.cta_link_value); setCurrentPage(1);
-      productsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    } else if (banner.cta_link_type === 'product' && banner.cta_link_value) {
-      const match = products.find((p) => p.id === banner.cta_link_value);
-      if (match) setSelectedProduct(match);
-    } else if (banner.cta_link_type === 'url' && banner.cta_link_value) {
-      window.open(banner.cta_link_value, '_blank', 'noopener,noreferrer');
+    // Defensive: pastikan banner object ada & punya cta_link_type
+    if (!banner) return;
+    const ctaType = banner.cta_link_type || 'none';
+    const ctaValue = banner.cta_link_value || '';
+
+    // console.log('[HomePage] banner click:', { id: banner.id, ctaType, ctaValue });
+
+    if (ctaType === 'none' || !ctaValue) {
+      // Tidak ada CTA — silent, biarkan swipe/click natural tanpa side effect
+      return;
     }
+
+    if (ctaType === 'filter') {
+      // ⭐ Filter produk — value bisa: kitchen/storage/homedecor/bathroom/bestseller/produkbaru
+      // Selalu scroll ke products section dulu (biar user lihat hasilnya)
+      // Kalau value invalid, tampilkan toast tapi tetap scroll
+      if (isValidFilterValue(ctaValue)) {
+        setActiveFilter(ctaValue);
+        setCurrentPage(1);
+        // showToast(`Menampilkan: ${ctaValue === 'all' ? 'Semua Produk' : ctaValue}`, 'info');
+      } else {
+        // Value tidak dikenali — reset ke 'all' biar user tetap lihat semua produk
+        setActiveFilter('all');
+        setCurrentPage(1);
+        showToast(`Filter "${ctaValue}" tidak ditemukan. Menampilkan semua produk.`, 'error');
+      }
+      // ⭐ Scroll dengan small delay supaya filter state sempat apply dulu
+      setTimeout(() => {
+        productsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 50);
+      return;
+    }
+
+    if (ctaType === 'product') {
+      // ⭐ Buka produk — coba match by id ATAU slug (defensive)
+      const match = products.find((p) => p.id === ctaValue) ||
+                    products.find((p) => p.slug === ctaValue);
+      if (match) {
+        setSelectedProduct(match);
+        // Update URL supaya bisa di-share/bookmark
+        searchParams.set('open', match.id);
+        setSearchParams(searchParams, { replace: true });
+      } else {
+        showToast('Produk tidak ditemukan atau sudah tidak aktif.', 'error');
+        // console.warn('[HomePage] product not found for cta_value:', ctaValue, 'available products:', products.length);
+      }
+      return;
+    }
+
+    if (ctaType === 'url') {
+      // ⭐ URL external — pastikan ada protocol, default to https://
+      let url = ctaValue;
+      if (!/^https?:\/\//i.test(url)) {
+        url = 'https://' + url;
+      }
+      window.location.href = url;
+      return;
+    }
+
+    // Unknown CTA type — log warning
+    // console.warn('[HomePage] unknown cta_link_type:', ctaType);
   };
 
   const handleHighlightProduct = (product) => {
@@ -216,7 +278,7 @@ const HomePage = () => {
           "Lihat Lainnya" card hanya muncul kalau section punya >5 produk.
           ═══════════════════════════════════════════════════════════════ */}
       {(bestSellers.length > 0 || newArrivals.length > 0) && (
-        <section className="section-overlay bg-white py-4 md:py-12">
+        <section className="section-overlay bg-white py-4 md:py-12 pt-8 ">
           <div className="max-w-[1600px] mx-auto px-4 md:px-8 w-full">
 
             {newArrivals.length > 0 && (
@@ -303,8 +365,8 @@ const HomePage = () => {
       {/* ═══════════════════════════════════════════════════════════════
           SECTION 3: ALL PRODUCTS — with sticky filter bar
           ═══════════════════════════════════════════════════════════════ */}
-      <section ref={productsSectionRef} className="section-overlay bg-white py-6 md:pt-8 md:pb-16" id="products-section">
-        <div className="max-w-[1600px] mx-auto px-4 md:px-8">
+      <section ref={productsSectionRef} className="section-overlay w-full bg-white py-6 md:pt-8 md:pb-32" id="products-section">
+        <div className="w-full mx-auto">
 
           <div className="text-center mb-4 md:mb-8 pb-1 md:pb-2">
             <h2 className="section-title text-eglux-secondary text-[1.6rem] md:text-[2rem]">Semua Produk</h2>
@@ -341,7 +403,7 @@ const HomePage = () => {
 
           {!loading && !error && (
             paginatedProducts.length > 0 ? (
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6 mt-4 md:mt-8 pt-12">
+              <div className="grid grid-cols-2 md:grid-cols-4 px-4 gap-4 md:gap-6 mt-4 md:mt-8 pt-20">
                 {paginatedProducts.map((product) => (
                   <ProductCard key={product.id} product={product} onClick={() => setSelectedProduct(product)} formatPrice={formatPrice} />
                 ))}
@@ -354,7 +416,7 @@ const HomePage = () => {
           {/* Pagination */}
           {!loading && !error && filteredProducts.length > ITEMS_PER_PAGE && (
             <div className="flex flex-col items-center gap-4 mt-12 pt-8">
-              <div className="flex items-center gap-3">
+              <div className="flex border border-eglux-primary/25 rounded-[30px] px-0 items-center gap-3">
                 <button onClick={() => { setCurrentPage((p) => Math.max(1, p - 1)); productsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}
                   disabled={currentPage <= 1} className="pagination-btn flex items-center justify-center">
                   <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 18 9 12 15 6" /></svg>
@@ -365,7 +427,7 @@ const HomePage = () => {
                   <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 18 15 12 9 6" /></svg>
                 </button>
               </div>
-              <p className="text-[0.7rem] text-gray-400 tracking-wide">
+              <p className="text-[0.7rem] text-eglux-primary tracking-wide">
                 {(currentPage - 1) * ITEMS_PER_PAGE + 1}–{Math.min(currentPage * ITEMS_PER_PAGE, filteredProducts.length)} dari {filteredProducts.length} produk
               </p>
             </div>
@@ -378,6 +440,9 @@ const HomePage = () => {
       {selectedProduct && (
         <ProductModal product={selectedProduct} onClose={closeModal} onAddToCart={handleAddToCart} />
       )}
+
+      {/* ⭐ Toast notifications — untuk feedback CTA banner (filter invalid, product not found, dll) */}
+      <Toast toast={toast} onClose={closeToast} />
     </>
   );
 };
@@ -385,10 +450,21 @@ const HomePage = () => {
 // ============================================================================
 // HeroSwiper — Transform-based (arrows work, smooth, touch-friendly)
 // ============================================================================
+// ⭐ Swipe-vs-Click suppression (v4.4):
+//   - Track pointer movement di touchStart/mouseDown & touchEnd/mouseUp
+//   - Kalau delta > 40px → dianggap swipe → set didSwipeRef = true
+//   - Slide onClick dipakai biasa, TAPI cek didSwipeRef di onClickCapture
+//   - Kalau didSwipeRef true → stopPropagation + preventDefault, klik diabaikan
+//   - Reset didSwipeRef setelah 300ms (siap untuk gesture berikutnya)
+//   Fix issue: sebelumnya, setelah swipe, click event juga fire di slide baru →
+//   banner CTA (filter/product/url) ikut ke-trigger secara nggak sengaja.
+// ============================================================================
 const HeroSwiper = ({ banners, onBannerClick }) => {
   const [activeIdx, setActiveIdx] = useState(0);
   const touchStartX = useRef(0);
   const touchEndX = useRef(0);
+  const didSwipeRef = useRef(false);  // ⭐ true jika gesture terakhir adalah swipe
+  const swipeResetTimer = useRef(null);
   const autoAdvanceRef = useRef(null);
 
   const next = useCallback(() => {
@@ -406,6 +482,29 @@ const HeroSwiper = ({ banners, onBannerClick }) => {
   // ⭐ No auto-advance — manual swipe only
   const resetAutoAdvance = () => {};
 
+    // ⭐ Helper: mark bahwa user baru saja swipe. Click event berikutnya (dalam 300ms)
+  //   akan di-suppress via onClickCapture di slide.
+  const markSwiped = () => {
+    didSwipeRef.current = true;
+    if (swipeResetTimer.current) clearTimeout(swipeResetTimer.current);
+    swipeResetTimer.current = setTimeout(() => {
+      didSwipeRef.current = false;
+    }, 300);
+  };
+
+  // ⭐ Click capture — intercept SEMUA click di dalam <section> BEFORE reach slide onClick.
+  //   Kalau user baru saja swipe (didSwipeRef true), cancel click.
+  //   Ini mencegah banner CTA ke-trigger setelah gesture swipe.
+  const handleClickCapture = (e) => {
+    if (didSwipeRef.current) {
+      e.stopPropagation();
+      e.preventDefault();
+      didSwipeRef.current = false; // reset supaya click intentional berikutnya jalan
+      if (swipeResetTimer.current) clearTimeout(swipeResetTimer.current);
+      return false;
+    }
+  };
+
   // Touch handlers (mobile swipe)
   const handleTouchStart = (e) => {
     touchStartX.current = e.touches[0].clientX;
@@ -416,13 +515,16 @@ const HeroSwiper = ({ banners, onBannerClick }) => {
     if (Math.abs(delta) > 40) {
       if (delta > 0) next();
       else prev();
+      markSwiped(); // ⭐ suppress click berikutnya
     }
   };
 
   // Mouse handlers (desktop drag)
   const handleMouseDown = (e) => {
     touchStartX.current = e.clientX;
-    e.preventDefault(); // prevent text selection
+    // ⛔ Removed: e.preventDefault() — ini bisa suppress click event di beberapa browser
+    //   dan bikin CTA filter/product tidak respond. CSS user-select:none sudah handle
+    //   text selection issue.
   };
   const handleMouseUp = (e) => {
     touchEndX.current = e.clientX;
@@ -430,16 +532,25 @@ const HeroSwiper = ({ banners, onBannerClick }) => {
     if (Math.abs(delta) > 40) {
       if (delta > 0) next();
       else prev();
+      markSwiped(); // ⭐ suppress click berikutnya
     }
   };
 
+  // ⭐ Cleanup timer on unmount
+  useEffect(() => {
+    return () => {
+      if (swipeResetTimer.current) clearTimeout(swipeResetTimer.current);
+    };
+  }, []);
+
   return (
     <section
-      className="hero-parallax overflow-hidden"
+      className="hero-parallax overflow-hidden select-none"
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
       onMouseDown={handleMouseDown}
       onMouseUp={handleMouseUp}
+      onClickCapture={handleClickCapture}
     >
       {/* Slides container — transform translateX */}
       <div
