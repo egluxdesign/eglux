@@ -28,6 +28,8 @@ import { supabase } from '../lib/supabaseClient';
 import { rupiah } from '../context/CartContext';
 import { friendlyErrorMessage } from '../lib/errorMessage';
 
+import '/src/assets/styles/orderpage.css'
+
 // ⭐ Hanya orders dengan status ini yang ditampilkan di /track
 // (delivered + cancelled pindah ke /order-history)
 // ⭐ Backward compat: include 'shipping' dan 'completed' untuk data lama (sebelum SQL 032e)
@@ -242,20 +244,31 @@ const TrackOrderPage = () => {
     });
   };
 
-  // ── Login required ──
+    // ── Login required ──
+  {/* Import CSS ini sekali di file terkait, atau taruh isinya di globals.css:
+import '../assets/styles/track-layout.css'; */}
   if (!user) {
     return (
-      <>
-        {/* ⭐ forceScrolled — header selalu putih (gak ada hero section di page ini) */}
-        <HeaderProducts onCartOpen={openCart} forceScrolled />
-        <section className="max-w-2xl mx-auto px-4 md:px-6 pt-24 pb-16 text-center">
-          <p className="text-gray-500 mb-4">Kamu perlu masuk dulu untuk melacak pesanan.</p>
-          <Link to="/admin" className="text-eglux-secondary font-semibold hover:underline">
-            Masuk ke akun
-          </Link>
-        </section>
-        <Footer />
-      </>
+
+<div className="section-full-mobile w-full">
+  {/* Wrapper ini yang bikin behavior beda mobile vs desktop.
+      Mobile: dikunci 100dvh (Header+Section = 1 layar penuh, Footer discroll).
+      Desktop: jadi display:contents (transparan), Header+Section+Footer
+      sejajar langsung di dalam .section-full-mobile yang 100dvh. */}
+  <div className="mobile-viewport-group">
+    {/* ⭐ forceScrolled — header selalu putih (gak ada hero section di page ini) */}
+    <HeaderProducts onCartOpen={openCart} forceScrolled />
+
+    <section className="section-mobile relative flex flex-col items-center justify-center text-center px-4">
+      <p className="text-gray-500 mb-4">Sudah punya Akun?</p>
+      <Link to="/admin" className="text-eglux-secondary font-semibold hover:underline">
+        Masuk ke akun
+      </Link>
+    </section>
+  </div>
+
+  <Footer />
+</div>
     );
   }
 

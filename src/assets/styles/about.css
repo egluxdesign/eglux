@@ -14,7 +14,7 @@
         .page-header h1 {
             font-size: 3rem;
             font-weight: 700;
-            color: var(--primary);
+            color: var(--eglux-primary);
             margin-bottom: 0.5rem;
         }
 
@@ -29,6 +29,7 @@
         }
 
         .about-grid {
+            padding-top: 4rem;
             display: grid;
             grid-template-columns: 1fr 1fr;
             gap: 4rem;
@@ -181,7 +182,7 @@
 
         /* Stats */
         .stats-section {
-            background: var(--primary);
+            background: var(--eglux-primary);
             padding: 4rem 4rem;
         }
 

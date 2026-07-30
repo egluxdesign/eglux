@@ -31,6 +31,8 @@ import { ensureSnapLoaded } from '../../../hooks/useMidtransSnap';
 import { friendlyErrorMessage } from '../../../lib/errorMessage';
 import ChangeCourierModal from '../../ui/ChangeCourierModal';
 
+import '/src/assets/styles/orderpage.css'
+
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 
 // ── Status tabs (ACTIVE ONLY — completed/cancelled pindah ke /order-history) ──
@@ -966,10 +968,10 @@ const OrdersList = () => {
     return counts;
   }, [orders]);
 
-  if (!user) {
+ if (!user) {
     return (
-      <section className="max-w-container mx-auto px-4 md:px-8 py-16 text-center">
-        <p className="text-gray-500 mb-4">Kamu perlu masuk dulu untuk melihat pesanan.</p>
+      <section className="flex-1 flex flex-col items-center justify-center text-center px-4">
+        <p className="text-gray-500 mb-4">Sudah punya Akun?</p>
         <Link to="/admin" className="text-eglux-secondary font-semibold hover:underline">
           Masuk ke akun
         </Link>

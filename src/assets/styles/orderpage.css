@@ -1,0 +1,50 @@
+/* ============================================================================
+   Layout: TrackOrderPage (dan halaman serupa tanpa hero section)
+   ============================================================================
+   Mobile (<768px):
+     - Header + Section dikunci pas 100dvh (satu layar penuh)
+     - Footer ada DI LUAR kunci itu → user scroll ke bawah buat lihat Footer
+   Desktop (>=768px):
+     - Header + Section + Footer SEMUA muat dalam 100dvh, tidak ada scroll
+     - .mobile-viewport-group jadi "transparan" (display:contents) sehingga
+       Header/Section/Footer jadi sejajar langsung sebagai flex children
+       dari .section-full-mobile
+   ============================================================================ */
+
+.section-full-mobile {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Wrapper yang ngunci Header+Section ke 100dvh — HANYA aktif di mobile */
+.mobile-viewport-group {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  overflow: hidden;
+  width: 100%;
+}
+
+.section-mobile {
+  flex: 1 1 auto;
+  min-height: 0; /* penting: tanpa ini flex-1 gak bisa shrink di dalam flex column */
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto; /* konten pendek (belum login) tetap muat; konten panjang (list order) scroll di sini */
+}
+
+@media (min-width: 768px) {
+  .section-full-mobile {
+    height: 100dvh;
+    overflow: hidden;
+  }
+
+  /* "Bongkar" wrapper mobile — anak-anaknya (Header, Section) jadi
+     langsung sejajar dengan Footer di dalam .section-full-mobile */
+  .mobile-viewport-group {
+    display: contents;
+    height: auto;
+    overflow: visible;
+  }
+}

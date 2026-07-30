@@ -32,6 +32,8 @@ import { supabase } from '../lib/supabaseClient';
 import { rupiah } from '../context/CartContext';
 import { friendlyErrorMessage } from '../lib/errorMessage';
 
+import '/src/assets/styles/orderpage.css'
+
 // ── Tab filter ──
 // ⭐ Tab key pakai 'delivered' (sesuai DB constraint), label tetap "Selesai"
 const STATUS_TABS = [
@@ -723,19 +725,31 @@ const OrderHistoryPage = () => {
     navigate(`/tickets?order=${order.id}`);
   };
 
+    // ── Login required ──
+  {/* Import CSS ini sekali di file terkait, atau taruh isinya di globals.css:
+import '../assets/styles/track-layout.css'; */}
   if (!user) {
     return (
-      <>
-        {/* ⭐ forceScrolled — header selalu putih (gak ada hero section di page ini) */}
-        <HeaderProducts onCartOpen={openCart} forceScrolled />
-        <section className="max-w-container mx-auto px-4 md:px-8 pt-24 pb-16 text-center">
-          <p className="text-gray-500 mb-4">Kamu perlu masuk dulu untuk melihat riwayat pesanan.</p>
-          <Link to="/admin" className="text-eglux-secondary font-semibold hover:underline">
-            Masuk ke akun
-          </Link>
-        </section>
-        <Footer />
-      </>
+
+<div className="section-full-mobile w-full">
+  {/* Wrapper ini yang bikin behavior beda mobile vs desktop.
+      Mobile: dikunci 100dvh (Header+Section = 1 layar penuh, Footer discroll).
+      Desktop: jadi display:contents (transparan), Header+Section+Footer
+      sejajar langsung di dalam .section-full-mobile yang 100dvh. */}
+  <div className="mobile-viewport-group">
+    {/* ⭐ forceScrolled — header selalu putih (gak ada hero section di page ini) */}
+    <HeaderProducts onCartOpen={openCart} forceScrolled />
+
+    <section className="section-mobile relative flex flex-col items-center justify-center text-center px-4">
+      <p className="text-gray-500 mb-4">Sudah punya Akun?</p>
+      <Link to="/admin" className="text-eglux-secondary font-semibold hover:underline">
+        Masuk ke akun
+      </Link>
+    </section>
+  </div>
+
+  <Footer />
+</div>
     );
   }
 

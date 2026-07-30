@@ -11,8 +11,8 @@ import HeaderProducts from '../components/layout/HeaderProducts';
 import Footer from '../components/layout/Footer';
 import { supabase } from '../lib/supabaseClient';
 
-import '../assets/styles/about.css';
-import '../assets/styles/globals.css';
+import '/src/assets/styles/about.css';
+import '/src/assets/styles/globals.css';
 
 // ── Default content (fallback kalau DB kosong) ──
 const DEFAULT_CONTENT = {

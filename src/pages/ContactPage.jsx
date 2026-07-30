@@ -11,8 +11,8 @@ import { useCartActions } from './CartPage';
 import ContactSection from '../components/sections/ContactPage/ContactSection';
 import FAQSection from '../components/sections/ContactPage/FAQSection';
 
-import '../assets/styles/contact.css';
-import '../assets/styles/globals.css';
+import '/src/assets/styles/contact.css';
+import '/src/assets/styles/globals.css';
 
 const Contact = () => {
   const { openCart } = useCartActions();
