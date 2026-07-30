@@ -158,7 +158,22 @@ const CartPage = ({ children }) => {
         openCheckout,
         openMidtransCheckout,
         handleCheckoutNowMidtrans,
-        openTicket: () => { setTicketOpen(true); document.body.style.overflow = 'hidden'; },
+          openTicket: () => {
+          // ⭐ Auth-gate: tiket bantuan wajib login (tickets table RLS pakai user.id)
+          // Kalau belum login → redirect ke /admin dengan intent flag, biar modal auto-open setelah login
+          if (!user) {
+            try { sessionStorage.setItem(CHECKOUT_INTENT_KEY, 'ticket'); } catch (e) {}
+            setCartOpen(false);
+            document.body.style.overflow = '';
+            navigate('/admin', {
+              state: { from: location.pathname + location.search },
+              replace: true,
+            });
+            return;
+          }
+          setTicketOpen(true);
+          document.body.style.overflow = 'hidden';
+        },
       }}
     >
       {children}
