@@ -28,6 +28,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import HeaderProducts from '../components/layout/HeaderProducts';
+import Footer from '../components/layout/Footer';
 import { useCartActions } from './CartPage';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabaseClient';
