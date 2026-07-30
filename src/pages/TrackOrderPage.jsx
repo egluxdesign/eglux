@@ -6,6 +6,7 @@
 //   - Hanya tampilkan orders yang:
 //     a) Punya biteship_waybill_url (Biteship webhook sudah fire courier_link)
 //     b) Status BUKAN delivered/cancelled/expired (mereka pindah ke Riwayat)
+//     c) ⭐ MILIK USER YANG LOGIN — filter via customer_id IN (user's customer_ids)
 //   - Setiap card = rincian pesanan + tombol "Lacak Paket" → buka tab baru ke Biteship
 //   - Klik card → expand rincian (items, alamat, kurir, resi)
 //   - Auto-refresh via Realtime subscription (saat Biteship webhook update DB)
@@ -16,6 +17,12 @@
 //
 // Deep link:
 //   /track?order=<id> → auto-expand card untuk order tersebut
+//
+// ⭐ SECURITY FIX: sebelumnya fetchOrders gak filter by user → user bisa lihat
+//   pesanan orang lain. Sekarang:
+//   1. fetchCustomerIds() — ambil customer_ids milik user dari customers table
+//   2. fetchOrders() — filter orders by customer_id IN (ids)
+//   3. Realtime subscription — filter by customer_id IN (ids) + defensive check
 // ============================================================================
 
 import { useState, useEffect, useCallback } from 'react';
@@ -108,15 +115,49 @@ const TrackOrderPage = () => {
   const [error, setError] = useState(null);
   const [expandedOrderId, setExpandedOrderId] = useState(null);
 
+    // ⭐ SECURITY: customer_ids milik user — dipakai untuk filter orders supaya
+    // user gak bisa lihat pesanan orang lain. Di-fetch dari customers table
+    // (customers.user_id di-set oleh create-order edge function + SQL 025 backfill).
+    const [customerIds, setCustomerIds] = useState([]);
+
+  // ── Fetch user's customer_ids ──
+  // Bulletproof ownership check — gak tergantung RLS di orders table.
+  // Customers table punya user_id yang di-backfill, jadi kita bisa query langsung.
+  const fetchCustomerIds = useCallback(async () => {
+    if (!user) return [];
+    try {
+      const { data, error: custErr } = await supabase
+        .from('customers')
+        .select('id')
+        .eq('user_id', user.id);
+      if (custErr) throw custErr;
+      const ids = (data || []).map(c => c.id);
+      setCustomerIds(ids);
+      return ids;
+    } catch (e) {
+      console.error('[TrackOrder] fetch customer_ids error:', e?.message);
+      setCustomerIds([]);
+      return [];
+    }
+  }, [user]);
+
   // ── Fetch orders yang punya biteship_waybill_url + status trackable ──
+  // ⭐ SECURITY: HANYA orders milik user yang di-fetch.
+  // Filter via customer_id IN (user's customer_ids) — bukan rely on RLS saja.
   const fetchOrders = useCallback(async () => {
     if (!user) return;
     setLoading(true);
     setError(null);
 
     try {
-      // ⭐ Simplified select fields — hapus join !inner yang bisa fail
-      // Customer data di-fetch terpisah kalau perlu
+      // ⭐ Step 1: fetch user's customer_ids dulu (bulletproof ownership check)
+      const ids = await fetchCustomerIds();
+      if (ids.length === 0) {
+        // User belum punya customer record → gak punya orders
+        setOrders([]);
+        return;
+      }
+
       const selectFields = `
         id, status, payment_status, total_amount, subtotal, shipping_cost,
         courier_code, courier_service, courier_duration, courier_rate,
@@ -136,39 +177,30 @@ const TrackOrderPage = () => {
         )
       `;
 
-      // console.log('[TrackOrder] Fetching orders for user:', user.email);
-      // console.log('[TrackOrder] TRACKABLE_STATUSES:', TRACKABLE_STATUSES);
-
-      // ⭐ Strategy: fetch all orders milik user, filter client-side
-      // (lebih reliable daripada .eq('customer.email') yang bisa fail kalau RLS berbeda)
-      // Pakai .filter untuk IS NOT NULL (lebih reliable daripada .not)
+      // ⭐ Step 2: query orders dengan filter customer_id IN (user's ids)
+      // + biteship_waybill_url IS NOT NULL + status trackable
       const { data, error: fetchErr } = await supabase
         .from('orders')
         .select(selectFields)
         .filter('biteship_waybill_url', 'not.is', 'null')
         .in('status', TRACKABLE_STATUSES)
+        .in('customer_id', ids)
         .order('created_at', { ascending: false })
         .limit(50);
-
-      // console.log('[TrackOrder] Query result:', {
-      //   error: fetchErr?.message,
-      //   count: data?.length || 0,
-      //   statuses: data?.map(o => ({ id: o.id?.slice(0, 8), status: o.status, waybill: !!o.biteship_waybill_url }))
-      // });
 
       if (fetchErr) {
         console.warn('[TrackOrder] Query failed:', fetchErr.message);
         throw fetchErr;
       }
 
-      // ⭐ Client-side filter: pastikan hanya order dengan waybill URL yang masuk
+      // ⭐ Defense-in-depth: client-side filter — pastikan hanya order milik user
+      // yang masuk (kalau DB aneh / RLS broken, tetap aman)
       const validOrders = (data || []).filter(o =>
         o.biteship_waybill_url &&
         o.biteship_waybill_url.trim() !== '' &&
-        o.biteship_waybill_url !== 'null'
+        o.biteship_waybill_url !== 'null' &&
+        ids.includes(o.customer_id)
       );
-
-      // console.log('[TrackOrder] Valid orders (with waybill URL):', validOrders.length);
 
       setOrders(validOrders);
     } catch (e) {
@@ -182,8 +214,14 @@ const TrackOrderPage = () => {
   useEffect(() => { fetchOrders(); }, [fetchOrders]);
 
   // ── Realtime: auto-refresh saat DB berubah (Biteship webhook update) ──
+  // ⭐ SECURITY: filter subscription by customer_id IN (user's ids) supaya
+  // user gak receive events untuk orders orang lain.
   useEffect(() => {
-    if (!user) return;
+    if (!user || customerIds.length === 0) return;
+
+    // ⭐ Format filter untuk IN clause: customer_id=in.(uuid1,uuid2,...)
+    // Supabase realtime pakai PostgREST filter syntax.
+    const customerFilter = `customer_id=in.(${customerIds.join(',')})`;
 
     const channel = supabase
       .channel('track-order-realtime')
@@ -192,10 +230,14 @@ const TrackOrderPage = () => {
         { event: 'UPDATE', schema: 'public', table: 'orders' },
         (payload) => {
           const updated = payload.new;
+
+          // ⭐ Defense-in-depth: skip kalau customer_id gak match (rare, tapi just in case)
+          if (!customerIds.includes(updated.customer_id)) return;
+
           setOrders((prev) => {
             const existing = prev.find(o => o.id === updated.id);
             if (!existing) {
-              // Order baru yang masuk trackable range — refetch untuk dapat full data
+              // Order baru milik user yang masuk trackable range — refetch
               fetchOrders();
               return prev;
             }
@@ -236,12 +278,7 @@ const TrackOrderPage = () => {
   }, [orders, searchParams]);
 
   const handleToggleExpand = (orderId) => {
-    // console.log('[TrackOrder] Expand toggle clicked:', orderId?.slice(0, 8));
-    setExpandedOrderId(prev => {
-      const next = prev === orderId ? null : orderId;
-      // console.log('[TrackOrder] ExpandedOrderId:', prev?.slice(0, 8), '→', next?.slice(0, 8));
-      return next;
-    });
+    setExpandedOrderId(prev => prev === orderId ? null : orderId);
   };
 
     // ── Login required ──
