@@ -4,22 +4,26 @@
 // ============================================================================
 // Differentiation dengan OrdersPage (/orders):
 //   - /orders (Pesanan Saya)     = active orders (pending/processing/shipping)
-//   - /order-history (Riwayat)   = archive (completed + cancelled)
+//   - /order-history (Riwayat)   = archive (delivered + cancelled)
 //
 // Card content (per user spec):
 //   - Foto + nama produk (1-2 item preview)
 //   - Status badge (Selesai / Dibatalkan)
 //   - Tanggal selesai (updated_at = last status change)
-//   - "Ajukan Pengembalian" button (untuk completed — refund flow)
+//   - "Tiket Bantuan" button → buka modal Tiket Bantuan langsung
 //   - "Lihat Rincian" button → buka detail panel
 //
-// Tab filter (2 tabs only):
+// Tab filter:
 //   - Semua Riwayat (default) = delivered + cancelled
 //   - Selesai                 = delivered only
 //   - Dibatalkan              = cancelled only
 //
-// ⭐ DB constraint (SQL 032e) hanya allow: pending, paid, processing, shipped, delivered, cancelled, expired
-//    Webhook Biteship map: delivered → 'delivered' (BUKAN 'completed' lagi)
+// ⭐ v2 UPDATE:
+//   1. Rincian Pembayaran LENGKAP — match OrdersList & TrackOrderPage v3:
+//      Harga Asli → Diskon Variant → Subtotal Setelah Diskon → Ongkir →
+//      Biaya Admin & Tax → Voucher → Total Pembayaran + Hint hemat
+//   2. Button "Ajukan Pengembalian" → "Tiket Bantuan" (untuk semua status)
+//      Saat di-klik → langsung buka modal Tiket Bantuan (gak navigate ke /tickets lagi)
 // ============================================================================
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
@@ -85,10 +89,6 @@ function shortId(uuid) {
 }
 
 // ⭐ Helper: get "tanggal selesai" untuk order
-// Priority:
-//   1. delivered → midtrans_settlement_time (kalau ada) atau created_at
-//   2. cancelled → created_at (waktu order dibuat, karna kita gak track cancel_at)
-//   (orders table gak punya updated_at column)
 function getSelesaiDate(order) {
   if (!order) return null;
   if (order.status === 'delivered' || order.status === 'completed') {
@@ -114,7 +114,7 @@ function getProductImage(item) {
 // ============================================================================
 // HistoryCard — card dengan foto + nama + badge + tanggal selesai + 2 tombol
 // ============================================================================
-const HistoryCard = ({ order, onOpen, onRefund }) => {
+const HistoryCard = ({ order, onOpen, onTicket }) => {
   const items = order.order_items || [];
   const previewItems = items.slice(0, 2);
   const remainingCount = items.length - previewItems.length;
@@ -193,31 +193,17 @@ const HistoryCard = ({ order, onOpen, onRefund }) => {
           </div>
         </div>
         <div className="flex gap-2">
-          {/* Ajukan Pengembalian — only for delivered orders (cancelled gak perlu refund) */}
-          {(order.status === 'delivered' || order.status === 'completed') && (
-            <button
-              onClick={() => onRefund(order)}
-              className="flex-1 px-3 py-2 bg-white border border-eglux-secondary/30 text-eglux-secondary rounded-lg text-xs font-semibold hover:bg-eglux-secondary hover:text-white transition-colors cursor-pointer flex items-center justify-center gap-1.5"
-            >
-              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="1 4 1 10 7 10" />
-                <path d="M3.51 15a9 9 0 102.13-9.36L1 10" />
-              </svg>
-              Ajukan Pengembalian
-            </button>
-          )}
-          {/* Tiket Bantuan — for cancelled orders (atau sebagai alternatif) */}
-          {order.status === 'cancelled' && (
-            <button
-              onClick={() => onRefund(order)}
-              className="flex-1 px-3 py-2 bg-white border border-gray-300 text-gray-600 rounded-lg text-xs font-semibold hover:bg-gray-100 transition-colors cursor-pointer flex items-center justify-center gap-1.5"
-            >
-              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z" />
-              </svg>
-              Tiket Bantuan
-            </button>
-          )}
+          {/* ⭐ v2: Tiket Bantuan — untuk SEMUA status (delivered + cancelled) */}
+          {/* Saat di-klik → buka modal Tiket Bantuan langsung (gak navigate) */}
+          <button
+            onClick={() => onTicket(order)}
+            className="flex-1 px-3 py-2 bg-white border border-eglux-secondary/30 text-eglux-secondary rounded-lg text-xs font-semibold hover:bg-eglux-secondary hover:text-white transition-colors cursor-pointer flex items-center justify-center gap-1.5"
+          >
+            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z" />
+            </svg>
+            Tiket Bantuan
+          </button>
           <button
             onClick={() => onOpen(order)}
             className="flex-1 px-3 py-2 bg-eglux-primary text-white rounded-lg text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer border-none flex items-center justify-center gap-1.5"
@@ -235,9 +221,9 @@ const HistoryCard = ({ order, onOpen, onRefund }) => {
 };
 
 // ============================================================================
-// HistoryDetailPanel — slide-in panel (mirip OrdersList tapi dengan refund action)
+// HistoryDetailPanel — slide-in panel (mirip OrdersList tapi dengan ticket action)
 // ============================================================================
-const HistoryDetailPanel = ({ order, onClose, onRefund }) => {
+const HistoryDetailPanel = ({ order, onClose, onTicket }) => {
   const navigate = useNavigate();
   const items = order.order_items || [];
   const statusCfg = STATUS_BADGE[order.status] || { banner: 'bg-gray-500' };
@@ -247,10 +233,8 @@ const HistoryDetailPanel = ({ order, onClose, onRefund }) => {
   // ⭐ Lacak Pesanan: direct ke biteship_waybill_url (kalau ada), fallback ke /track page
   const handleTrackOrder = () => {
     if (order.biteship_waybill_url) {
-      // Direct ke Biteship tracking page (gratis, no API call)
       window.open(order.biteship_waybill_url, '_blank', 'noopener,noreferrer');
     } else {
-      // Fallback: buka track order page (untuk lihat status dari DB)
       onClose();
       navigate(`/track?order=${order.id}`);
     }
@@ -261,6 +245,29 @@ const HistoryDetailPanel = ({ order, onClose, onRefund }) => {
     onClose();
     navigate(`/products?open=${productId}`);
   };
+
+  // ⭐ v2: Compute breakdown values untuk rincian pembayaran lengkap
+  const originalSubtotal = items.reduce((s, item) => {
+    const orig = Number(item.original_unit_price) || Number(item.unit_price_snapshot) || 0;
+    return s + (orig * (Number(item.quantity) || 1));
+  }, 0);
+  const discountedSubtotal = items.reduce((s, item) => {
+    const unit = Number(item.unit_price_snapshot) || 0;
+    return s + (unit * (Number(item.quantity) || 1));
+  }, 0);
+  const variantDiscount = originalSubtotal - discountedSubtotal;
+  const hasVariantDiscount = variantDiscount > 0;
+
+  // Tax: pakai nilai persisten dari DB, fallback recalc kalau order lama
+  let taxAmount = Number(order.tax_amount) || 0;
+  let taxPercent = Number(order.tax_percent) || 3;
+  if (!taxAmount && originalSubtotal > 0) {
+    taxAmount = Math.round(originalSubtotal * taxPercent / 100);
+  }
+
+  const voucherDiscount = Number(order.voucher_discount) || 0;
+  const shippingCost = Number(order.shipping_cost) || 0;
+  const totalSavings = variantDiscount + voucherDiscount;
 
   return (
     <>
@@ -364,74 +371,77 @@ const HistoryDetailPanel = ({ order, onClose, onRefund }) => {
           <div className="bg-white border border-gray-200 rounded-xl p-4">
             <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-3">Produk Dibeli</p>
             <div className="space-y-3">
-              {items.map((item, idx) => (
-                <div key={idx} className="flex items-start gap-3">
-                  <div className="w-14 h-14 rounded-lg bg-eglux-accent flex items-center justify-center flex-shrink-0 overflow-hidden">
-                    {(() => {
-                      const img = getProductImage(item);
-                      return img
+              {items.map((item, idx) => {
+                const img = getProductImage(item);
+                const itemUnitPrice = Number(item.unit_price_snapshot) || 0;
+                const itemOriginalPrice = Number(item.original_unit_price) || itemUnitPrice;
+                const itemQty = Number(item.quantity) || 1;
+                const itemHasDiscount = itemOriginalPrice > itemUnitPrice;
+                return (
+                  <div key={idx} className="flex items-start gap-3">
+                    <div className="w-14 h-14 rounded-lg bg-eglux-accent flex items-center justify-center flex-shrink-0 overflow-hidden">
+                      {img
                         ? <img src={img} alt={item.product_name_snapshot} className="w-full h-full object-cover" loading="lazy" />
-                        : <span className="text-lg font-bold text-eglux-secondary uppercase">{(item.product_name_snapshot || '?').charAt(0)}</span>;
-                    })()}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <a
-                      href={`/products?open=${item.product_id}`}
-                      onClick={(e) => handleProductClick(e, item.product_id)}
-                      className="text-sm font-medium text-eglux-primary hover:text-eglux-secondary hover:underline line-clamp-2 cursor-pointer"
-                    >
-                      {item.product_name_snapshot}
-                    </a>
-                    {item.variant_name_snapshot && (
-                      <p className="text-[0.75rem] text-gray-400 mt-0.5">{item.variant_name_snapshot}</p>
-                    )}
-                    <p className="text-[0.75rem] text-gray-500 mt-0.5">
-                      {item.quantity}x · {rupiah(item.unit_price_snapshot)}
+                        : <span className="text-lg font-bold text-eglux-secondary uppercase">{(item.product_name_snapshot || '?').charAt(0)}</span>}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <a
+                        href={`/products?open=${item.product_id}`}
+                        onClick={(e) => handleProductClick(e, item.product_id)}
+                        className="text-sm font-medium text-eglux-primary hover:text-eglux-secondary hover:underline line-clamp-2 cursor-pointer"
+                      >
+                        {item.product_name_snapshot}
+                      </a>
+                      {item.variant_name_snapshot && (
+                        <p className="text-[0.75rem] text-gray-400 mt-0.5">{item.variant_name_snapshot}</p>
+                      )}
+                      <p className="text-[0.75rem] text-gray-500 mt-0.5">
+                        {itemQty}x · {rupiah(itemUnitPrice)}
+                      </p>
+                      {/* ⭐ v2: Tampilkan harga asli strike-through kalau ada diskon */}
+                      {itemHasDiscount && (
+                        <p className="text-[0.65rem] text-gray-400 line-through mt-0.5">
+                          Harga asli: {rupiah(itemOriginalPrice)}
+                        </p>
+                      )}
+                    </div>
+                    <p className="text-sm font-semibold text-eglux-primary whitespace-nowrap self-center">
+                      {rupiah(Number(item.subtotal) || (itemUnitPrice * itemQty))}
                     </p>
                   </div>
-                  <p className="text-sm font-semibold text-eglux-primary whitespace-nowrap self-center">
-                    {rupiah(item.subtotal)}
-                  </p>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
 
-          {/* Rincian Pembayaran (v3: transparent breakdown) */}
+          {/* ⭐ v2: Rincian Pembayaran LENGKAP — match OrdersList & TrackOrderPage v3 */}
           <div className="bg-white border border-gray-200 rounded-xl p-4">
             <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-3">Rincian Pembayaran</p>
             <div className="space-y-2 text-sm">
-              {/* Item list dengan harga per item (transparan) */}
-              {items.length > 0 && (
-                <div className="space-y-1.5 pb-2 mb-1 border-b border-gray-100">
-                  {items.map((item, idx) => {
-                    const itemUnitPrice = Number(item.unit_price_snapshot) || 0;
-                    const itemQty = Number(item.quantity) || 1;
-                    const itemSubtotal = Number(item.subtotal) || (itemUnitPrice * itemQty);
-                    return (
-                      <div key={idx} className="flex justify-between text-xs">
-                        <span className="text-gray-600 flex-1 mr-2 truncate">
-                          {item.product_name_snapshot}
-                          {item.variant_name_snapshot && (
-                            <span className="text-gray-400"> · {item.variant_name_snapshot}</span>
-                          )}
-                          <span className="text-gray-400"> × {itemQty}</span>
-                        </span>
-                        <span className="text-gray-700 whitespace-nowrap">{rupiah(itemSubtotal)}</span>
-                      </div>
-                    );
-                  })}
+              {/* 1. Subtotal harga asli (sebelum diskon variant) */}
+              <div className="flex justify-between">
+                <span className="text-gray-500">Subtotal Produk ({items.length} item)</span>
+                <span className="font-medium text-gray-900">{rupiah(originalSubtotal)}</span>
+              </div>
+
+              {/* 2. Diskon variant (potongan) — tampilkan kalau ada */}
+              {hasVariantDiscount && (
+                <div className="flex justify-between">
+                  <span className="text-green-600">↓ Diskon Variant</span>
+                  <span className="font-medium text-green-600">− {rupiah(variantDiscount)}</span>
                 </div>
               )}
 
-              {/* Subtotal item */}
-              <div className="flex justify-between">
-                <span className="text-gray-500">Subtotal Produk ({items.length} item)</span>
-                <span className="text-gray-900">{rupiah(order.subtotal)}</span>
-              </div>
+              {/* 3. Subtotal setelah diskon variant — tampilkan kalau ada diskon */}
+              {hasVariantDiscount && (
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Subtotal Setelah Diskon</span>
+                  <span className="font-medium text-gray-900">{rupiah(discountedSubtotal)}</span>
+                </div>
+              )}
 
-              {/* Ongkir */}
-              {Number(order.shipping_cost) > 0 && (
+              {/* 4. Ongkir */}
+              {shippingCost > 0 && (
                 <div className="flex justify-between">
                   <span className="text-gray-500">
                     Ongkir
@@ -441,41 +451,20 @@ const HistoryDetailPanel = ({ order, onClose, onRefund }) => {
                       </span>
                     )}
                   </span>
-                  <span className="text-gray-900">{rupiah(order.shipping_cost)}</span>
+                  <span className="font-medium text-gray-900">{rupiah(shippingCost)}</span>
                 </div>
               )}
 
-              {/* Biaya lain kalau ada */}
-              {Number(order.courier_rate) > 0 && Number(order.courier_rate) !== Number(order.shipping_cost) && (
+              {/* 5. Biaya Admin & Tax (% dari base price) — pakai nilai persisten dari DB */}
+              {taxAmount > 0 && (
                 <div className="flex justify-between">
-                  <span className="text-gray-500">Biaya Kurir (Rate)</span>
-                  <span className="text-gray-900">{rupiah(order.courier_rate)}</span>
+                  <span className="text-gray-500">Biaya Admin &amp; Tax ({taxPercent}%)</span>
+                  <span className="font-medium text-gray-900">{rupiah(taxAmount)}</span>
                 </div>
               )}
 
-              {/* ⭐ Tax / Biaya Admin (3% dari base price) — pakai nilai persisten dari DB */}
-              {/* Fallback: kalau order lama (sebelum SQL 042), recalc dari items */}
-              {(() => {
-                let adminFee = Number(order.tax_amount) || 0;
-                let taxPercent = Number(order.tax_percent) || 3;
-                if (!adminFee && items.length > 0) {
-                  const originalSubtotal = items.reduce((s, item) => {
-                    const orig = Number(item.original_unit_price) || Number(item.unit_price_snapshot) || 0;
-                    return s + (orig * (Number(item.quantity) || 1));
-                  }, 0);
-                  adminFee = Math.round(originalSubtotal * taxPercent / 100);
-                }
-                if (adminFee <= 0) return null;
-                return (
-                  <div className="flex justify-between">
-                    <span className="text-gray-500">Biaya Admin &amp; Tax ({taxPercent}%)</span>
-                    <span className="text-gray-900">{rupiah(adminFee)}</span>
-                  </div>
-                );
-              })()}
-
-              {/* Voucher Discount (kalau ada) */}
-              {Number(order.voucher_discount) > 0 && (
+              {/* 6. Voucher Discount — tampilkan kalau ada */}
+              {voucherDiscount > 0 && (
                 <div className="flex justify-between">
                   <span className="text-green-600">
                     🎟️ Voucher
@@ -483,20 +472,20 @@ const HistoryDetailPanel = ({ order, onClose, onRefund }) => {
                       <span className="text-gray-400 ml-1">({order.voucher_code})</span>
                     )}
                   </span>
-                  <span className="text-green-600 font-medium">− {rupiah(Number(order.voucher_discount))}</span>
+                  <span className="text-green-600 font-medium">− {rupiah(voucherDiscount)}</span>
                 </div>
               )}
 
-              {/* Grand Total */}
+              {/* 7. Grand Total */}
               <div className="border-t border-gray-200 pt-2 mt-2 flex justify-between items-center">
                 <span className="font-semibold text-gray-900">Total Pembayaran</span>
                 <span className="text-lg font-bold text-eglux-secondary">{rupiah(order.total_amount)}</span>
               </div>
 
-              {/* Verifikasi: subtotal + shipping = total (untuk transaparency check) */}
-              {Number(order.subtotal) + Number(order.shipping_cost) !== Number(order.total_amount) && (
-                <p className="text-[0.65rem] text-amber-600 mt-1">
-                  ℹ Total termasuk biaya lain (selisih: {rupiah(Number(order.total_amount) - Number(order.subtotal) - Number(order.shipping_cost))})
+              {/* Hint hemat = total diskon (variant discount + voucher) */}
+              {totalSavings > 0 && (
+                <p className="text-[0.65rem] text-green-600 mt-1.5 text-right">
+                  🎉 Kamu hemat {rupiah(totalSavings)}!
                 </p>
               )}
             </div>
@@ -539,27 +528,16 @@ const HistoryDetailPanel = ({ order, onClose, onRefund }) => {
             </div>
           )}
 
-          {/* Action footer — Refund / Ticket + Tutup */}
+          {/* ⭐ v2: Action footer — Tiket Bantuan (untuk semua status) + Tutup */}
           <div className="pt-2 pb-4 flex gap-2">
             <button
-              onClick={() => onRefund(order)}
-              className={`flex-1 px-4 py-2.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer border flex items-center justify-center gap-1.5 ${
-                (order.status === 'delivered' || order.status === 'completed')
-                  ? 'bg-white border-eglux-secondary/30 text-eglux-secondary hover:bg-eglux-secondary hover:text-white'
-                  : 'bg-white border-gray-300 text-gray-600 hover:bg-gray-100'
-              }`}
+              onClick={() => onTicket(order)}
+              className="flex-1 px-4 py-2.5 bg-white border border-eglux-secondary/30 text-eglux-secondary rounded-lg text-xs font-semibold hover:bg-eglux-secondary hover:text-white transition-colors cursor-pointer flex items-center justify-center gap-1.5"
             >
               <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                {(order.status === 'delivered' || order.status === 'completed') ? (
-                  <>
-                    <polyline points="1 4 1 10 7 10" />
-                    <path d="M3.51 15a9 9 0 102.13-9.36L1 10" />
-                  </>
-                ) : (
-                  <path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z" />
-                )}
+                <path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z" />
               </svg>
-              {(order.status === 'delivered' || order.status === 'completed') ? 'Ajukan Pengembalian' : 'Tiket Bantuan'}
+              Tiket Bantuan
             </button>
             <button
               onClick={onClose}
@@ -579,7 +557,7 @@ const HistoryDetailPanel = ({ order, onClose, onRefund }) => {
 // ============================================================================
 const OrderHistoryPage = () => {
   const { user } = useAuth();
-  const { openCart } = useCartActions();
+  const { openCart, openTicket } = useCartActions();
   const navigate = useNavigate();
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -596,6 +574,7 @@ const OrderHistoryPage = () => {
     setError(null);
 
     try {
+      // ⭐ v2: tambah original_unit_price di order_items (untuk rincian pembayaran lengkap)
       const selectFields = `
         id, status, payment_status, total_amount, subtotal, shipping_cost,
         courier_code, courier_service, courier_duration, courier_rate,
@@ -611,7 +590,7 @@ const OrderHistoryPage = () => {
         customer:customers!inner(email, name, phone),
         order_items (
           id, product_id, variant_id, product_name_snapshot, variant_name_snapshot,
-          unit_price_snapshot, quantity, subtotal,
+          unit_price_snapshot, original_unit_price, quantity, subtotal,
           product:products (
             id, name,
             product_images ( id, url, is_primary, variant_id )
@@ -656,7 +635,6 @@ const OrderHistoryPage = () => {
   useEffect(() => { fetchOrders(); }, [fetchOrders]);
 
   // ⭐ Realtime subscription: auto-update orders saat ada perubahan di DB
-  // (Biteship webhook update orders.status → frontend auto-refresh)
   useEffect(() => {
     if (!user) return;
 
@@ -719,37 +697,30 @@ const OrderHistoryPage = () => {
     return counts;
   }, [orders]);
 
-  // Refund / Tiket action → navigate to /tickets?order=<id>
-  const handleRefund = (order) => {
+  // ⭐ v2: Tiket Bantuan handler → tutup detail panel + buka modal Tiket Bantuan
+  // (gak navigate ke /tickets lagi — pakai openTicket() dari useCartActions)
+  const handleTicket = useCallback((order) => {
     setSelectedOrder(null);
-    navigate(`/tickets?order=${order.id}`);
-  };
+    openTicket();
+  }, [openTicket]);
 
-    // ── Login required ──
-  {/* Import CSS ini sekali di file terkait, atau taruh isinya di globals.css:
-import '../assets/styles/track-layout.css'; */}
+  // ── Login required ──
   if (!user) {
     return (
+      <div className="section-full-mobile w-full">
+        <div className="mobile-viewport-group">
+          <HeaderProducts onCartOpen={openCart} forceScrolled />
 
-<div className="section-full-mobile w-full">
-  {/* Wrapper ini yang bikin behavior beda mobile vs desktop.
-      Mobile: dikunci 100dvh (Header+Section = 1 layar penuh, Footer discroll).
-      Desktop: jadi display:contents (transparan), Header+Section+Footer
-      sejajar langsung di dalam .section-full-mobile yang 100dvh. */}
-  <div className="mobile-viewport-group">
-    {/* ⭐ forceScrolled — header selalu putih (gak ada hero section di page ini) */}
-    <HeaderProducts onCartOpen={openCart} forceScrolled />
+          <section className="section-mobile relative flex flex-col items-center justify-center text-center px-4">
+            <p className="text-gray-500 mb-4">Sudah punya Akun?</p>
+            <Link to="/admin" className="text-eglux-secondary font-semibold hover:underline">
+              Masuk ke akun
+            </Link>
+          </section>
+        </div>
 
-    <section className="section-mobile relative flex flex-col items-center justify-center text-center px-4">
-      <p className="text-gray-500 mb-4">Sudah punya Akun?</p>
-      <Link to="/admin" className="text-eglux-secondary font-semibold hover:underline">
-        Masuk ke akun
-      </Link>
-    </section>
-  </div>
-
-  <Footer />
-</div>
+        <Footer />
+      </div>
     );
   }
 
@@ -827,7 +798,7 @@ import '../assets/styles/track-layout.css'; */}
                 key={order.id}
                 order={order}
                 onOpen={setSelectedOrder}
-                onRefund={handleRefund}
+                onTicket={handleTicket}
               />
             ))}
           </div>
@@ -838,7 +809,7 @@ import '../assets/styles/track-layout.css'; */}
           <HistoryDetailPanel
             order={selectedOrder}
             onClose={() => setSelectedOrder(null)}
-            onRefund={handleRefund}
+            onTicket={handleTicket}
           />
         )}
 
@@ -850,6 +821,7 @@ import '../assets/styles/track-layout.css'; */}
           .animate-slide-in-right { animation: slideInRight 0.3s cubic-bezier(0.16, 1, 0.3, 1); }
         `}</style>
       </section>
+
     </>
   );
 };

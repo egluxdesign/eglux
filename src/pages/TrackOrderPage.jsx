@@ -8,21 +8,18 @@
 //     b) Status BUKAN delivered/cancelled/expired (mereka pindah ke Riwayat)
 //     c) ⭐ MILIK USER YANG LOGIN — filter via customer_id IN (user's customer_ids)
 //   - Setiap card = rincian pesanan + tombol "Lacak Paket" → buka tab baru ke Biteship
-//   - Klik card → expand rincian (items, alamat, kurir, resi)
+//   - Klik card → expand rincian (items, alamat, kurir, resi, RINCIAN PEMBAYARAN LENGKAP)
 //   - Auto-refresh via Realtime subscription (saat Biteship webhook update DB)
-//
-// Status flow:
-//   - paid → processing → shipped → delivered (auto pindah ke Riwayat)
-//   - cancelled → auto pindah ke Riwayat
-//
-// Deep link:
-//   /track?order=<id> → auto-expand card untuk order tersebut
 //
 // ⭐ SECURITY FIX: sebelumnya fetchOrders gak filter by user → user bisa lihat
 //   pesanan orang lain. Sekarang:
 //   1. fetchCustomerIds() — ambil customer_ids milik user dari customers table
 //   2. fetchOrders() — filter orders by customer_id IN (ids)
 //   3. Realtime subscription — filter by customer_id IN (ids) + defensive check
+//
+// ⭐ v2 UPDATE: Rincian pembayaran sekarang LENGKAP (match OrdersList.jsx):
+//   Harga Asli Produk → Diskon variant → Subtotal setelah diskon → Ongkir →
+//   Biaya Admin & Tax → Voucher → Total Pembayaran
 // ============================================================================
 
 import { useState, useEffect, useCallback } from 'react';
@@ -115,14 +112,12 @@ const TrackOrderPage = () => {
   const [error, setError] = useState(null);
   const [expandedOrderId, setExpandedOrderId] = useState(null);
 
-    // ⭐ SECURITY: customer_ids milik user — dipakai untuk filter orders supaya
-    // user gak bisa lihat pesanan orang lain. Di-fetch dari customers table
-    // (customers.user_id di-set oleh create-order edge function + SQL 025 backfill).
-    const [customerIds, setCustomerIds] = useState([]);
+  // ⭐ SECURITY: customer_ids milik user — dipakai untuk filter orders supaya
+  // user gak bisa lihat pesanan orang lain.
+  const [customerIds, setCustomerIds] = useState([]);
 
   // ── Fetch user's customer_ids ──
   // Bulletproof ownership check — gak tergantung RLS di orders table.
-  // Customers table punya user_id yang di-backfill, jadi kita bisa query langsung.
   const fetchCustomerIds = useCallback(async () => {
     if (!user) return [];
     try {
@@ -143,7 +138,7 @@ const TrackOrderPage = () => {
 
   // ── Fetch orders yang punya biteship_waybill_url + status trackable ──
   // ⭐ SECURITY: HANYA orders milik user yang di-fetch.
-  // Filter via customer_id IN (user's customer_ids) — bukan rely on RLS saja.
+  // ⭐ v2: SELECT include tax_*, voucher_*, original_unit_price untuk rincian lengkap
   const fetchOrders = useCallback(async () => {
     if (!user) return;
     setLoading(true);
@@ -153,11 +148,12 @@ const TrackOrderPage = () => {
       // ⭐ Step 1: fetch user's customer_ids dulu (bulletproof ownership check)
       const ids = await fetchCustomerIds();
       if (ids.length === 0) {
-        // User belum punya customer record → gak punya orders
         setOrders([]);
         return;
       }
 
+      // ⭐ v2: tambah tax_percent, tax_base, tax_amount, voucher_code, voucher_discount
+      // + original_unit_price di order_items (untuk rincian pembayaran lengkap)
       const selectFields = `
         id, status, payment_status, total_amount, subtotal, shipping_cost,
         courier_code, courier_service, courier_duration, courier_rate,
@@ -167,9 +163,11 @@ const TrackOrderPage = () => {
         tracking_number,
         created_at, updated_at, notes,
         customer_id,
+        voucher_code, voucher_discount,
+        tax_percent, tax_base, tax_amount,
         order_items (
           id, product_id, variant_id, product_name_snapshot, variant_name_snapshot,
-          unit_price_snapshot, quantity, subtotal, weight_gram,
+          unit_price_snapshot, original_unit_price, quantity, subtotal, weight_gram,
           product:products (
             id, name,
             product_images ( id, url, is_primary, variant_id )
@@ -178,7 +176,6 @@ const TrackOrderPage = () => {
       `;
 
       // ⭐ Step 2: query orders dengan filter customer_id IN (user's ids)
-      // + biteship_waybill_url IS NOT NULL + status trackable
       const { data, error: fetchErr } = await supabase
         .from('orders')
         .select(selectFields)
@@ -193,8 +190,7 @@ const TrackOrderPage = () => {
         throw fetchErr;
       }
 
-      // ⭐ Defense-in-depth: client-side filter — pastikan hanya order milik user
-      // yang masuk (kalau DB aneh / RLS broken, tetap aman)
+      // ⭐ Defense-in-depth: client-side filter
       const validOrders = (data || []).filter(o =>
         o.biteship_waybill_url &&
         o.biteship_waybill_url.trim() !== '' &&
@@ -209,45 +205,38 @@ const TrackOrderPage = () => {
     } finally {
       setLoading(false);
     }
-  }, [user]);
+  }, [user, fetchCustomerIds]);
 
   useEffect(() => { fetchOrders(); }, [fetchOrders]);
 
   // ── Realtime: auto-refresh saat DB berubah (Biteship webhook update) ──
-  // ⭐ SECURITY: filter subscription by customer_id IN (user's ids) supaya
-  // user gak receive events untuk orders orang lain.
+  // ⭐ SECURITY: filter subscription by customer_id IN (user's ids)
   useEffect(() => {
     if (!user || customerIds.length === 0) return;
 
-    // ⭐ Format filter untuk IN clause: customer_id=in.(uuid1,uuid2,...)
-    // Supabase realtime pakai PostgREST filter syntax.
     const customerFilter = `customer_id=in.(${customerIds.join(',')})`;
 
     const channel = supabase
       .channel('track-order-realtime')
       .on(
         'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'orders' },
+        { event: 'UPDATE', schema: 'public', table: 'orders', filter: customerFilter },
         (payload) => {
           const updated = payload.new;
 
-          // ⭐ Defense-in-depth: skip kalau customer_id gak match (rare, tapi just in case)
+          // ⭐ Defense-in-depth
           if (!customerIds.includes(updated.customer_id)) return;
 
           setOrders((prev) => {
             const existing = prev.find(o => o.id === updated.id);
             if (!existing) {
-              // Order baru milik user yang masuk trackable range — refetch
               fetchOrders();
               return prev;
             }
-            // Patch order yang sudah ada
             const patched = { ...existing, ...updated };
-            // Kalau status berubah ke delivered/cancelled → remove dari list (pindah ke Riwayat)
             if (updated.status === 'delivered' || updated.status === 'cancelled' || updated.status === 'expired') {
               return prev.filter(o => o.id !== updated.id);
             }
-            // Kalau biteship_waybill_url dihapus (rare) → remove
             if (!updated.biteship_waybill_url) {
               return prev.filter(o => o.id !== updated.id);
             }
@@ -261,7 +250,7 @@ const TrackOrderPage = () => {
       supabase.removeChannel(channel);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user]);
+  }, [user, customerIds]);
 
   // ── Auto-expand dari query param ?order=<id> ──
   useEffect(() => {
@@ -281,37 +270,28 @@ const TrackOrderPage = () => {
     setExpandedOrderId(prev => prev === orderId ? null : orderId);
   };
 
-    // ── Login required ──
-  {/* Import CSS ini sekali di file terkait, atau taruh isinya di globals.css:
-import '../assets/styles/track-layout.css'; */}
+  // ── Login required ──
   if (!user) {
     return (
+      <div className="section-full-mobile w-full">
+        <div className="mobile-viewport-group">
+          <HeaderProducts onCartOpen={openCart} forceScrolled />
 
-<div className="section-full-mobile w-full">
-  {/* Wrapper ini yang bikin behavior beda mobile vs desktop.
-      Mobile: dikunci 100dvh (Header+Section = 1 layar penuh, Footer discroll).
-      Desktop: jadi display:contents (transparan), Header+Section+Footer
-      sejajar langsung di dalam .section-full-mobile yang 100dvh. */}
-  <div className="mobile-viewport-group">
-    {/* ⭐ forceScrolled — header selalu putih (gak ada hero section di page ini) */}
-    <HeaderProducts onCartOpen={openCart} forceScrolled />
+          <section className="section-mobile relative flex flex-col items-center justify-center text-center px-4">
+            <p className="text-gray-500 mb-4">Sudah punya Akun?</p>
+            <Link to="/admin" className="text-eglux-secondary font-semibold hover:underline">
+              Masuk ke akun
+            </Link>
+          </section>
+        </div>
 
-    <section className="section-mobile relative flex flex-col items-center justify-center text-center px-4">
-      <p className="text-gray-500 mb-4">Sudah punya Akun?</p>
-      <Link to="/admin" className="text-eglux-secondary font-semibold hover:underline">
-        Masuk ke akun
-      </Link>
-    </section>
-  </div>
-
-  <Footer />
-</div>
+        <Footer />
+      </div>
     );
   }
 
   return (
     <>
-      {/* ⭐ forceScrolled — header selalu putih, gak transparan menumpuk konten */}
       <HeaderProducts onCartOpen={openCart} forceScrolled />
 
       <div className="max-w-3xl mx-auto px-4 md:px-6 pt-24 md:pt-28 pb-8">
@@ -361,7 +341,7 @@ import '../assets/styles/track-layout.css'; */}
           </div>
         )}
 
-        {/* Orders list — setiap card = rincian + tombol Lacak Paket */}
+        {/* Orders list */}
         {!loading && !error && orders.length > 0 && (
           <div className="space-y-4">
             {orders.map((order) => {
@@ -374,14 +354,36 @@ import '../assets/styles/track-layout.css'; */}
                 dot: 'bg-gray-400',
               };
 
+              // ⭐ v2: Compute breakdown values untuk rincian pembayaran lengkap
+              // (match OrdersList.jsx logic)
+              const originalSubtotal = items.reduce((s, item) => {
+                const orig = Number(item.original_unit_price) || Number(item.unit_price_snapshot) || 0;
+                return s + (orig * (Number(item.quantity) || 1));
+              }, 0);
+              const discountedSubtotal = items.reduce((s, item) => {
+                const unit = Number(item.unit_price_snapshot) || 0;
+                return s + (unit * (Number(item.quantity) || 1));
+              }, 0);
+              const variantDiscount = originalSubtotal - discountedSubtotal;
+              const hasVariantDiscount = variantDiscount > 0;
+
+              // Tax: pakai nilai persisten dari DB, fallback recalc kalau order lama
+              let taxAmount = Number(order.tax_amount) || 0;
+              let taxPercent = Number(order.tax_percent) || 3;
+              if (!taxAmount && originalSubtotal > 0) {
+                taxAmount = Math.round(originalSubtotal * taxPercent / 100);
+              }
+
+              const voucherDiscount = Number(order.voucher_discount) || 0;
+              const shippingCost = Number(order.shipping_cost) || 0;
+              const totalSavings = variantDiscount + voucherDiscount;
+
               return (
                 <div
                   key={order.id}
                   className="bg-white border border-gray-200 rounded-xl overflow-hidden hover:shadow-md transition-shadow"
                 >
                   {/* ── Card header (clickable → expand) ── */}
-                  {/* ⭐ Pakai div role="button" (bukan <button>) supaya pasti clickable —
-                      avoid potential conflict dengan global button CSS / form submit behavior */}
                   <div
                     role="button"
                     tabIndex={0}
@@ -406,7 +408,7 @@ import '../assets/styles/track-layout.css'; */}
                       </span>
                     </div>
 
-                    {/* Items preview (always visible) */}
+                    {/* Items preview */}
                     <div className="space-y-1 mb-3">
                       {items.slice(0, 2).map((item, idx) => (
                         <div key={idx} className="flex justify-between text-xs">
@@ -419,7 +421,7 @@ import '../assets/styles/track-layout.css'; */}
                       )}
                     </div>
 
-                    {/* Expand hint — button-style supaya jelas clickable */}
+                    {/* Expand hint */}
                     <div className="flex items-center justify-center gap-1.5 text-xs text-eglux-secondary font-semibold mt-2 pt-2 border-t border-gray-100 bg-eglux-accent/30 rounded-lg py-2 -mx-1">
                       <span>{isExpanded ? 'Sembunyikan rincian' : 'Lihat rincian pesanan'}</span>
                       <svg
@@ -432,7 +434,7 @@ import '../assets/styles/track-layout.css'; */}
                     </div>
                   </div>
 
-                  {/* ── Lacak Paket button (always visible — direct ke Biteship) ── */}
+                  {/* ── Lacak Paket button ── */}
                   <div className="px-4 pb-3">
                     <a
                       href={order.biteship_waybill_url}
@@ -448,7 +450,7 @@ import '../assets/styles/track-layout.css'; */}
                     </a>
                   </div>
 
-                  {/* ── Expanded rincian (collapsible) ── */}
+                  {/* ── Expanded rincian ── */}
                   {isExpanded && (
                     <div className="px-4 pb-4 space-y-3 border-t border-gray-100 pt-3">
                       {/* Status pengiriman */}
@@ -500,6 +502,13 @@ import '../assets/styles/track-layout.css'; */}
                         <div className="space-y-2">
                           {items.map((item, idx) => {
                             const img = getProductImage(item);
+                            const itemUnitPrice = Number(item.unit_price_snapshot) || 0;
+                            const itemOriginalPrice = Number(item.original_unit_price) || itemUnitPrice;
+                            const itemQty = Number(item.quantity) || 1;
+                            const itemHasDiscount = itemOriginalPrice > itemUnitPrice;
+                            const itemFinalSubtotal = itemUnitPrice * itemQty;
+                            const itemOriginalSubtotal = itemOriginalPrice * itemQty;
+
                             return (
                               <div key={idx} className="flex gap-3 items-start">
                                 {img && (
@@ -511,8 +520,13 @@ import '../assets/styles/track-layout.css'; */}
                                     <p className="text-[0.7rem] text-gray-500">{item.variant_name_snapshot}</p>
                                   )}
                                   <p className="text-[0.7rem] text-gray-400 mt-0.5">
-                                    {item.quantity}x · {rupiah(item.subtotal)}
+                                    {itemQty}x · {rupiah(itemFinalSubtotal)}
                                   </p>
+                                  {itemHasDiscount && (
+                                    <p className="text-[0.65rem] text-gray-400 line-through">
+                                      {rupiah(itemOriginalSubtotal)}
+                                    </p>
+                                  )}
                                 </div>
                               </div>
                             );
@@ -529,20 +543,82 @@ import '../assets/styles/track-layout.css'; */}
                         </p>
                       </div>
 
-                      {/* Rincian pembayaran */}
+                      {/* ⭐ v2: Rincian Pembayaran LENGKAP — match OrdersList.jsx */}
                       <div className="bg-gray-50 rounded-lg p-3 space-y-1 text-xs">
+                        <p className="text-[0.7rem] font-semibold text-gray-600 uppercase tracking-wide mb-2 pb-2 border-b border-gray-200">
+                          Rincian Pembayaran
+                        </p>
+
+                        {/* 1. Subtotal harga asli (sebelum diskon variant) */}
                         <div className="flex justify-between">
-                          <span className="text-gray-500">Subtotal</span>
-                          <span className="font-medium text-gray-900">{rupiah(order.subtotal)}</span>
+                          <span className="text-gray-500">Subtotal Produk ({items.length} item)</span>
+                          <span className="font-medium text-gray-900">{rupiah(originalSubtotal)}</span>
                         </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-500">Ongkir</span>
-                          <span className="font-medium text-gray-900">{rupiah(order.shipping_cost)}</span>
+
+                        {/* 2. Diskon variant (potongan) — tampilkan kalau ada */}
+                        {hasVariantDiscount && (
+                          <div className="flex justify-between">
+                            <span className="text-green-600">↓ Diskon Variant</span>
+                            <span className="font-medium text-green-600">− {rupiah(variantDiscount)}</span>
+                          </div>
+                        )}
+
+                        {/* 3. Subtotal setelah diskon variant — tampilkan kalau ada diskon */}
+                        {hasVariantDiscount && (
+                          <div className="flex justify-between">
+                            <span className="text-gray-500">Subtotal Setelah Diskon</span>
+                            <span className="font-medium text-gray-900">{rupiah(discountedSubtotal)}</span>
+                          </div>
+                        )}
+
+                        {/* 4. Ongkir */}
+                        {shippingCost > 0 && (
+                          <div className="flex justify-between">
+                            <span className="text-gray-500">
+                              Ongkir
+                              {order.courier_code && (
+                                <span className="text-gray-400 ml-1 uppercase">
+                                  ({order.courier_code}{order.courier_service ? ` ${order.courier_service}` : ''})
+                                </span>
+                              )}
+                            </span>
+                            <span className="font-medium text-gray-900">{rupiah(shippingCost)}</span>
+                          </div>
+                        )}
+
+                        {/* 5. Biaya Admin & Tax (% dari base price) — pakai nilai persisten dari DB */}
+                        {taxAmount > 0 && (
+                          <div className="flex justify-between">
+                            <span className="text-gray-500">Biaya Admin &amp; Tax ({taxPercent}%)</span>
+                            <span className="font-medium text-gray-900">{rupiah(taxAmount)}</span>
+                          </div>
+                        )}
+
+                        {/* 6. Voucher Discount — tampilkan kalau ada */}
+                        {voucherDiscount > 0 && (
+                          <div className="flex justify-between">
+                            <span className="text-green-600">
+                              🎟️ Voucher
+                              {order.voucher_code && (
+                                <span className="text-gray-400 ml-1">({order.voucher_code})</span>
+                              )}
+                            </span>
+                            <span className="text-green-600 font-medium">− {rupiah(voucherDiscount)}</span>
+                          </div>
+                        )}
+
+                        {/* 7. Grand Total */}
+                        <div className="border-t border-gray-200 pt-2 mt-2 flex justify-between items-center">
+                          <span className="font-semibold text-gray-900">Total Pembayaran</span>
+                          <span className="text-base font-bold text-eglux-secondary">{rupiah(order.total_amount)}</span>
                         </div>
-                        <div className="flex justify-between pt-1 border-t border-gray-200">
-                          <span className="font-semibold text-gray-700">Total</span>
-                          <span className="font-bold text-eglux-secondary">{rupiah(order.total_amount)}</span>
-                        </div>
+
+                        {/* Hint hemat = total diskon (variant discount + voucher) */}
+                        {totalSavings > 0 && (
+                          <p className="text-[0.65rem] text-green-600 mt-1.5 text-right">
+                            🎉 Kamu hemat {rupiah(totalSavings)}!
+                          </p>
+                        )}
                       </div>
                     </div>
                   )}
@@ -552,6 +628,7 @@ import '../assets/styles/track-layout.css'; */}
           </div>
         )}
       </div>
+
     </>
   );
 };
