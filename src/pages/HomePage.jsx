@@ -25,11 +25,55 @@ const ITEMS_PER_PAGE = 20;
 const HEADER_HEIGHT_DESKTOP = 72;
 const HEADER_HEIGHT_MOBILE = 60;
 
-function filterProducts(products, filterValue) {
-  if (filterValue === 'all') return products;
-  if (filterValue === 'produkbaru') return products.filter((p) => p.badge === 'Baru');
-  if (filterValue === 'bestseller') return products.filter((p) => p.badge === 'Best Seller');
-  return products.filter((p) => p.category === filterValue);
+function filterProducts(products, filterValue, subValue = null) {
+  if (!filterValue || filterValue === 'all') {
+    // ⭐ Kalau no filter tapi ada sub (e.g., dari sidebar submenu dengan parent 'all'),
+    // filter by name contains saja (cross-category)
+    if (subValue) {
+      const subLower = subValue.toLowerCase();
+      return products.filter((p) => (p.name || '').toLowerCase().includes(subLower));
+    }
+    return products;
+  }
+
+  // ⭐ Special filters (badge-based)
+  let categoryFiltered;
+  if (filterValue === 'produkbaru') {
+    categoryFiltered = products.filter((p) => p.badge === 'Baru');
+  } else if (filterValue === 'bestseller') {
+    categoryFiltered = products.filter((p) => p.badge === 'Best Seller');
+  } else {
+    // ⭐ Category filter (kitchen/storage/homedecor/bathroom)
+    categoryFiltered = products.filter((p) => p.category === filterValue);
+  }
+
+  // ⭐ Sub-category filter: filter by product name contains sub (case-insensitive)
+  // Dengan FALLBACK: kalau produk dengan nama "sub" gak ada di category tsb,
+  // cari cross-category (mungkin category di DB salah/null)
+  if (subValue) {
+    const subLower = subValue.toLowerCase();
+    const nameMatches = (p) => (p.name || '').toLowerCase().includes(subLower);
+
+    // Step 1: Ideal case — category match + name match
+    const idealMatches = categoryFiltered.filter(nameMatches);
+    if (idealMatches.length > 0) {
+      return idealMatches;
+    }
+
+    // Step 2: Fallback — name match saja (cross-category)
+    // Triggered kalau produk ada tapi category-nya bukan kitchen (data inconsistency)
+    const fallbackMatches = products.filter(nameMatches);
+    if (fallbackMatches.length > 0) {
+      console.warn(
+        `[filterProducts] Sub "${subValue}" tidak ditemukan di category "${filterValue}". ` +
+        `Fallback ke name-based search cross-category. ` +
+        `Produk yang match:`, fallbackMatches.map(p => ({ id: p.id, name: p.name, category: p.category }))
+      );
+    }
+    return fallbackMatches;
+  }
+
+  return categoryFiltered;
 }
 
 const HomePage = () => {
@@ -40,6 +84,8 @@ const HomePage = () => {
   const [banners, setBanners] = useState([]);
   const [overlayTimedOut, setOverlayTimedOut] = useState(false);
   const [activeFilter, setActiveFilter] = useState('all');
+  const [activeSub, setActiveSub] = useState(null);  // ⭐ sub-category untuk sidebar submenu
+  const [searchQuery, setSearchQuery] = useState('');  // ⭐ name-based search di All Products section
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [searchParams, setSearchParams] = useSearchParams();
@@ -61,14 +107,53 @@ const HomePage = () => {
     return () => clearTimeout(timeout);
   }, []);
 
-  // Deep link: ?filter=xxx
+  // ⭐ Helper: cek apakah nilai filter valid (ada di filterButtons atau badge/special values)
+  // Dipindah ke ATAS sebelum deep link effect supaya gak ReferenceError (const gak hoisted)
+  const isValidFilterValue = useCallback((value) => {
+    if (!value) return false;
+    const knownValues = ['all', 'produkbaru', 'bestseller', ...filterButtons.map((b) => b.value)];
+    return knownValues.includes(value);
+  }, [filterButtons]);
+
+  // Deep link: ?filter=xxx&sub=yyy
+  // ⭐ v2: validate filter + handle sub + toast feedback
   useEffect(() => {
     const filter = searchParams.get('filter');
-    if (filter) {
-      setActiveFilter(filter);
-      setTimeout(() => productsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 300);
+    const sub = searchParams.get('sub');
+
+    if (!filter) return;
+
+    // ⭐ Validate filter value
+    if (!isValidFilterValue(filter)) {
+      console.warn('[HomePage] invalid filter from URL:', filter);
+      showToast(`Filter "${filter}" tidak ditemukan. Menampilkan semua produk.`, 'error');
+      setActiveFilter('all');
+      setActiveSub(null);
+      setCurrentPage(1);
+      // Clean URL (hapus invalid filter)
+      searchParams.delete('filter');
+      searchParams.delete('sub');
+      setSearchParams(searchParams, { replace: true });
+      setTimeout(() => productsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
+      return;
     }
-  }, [searchParams]);
+
+    // ⭐ Valid filter — apply
+    setActiveFilter(filter);
+    setActiveSub(sub);
+    setCurrentPage(1);
+
+    // ⭐ Toast feedback (kasih tau user filter apa yang aktif)
+    const filterLabel = filter === 'all' ? 'Semua Produk'
+      : filter === 'produkbaru' ? 'Produk Baru'
+      : filter === 'bestseller' ? 'Best Seller'
+      : filter.charAt(0).toUpperCase() + filter.slice(1);
+    const subLabel = sub ? `: ${sub.charAt(0).toUpperCase() + sub.slice(1)}` : '';
+    showToast(`Menampilkan: ${filterLabel}${subLabel}`, 'info');
+
+    // ⭐ Scroll ke products section
+    setTimeout(() => productsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 300);
+  }, [searchParams, isValidFilterValue, showToast, setSearchParams]);
 
   // Deep link: ?open=<product_id>
   useEffect(() => {
@@ -101,7 +186,21 @@ const HomePage = () => {
     return () => window.removeEventListener('scroll', handle);
   }, []);
 
-  const filteredProducts = useMemo(() => filterProducts(products, activeFilter), [products, activeFilter]);
+  // ⭐ filteredProducts: filter by category (activeFilter) + sub (activeSub) + search query (searchQuery)
+  // Search query = name-based, case-insensitive, contains match
+  const filteredProducts = useMemo(() => {
+    let result = filterProducts(products, activeFilter, activeSub);
+
+    // ⭐ Name-based search filter
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase();
+      result = result.filter((p) =>
+        (p.name || '').toLowerCase().includes(q)
+      );
+    }
+
+    return result;
+  }, [products, activeFilter, activeSub, searchQuery]);
   const totalPages = Math.ceil(filteredProducts.length / ITEMS_PER_PAGE) || 1;
   const paginatedProducts = useMemo(() => {
     const start = (currentPage - 1) * ITEMS_PER_PAGE;
@@ -111,14 +210,23 @@ const HomePage = () => {
   const bestSellers = useMemo(() => products.filter((p) => p.badge === 'Best Seller').slice(0, 10), [products]);
   const newArrivals = useMemo(() => products.filter((p) => p.badge === 'Baru').slice(0, 10), [products]);
 
-  const handleFilterChange = (value) => { setActiveFilter(value); setCurrentPage(1); };
+  const handleFilterChange = (value) => {
+    setActiveFilter(value);
+    setActiveSub(null);  // ⭐ Reset sub saat user klik filter button manual
+    setCurrentPage(1);
+  };
 
-  // ⭐ Helper: cek apakah nilai filter valid (ada di filterButtons atau badge/special values)
-  const isValidFilterValue = useCallback((value) => {
-    if (!value) return false;
-    const knownValues = ['all', 'produkbaru', 'bestseller', ...filterButtons.map((b) => b.value)];
-    return knownValues.includes(value);
-  }, [filterButtons]);
+  // ⭐ Search handler — update query + reset ke page 1
+  const handleSearchChange = (value) => {
+    setSearchQuery(value);
+    setCurrentPage(1);
+  };
+
+  // ⭐ Clear search — reset query + reset page
+  const handleClearSearch = () => {
+    setSearchQuery('');
+    setCurrentPage(1);
+  };
 
   const handleBannerClick = (banner) => {
     // Defensive: pastikan banner object ada & punya cta_link_type
@@ -126,28 +234,22 @@ const HomePage = () => {
     const ctaType = banner.cta_link_type || 'none';
     const ctaValue = banner.cta_link_value || '';
 
-    // console.log('[HomePage] banner click:', { id: banner.id, ctaType, ctaValue });
-
     if (ctaType === 'none' || !ctaValue) {
-      // Tidak ada CTA — silent, biarkan swipe/click natural tanpa side effect
       return;
     }
 
     if (ctaType === 'filter') {
       // ⭐ Filter produk — value bisa: kitchen/storage/homedecor/bathroom/bestseller/produkbaru
-      // Selalu scroll ke products section dulu (biar user lihat hasilnya)
-      // Kalau value invalid, tampilkan toast tapi tetap scroll
       if (isValidFilterValue(ctaValue)) {
         setActiveFilter(ctaValue);
+        setActiveSub(null);  // ⭐ Reset sub (banner CTA gak support sub)
         setCurrentPage(1);
-        // showToast(`Menampilkan: ${ctaValue === 'all' ? 'Semua Produk' : ctaValue}`, 'info');
       } else {
-        // Value tidak dikenali — reset ke 'all' biar user tetap lihat semua produk
         setActiveFilter('all');
+        setActiveSub(null);
         setCurrentPage(1);
         showToast(`Filter "${ctaValue}" tidak ditemukan. Menampilkan semua produk.`, 'error');
       }
-      // ⭐ Scroll dengan small delay supaya filter state sempat apply dulu
       setTimeout(() => {
         productsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }, 50);
@@ -155,23 +257,19 @@ const HomePage = () => {
     }
 
     if (ctaType === 'product') {
-      // ⭐ Buka produk — coba match by id ATAU slug (defensive)
       const match = products.find((p) => p.id === ctaValue) ||
                     products.find((p) => p.slug === ctaValue);
       if (match) {
         setSelectedProduct(match);
-        // Update URL supaya bisa di-share/bookmark
         searchParams.set('open', match.id);
         setSearchParams(searchParams, { replace: true });
       } else {
         showToast('Produk tidak ditemukan atau sudah tidak aktif.', 'error');
-        // console.warn('[HomePage] product not found for cta_value:', ctaValue, 'available products:', products.length);
       }
       return;
     }
 
     if (ctaType === 'url') {
-      // ⭐ URL external — pastikan ada protocol, default to https://
       let url = ctaValue;
       if (!/^https?:\/\//i.test(url)) {
         url = 'https://' + url;
@@ -179,14 +277,11 @@ const HomePage = () => {
       window.location.href = url;
       return;
     }
-
-    // Unknown CTA type — log warning
-    // console.warn('[HomePage] unknown cta_link_type:', ctaType);
   };
 
   const handleHighlightProduct = (product) => {
-    if (product.badge === 'Best Seller') setActiveFilter('bestseller');
-    else if (product.badge === 'Baru') setActiveFilter('produkbaru');
+    if (product.badge === 'Best Seller') { setActiveFilter('bestseller'); setActiveSub(null); }
+    else if (product.badge === 'Baru') { setActiveFilter('produkbaru'); setActiveSub(null); }
     setCurrentPage(1);
     productsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     setTimeout(() => setSelectedProduct(product), 500);
@@ -289,7 +384,7 @@ const HomePage = () => {
                     <p className="section-subtitle">Koleksi terbaru EGLUX</p>
                   </div>
                   <button
-                    onClick={() => { setActiveFilter('produkbaru'); setCurrentPage(1); productsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}
+                    onClick={() => { setActiveFilter('produkbaru'); setActiveSub(null); setCurrentPage(1); productsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}
                     className="see-all-link"
                   >
                     Lihat Semua
@@ -307,7 +402,7 @@ const HomePage = () => {
                     {newArrivals.length > 5 && (
                       <button
                         type="button"
-                        onClick={() => { setActiveFilter('produkbaru'); setCurrentPage(1); productsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}
+                        onClick={() => { setActiveFilter('produkbaru'); setActiveSub(null); setCurrentPage(1); productsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}
                         className="eglux-hscroll__item eglux-hscroll__more"
                         aria-label="Lihat lainnya"
                       >
@@ -328,7 +423,7 @@ const HomePage = () => {
                     <p className="section-subtitle">Produk terlaris paling dicari</p>
                   </div>
                   <button
-                    onClick={() => { setActiveFilter('bestseller'); setCurrentPage(1); productsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}
+                    onClick={() => { setActiveFilter('bestseller'); setActiveSub(null); setCurrentPage(1); productsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}
                     className="see-all-link"
                   >
                     Lihat Semua
@@ -346,7 +441,7 @@ const HomePage = () => {
                     {bestSellers.length > 5 && (
                       <button
                         type="button"
-                        onClick={() => { setActiveFilter('bestseller'); setCurrentPage(1); productsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}
+                        onClick={() => { setActiveFilter('bestseller'); setActiveSub(null); setCurrentPage(1); productsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}
                         className="eglux-hscroll__item eglux-hscroll__more"
                         aria-label="Lihat lainnya"
                       >
@@ -374,6 +469,7 @@ const HomePage = () => {
           </div>
 
           {/* ⭐ Sticky filter wrapper — detects scroll position */}
+          {/* Hanya berisi filter buttons (sticky), search input dipisah supaya ngikut section */}
           <div ref={filterWrapperRef} className="min-h-[48px]">
             <div
               className={`transition-all duration-300 ${filterStuck
@@ -383,6 +479,7 @@ const HomePage = () => {
               style={filterStuck ? { top: `${headerH}px` } : undefined}
             >
               <div className="max-w-[1600px] mx-auto px-4 md:px-8">
+                {/* Filter buttons */}
                 <div className="flex justify-center gap-1 md:gap-3 flex-wrap py-3">
                   {filterButtons.map((btn) => (
                     <button
@@ -398,6 +495,60 @@ const HomePage = () => {
             </div>
           </div>
 
+          {/* ⭐ Search input — DIPISAH dari sticky wrapper, ngikut section All Products */}
+          <div className="max-w-[1600px] mx-auto px-4 md:px-8 mt-4 md:mt-6">
+            <div className="flex justify-center">
+              <div className="relative w-full max-w-md">
+                {/* Search icon */}
+                <svg
+                  className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none"
+                  viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                >
+                  <circle cx="11" cy="11" r="8" />
+                  <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                </svg>
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => handleSearchChange(e.target.value)}
+                  placeholder="Cari produk berdasarkan nama..."
+                  className="w-full pl-10 pr-10 py-2 text-sm border border-gray-300 rounded-full focus:border-eglux-secondary focus:outline-none focus:ring-1 focus:ring-eglux-secondary/30 transition-colors bg-white"
+                />
+                {/* Clear button (X) — muncul kalau ada query */}
+                {searchQuery && (
+                  <button
+                    type="button"
+                    onClick={handleClearSearch}
+                    aria-label="Hapus pencarian"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-full transition-colors cursor-pointer border-none bg-transparent"
+                  >
+                    <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <line x1="18" y1="6" x2="6" y2="18" />
+                      <line x1="6" y1="6" x2="18" y2="18" />
+                    </svg>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* ⭐ Search results count — muncul kalau ada query aktif */}
+            {searchQuery.trim() && !loading && !error && (
+              <div className="text-center mt-3">
+                <p className="text-xs text-gray-500">
+                  {filteredProducts.length > 0 ? (
+                    <>
+                      Menampilkan <span className="font-semibold text-eglux-secondary">{filteredProducts.length}</span> produk untuk "<span className="font-medium text-gray-700">{searchQuery.trim()}</span>"
+                    </>
+                  ) : (
+                    <>
+                      Tidak ada produk yang cocok dengan "<span className="font-medium text-gray-700">{searchQuery.trim()}</span>"
+                    </>
+                  )}
+                </p>
+              </div>
+            )}
+          </div>
+
           {loading && <p className="text-center text-gray-400 py-20 text-sm">Memuat produk...</p>}
           {error && <p className="text-center text-red-500 py-20 text-sm">Gagal memuat produk.</p>}
 
@@ -409,7 +560,21 @@ const HomePage = () => {
                 ))}
               </div>
             ) : (
-              <p className="text-center text-gray-400 py-20 text-sm">Tidak ada produk untuk kategori ini.</p>
+              <div className="text-center py-20">
+                <p className="text-gray-400 text-sm mb-2">
+                  {searchQuery.trim()
+                    ? `Tidak ada produk yang cocok dengan "${searchQuery.trim()}".`
+                    : 'Tidak ada produk untuk kategori ini.'}
+                </p>
+                {searchQuery.trim() && (
+                  <button
+                    onClick={handleClearSearch}
+                    className="text-xs text-eglux-secondary font-semibold hover:underline cursor-pointer border-none bg-transparent"
+                  >
+                    Hapus pencarian
+                  </button>
+                )}
+              </div>
             )
           )}
 

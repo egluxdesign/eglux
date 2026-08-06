@@ -108,7 +108,7 @@ const Toast = ({ toast, onClose, duration = 4000 }) => {
   return (
     <div
       key={toast.id}
-      className={`fixed top-4 right-4 z-[9999] flex items-center gap-3 px-4 py-3 rounded-xl border ${style.bg} ${style.border} ${style.text} shadow-lg max-w-sm transition-all duration-500 ${
+      className={`fixed bottom-4 right-4 z-[9999] flex items-center gap-3 px-4 py-3 rounded-xl border ${style.bg} ${style.border} ${style.text} shadow-lg max-w-sm transition-all duration-500 ${
         visible ? 'opacity-100 translate-x-0' : 'opacity-0 translate-x-4 pointer-events-none'
       }`}
       role="status"

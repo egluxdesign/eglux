@@ -1,17 +1,14 @@
 // ============================================================
 //  EGLUX — Centralized Data
-//  Ganti nilai `image` dengan URL dari Supabase Storage nanti.
-//  Contoh: supabase.storage.from('eglux-assets').getPublicUrl('...')
+//  ⭐ v2: Fix SIDEBAR_CATEGORIES filter values
+//    - 'new' → 'produkbaru' (match HomePage filterProducts convention)
+//    - Parent hasSubmenu items: href tetap '#' (klik parent = toggle submenu)
+//    - Submenu items: format /?filter=<parent>&sub=<keyword>
+//      HomePage akan filter: category=<parent> + name contains <keyword>
 // ============================================================
 
 // ── Navigation ───────────────────────────────────────────────
 // `key` dipakai untuk matching dengan prop `activePage` di DuplicateNav.
-// Misalnya <DuplicateNav activePage="blog" /> akan highlight link dengan
-// key="blog". Kalau `activePage` tidak di-pass, fallback ke useLocation
-// pathname (link.href === pathname).
-//
-// Jangan hardcode `active: true` — active state harus dynamic, di-detect
-// dari URL/activePage prop.
 export const NAV_LINKS = [
   { label: 'Beranda',      href: '/',          key: 'home'      },
   { label: 'Blog',         href: '/blog',      key: 'blog'      },
@@ -27,72 +24,70 @@ export const SOCIAL_LINKS = [
 ];
 
 // ── Sidebar Categories ────────────────────────────────────────
+// ⭐ v2 FIX:
+//   - 'New Arrival': '/?filter=new' → '/?filter=produkbaru'
+//     (HomePage.filterProducts kenal 'produkbaru', BUKAN 'new')
+//   - Parent hasSubmenu (Kitchen, Home Decor): href '#' (klik = toggle submenu)
+//   - Submenu items: /?filter=<parent>&sub=<keyword>
+//     HomePage akan filter: category=<parent> + name contains <keyword>
 export const SIDEBAR_CATEGORIES = [
   {
     label: 'New Arrival',
-    href:  '/?filter=new',
-    // TODO: Ganti URL ini dengan path dari Supabase Storage
-    // Contoh: supabase.storage.from('category-images').getPublicUrl('new-arrival.webp')
+    // ⭐ FIXED: was '/?filter=new' → now '/?filter=produkbaru'
+    href:  '/?filter=produkbaru',
     image: 'https://down-id.img.susercontent.com/file/sg-11134201-820nf-mn9v2qt7p6h23a.webp',
   },
   {
     label: 'Best Seller',
     href:  '/?filter=bestseller',
-    // TODO: Supabase Storage path — best-seller category image
     image: 'https://down-id.img.susercontent.com/file/sg-11134201-824gv-me0yfrozmpzae4.webp',
   },
   {
     label: 'All Products',
     href:  '/',
-    // TODO: Supabase Storage path — all products category image
     image: 'https://down-tx-id.img.susercontent.com/id-11134210-7rbk4-m6npp1bog9rg6c',
   },
   {
     label: 'Kitchen',
-    href:  '#',
+    href:  '#',  // Parent toggle (klik → expand submenu, gak navigate)
     hasSubmenu: true,
-    // TODO: Supabase Storage path — kitchen category image
     image: 'https://down-id.img.susercontent.com/file/sg-11134201-820n5-mn9v2pvit5om4b.webp',
+    // ⭐ Submenu: filter=kitchen + sub=<keyword> (filter by name contains)
     submenu: [
-      { label: 'Prasmanan',    href: '/?filter=prasmanan' },
-      { label: 'Tempat Bumbu', href: '/?filter=bumbu'     },
-      { label: 'Toples',       href: '/?filter=toples'    },
-      { label: 'Nampan',       href: '/?filter=nampan'    },
+      { label: 'Prasmanan',    href: '/?filter=kitchen&sub=prasmanan' },
+      { label: 'Tempat Bumbu', href: '/?filter=kitchen&sub=bumbu'     },
+      { label: 'Toples',       href: '/?filter=kitchen&sub=toples'    },
+      { label: 'Nampan',       href: '/?filter=kitchen&sub=nampan'    },
     ],
   },
   {
     label: 'Home Decor',
-    href:  '#',
+    href:  '#',  // Parent toggle
     hasSubmenu: true,
-    // TODO: Supabase Storage path — home decor category image
     image: 'https://down-id.img.susercontent.com/file/id-11134207-7rasg-m5z7qgib73zc9d.webp',
+    // ⭐ Submenu: filter=homedecor + sub=<keyword>
     submenu: [
-      { label: 'Wall Decor',  href: '/?filter=walldecor' },
-      { label: 'Pajangan',    href: '/?filter=pajangan'  },
-      { label: 'Vas Bunga',   href: '/?filter=vas'       },
-      { label: 'Taplak Meja', href: '/?filter=taplak'    },
+      { label: 'Wall Decor',  href: '/?filter=homedecor&sub=wall'    },
+      { label: 'Pajangan',    href: '/?filter=homedecor&sub=pajangan' },
+      { label: 'Vas Bunga',   href: '/?filter=homedecor&sub=vas'      },
+      { label: 'Taplak Meja', href: '/?filter=homedecor&sub=taplak'   },
     ],
   },
   {
     label: 'Bathroom',
     href:  '/?filter=bathroom',
-    // TODO: Supabase Storage path — bathroom category image
     image: 'https://down-id.img.susercontent.com/file/sg-11134201-7rdvm-mdjp4ct77ggp63.webp',
   },
   {
     label: 'Storage',
     href:  '/?filter=storage',
-    // TODO: Supabase Storage path — storage category image
     image: 'https://down-id.img.susercontent.com/file/sg-11134201-7rdy8-mcj15f3yq0frd3.webp',
   },
 ];
 
 // ── Hero ─────────────────────────────────────────────────────
 export const HERO_DATA = {
-  // TODO: Ganti dengan URL Supabase Storage
-  // Contoh: supabase.storage.from('eglux-assets').getPublicUrl('hero/heroBg.png')
   bgImage:  '/src/assets/img/heroBg.jpg',
-  // TODO: Logo putih untuk overlay hero
   logo1:  '/src/assets/img/Logo2.png',
   subtitle: 'Kitchen & Home Decor',
   ctaLabel: 'Shop Now',
@@ -108,9 +103,9 @@ export const PROMO_BANNERS = [
     title:   'Diskon Hingga 50%',
     desc:    'Perlengkapan Dapur Premium — Hanya Hari Ini!',
     cta:     'Beli Sekarang',
-    href:    '/?filter=flashsale',
-    variant: 'primary',   // coklat overlay
-    // TODO: Ganti dengan hero banner dari Supabase Storage
+    // ⭐ FIXED: was '/?filter=flashsale' (invalid) → now '/?filter=produkbaru'
+    href:    '/?filter=produkbaru',
+    variant: 'primary',
     image:   'https://images.unsplash.com/photo-1556909114-f6e7ad7d3136?w=1200&q=80',
     tall:    true,
   },
@@ -120,9 +115,9 @@ export const PROMO_BANNERS = [
     title:   'Koleksi Terbaru 2026',
     desc:    'Temukan produk home decor & kitchen terbaru dari Eglux',
     cta:     'Lihat Koleksi',
-    href:    '/?filter=new',
-    variant: 'dark',      // biru gelap overlay
-    // TODO: Ganti dengan banner new arrival dari Supabase Storage
+    // ⭐ FIXED: was '/?filter=new' (invalid) → now '/?filter=produkbaru'
+    href:    '/?filter=produkbaru',
+    variant: 'dark',
     image:   'https://images.unsplash.com/photo-1556909114-44e3e70034e2?w=1200&q=80',
     tall:    false,
   },
@@ -133,36 +128,30 @@ export const CATEGORY_CARDS = [
   {
     label: 'Perlengkapan Penyimpanan',
     href:  '/?filter=storage',
-    // TODO: Supabase Storage path — storage category card image
     image: 'https://down-id.img.susercontent.com/file/sg-11134201-7rdy8-mcj15f3yq0frd3.webp',
     alt:   'Storage',
   },
   {
     label: 'Perlengkapan Dapur',
     href:  '/?filter=kitchen',
-    // TODO: Supabase Storage path — kitchen category card image
     image: 'https://down-id.img.susercontent.com/file/sg-11134201-820n5-mn9v2pvit5om4b.webp',
     alt:   'Kitchen',
   },
   {
     label: 'Perlengkapan Kamar Mandi',
     href:  '/?filter=bathroom',
-    // TODO: Supabase Storage path — bathroom category card image
     image: 'https://down-id.img.susercontent.com/file/sg-11134201-7rdvm-mdjp4ct77ggp63.webp',
     alt:   'Bathroom',
   },
   {
     label: 'Hiasan Rumah',
     href:  '/?filter=homedecor',
-    // TODO: Supabase Storage path — homedecor category card image
     image: 'https://down-id.img.susercontent.com/file/sg-11134201-7rdx6-mdjse24iesx0a6.webp',
     alt:   'Home Decor',
   },
 ];
 
 // ── Best Seller Products ──────────────────────────────────────
-// TODO: Nanti data ini akan di-fetch dari tabel `products` Supabase
-// Contoh query: supabase.from('products').select('*').eq('tag','best-seller')
 export const BEST_SELLERS = [
   {
     id:       'bs-1',
@@ -170,7 +159,6 @@ export const BEST_SELLERS = [
     model:    'Bulat Putih S+Kaki',
     badge:    'Best Seller',
     category: 'kitchen',
-    // TODO: Supabase Storage path — product image
     image:    'https://down-id.img.susercontent.com/file/sg-11134201-824gv-me0yfrozmpzae4.webp',
     shopLink: 'https://shopee.co.id/EGLUX-Tempat-prasmanan-Motif-Bintik-Emas-wadah-prasmanan-aesthetics-i.1082449101.43165997982',
   },
@@ -180,7 +168,6 @@ export const BEST_SELLERS = [
     model:    'Perpan kecil transparan',
     badge:    'Best Seller',
     category: 'kitchen',
-    // TODO: Supabase Storage path — product image
     image:    'https://down-id.img.susercontent.com/file/sg-11134201-7rdx6-lz62cs0ixm2vbb.webp',
     shopLink: 'https://shopee.co.id/EGLUX-Tempat-Prasmanan-Tempat-buah-Wadah-Saji-Tempat-Roti-aesthetic-Nampan-dengan-tutup-i.1082449101.24385020393',
   },
@@ -190,7 +177,6 @@ export const BEST_SELLERS = [
     model:    'Bulat Putih S+Kaki',
     badge:    'Baru',
     category: 'kitchen',
-    // TODO: Supabase Storage path — product image
     image:    'https://down-id.img.susercontent.com/file/sg-11134201-820nf-mn9v2qt7p6h23a.webp',
     shopLink: 'https://shopee.co.id/EGLUX-Tempat-Prasmanan-aesthetics-wadah-saji-nampan-set-i.1082449101.55409152909',
   },
@@ -200,14 +186,12 @@ export const BEST_SELLERS = [
     model:    'Perpan L Bening 3pcs',
     badge:    'Best Seller',
     category: 'kitchen',
-    // TODO: Supabase Storage path — product image
     image:    'https://down-id.img.susercontent.com/file/id-11134207-7rasg-m5z7qgib73zc9d.webp',
     shopLink: 'https://shopee.co.id/EGLUX-Tempat-prasmanan-Wadah-Saji-tempat-buah-dengan-tutup-aesthetic-i.1082449101.28572331206',
   },
 ];
 
 // ── New Arrivals Products ─────────────────────────────────────
-// TODO: Fetch dari Supabase: supabase.from('products').select('*').eq('tag','new-arrival')
 export const NEW_ARRIVALS = [
   {
     id:       'na-1',
@@ -215,7 +199,6 @@ export const NEW_ARRIVALS = [
     model:    'Bulat Putih S+Kaki',
     badge:    'Baru',
     category: 'kitchen',
-    // TODO: Supabase Storage path — product image
     image:    'https://down-id.img.susercontent.com/file/sg-11134201-820nf-mn9v2qt7p6h23a.webp',
     shopLink: 'https://shopee.co.id/EGLUX-Tempat-Prasmanan-aesthetics-wadah-saji-nampan-set-i.1082449101.55409152909',
   },
@@ -225,7 +208,6 @@ export const NEW_ARRIVALS = [
     model:    'Perpan L Bening 3pcs',
     badge:    'Best Seller',
     category: 'kitchen',
-    // TODO: Supabase Storage path — product image
     image:    'https://down-id.img.susercontent.com/file/id-11134207-7rasg-m5z7qgib73zc9d.webp',
     shopLink: 'https://shopee.co.id/EGLUX-Tempat-prasmanan-Wadah-Saji-tempat-buah-dengan-tutup-aesthetic-i.1082449101.28572331206',
   },
@@ -235,7 +217,6 @@ export const NEW_ARRIVALS = [
     model:    'Bulat Putih S+Kaki',
     badge:    'Best Seller',
     category: 'kitchen',
-    // TODO: Supabase Storage path — product image
     image:    'https://down-id.img.susercontent.com/file/sg-11134201-824gv-me0yfrozmpzae4.webp',
     shopLink: 'https://shopee.co.id/EGLUX-Tempat-prasmanan-Motif-Bintik-Emas-wadah-prasmanan-aesthetics-i.1082449101.43165997982',
   },
@@ -245,7 +226,6 @@ export const NEW_ARRIVALS = [
     model:    'Perpan kecil transparan',
     badge:    'Best Seller',
     category: 'kitchen',
-    // TODO: Supabase Storage path — product image
     image:    'https://down-id.img.susercontent.com/file/sg-11134201-7rdx6-lz62cs0ixm2vbb.webp',
     shopLink: 'https://shopee.co.id/EGLUX-Tempat-Prasmanan-Tempat-buah-Wadah-Saji-Tempat-Roti-aesthetic-Nampan-dengan-tutup-i.1082449101.24385020393',
   },
@@ -255,7 +235,6 @@ export const NEW_ARRIVALS = [
     model:    'Bulat Putih S+Kaki',
     badge:    'Baru',
     category: 'kitchen',
-    // TODO: Supabase Storage path — product image
     image:    'https://down-id.img.susercontent.com/file/sg-11134201-820nf-mn9v2qt7p6h23a.webp',
     shopLink: 'https://shopee.co.id/EGLUX-Tempat-Prasmanan-aesthetics-wadah-saji-nampan-set-i.1082449101.55409152909',
   },
@@ -265,7 +244,6 @@ export const NEW_ARRIVALS = [
     model:    'Perpan L Bening 3pcs',
     badge:    'Best Seller',
     category: 'kitchen',
-    // TODO: Supabase Storage path — product image
     image:    'https://down-id.img.susercontent.com/file/id-11134207-7rasg-m5z7qgib73zc9d.webp',
     shopLink: 'https://shopee.co.id/EGLUX-Tempat-prasmanan-Wadah-Saji-tempat-buah-dengan-tutup-aesthetic-i.1082449101.28572331206',
   },
@@ -294,20 +272,21 @@ export const FEATURES = [
 export const FOOTER_LINKS = {
   navigasi: [
     { label: 'Beranda',      href: '/'          },
-    { label: 'Produk',       href: '/'  },
+    { label: 'Produk',       href: '/'          },
     { label: 'Blog',         href: '/blog'      },
     { label: 'Tentang Kami', href: '/about'     },
     { label: 'Kontak',       href: '/contact'   },
     { label: 'Affiliate',    href: '/affiliate' },
   ],
   kategori: [
-    { label: 'New Arrival',  href: '/?filter=new'        },
-    { label: 'Best Seller',  href: '/?filter=bestseller' },
-    { label: 'Semua Produk', href: '/'                   },
-    { label: 'Kitchen',      href: '/?filter=kitchen'    },
-    { label: 'Homedecor',    href: '/?filter=homedecor'  },
-    { label: 'Bathroom',     href: '/?filter=bathroom'   },
-    { label: 'Storage',      href: '/?filter=storage'    },
+    // ⭐ FIXED: 'new' → 'produkbaru'
+    { label: 'New Arrival',  href: '/?filter=produkbaru'  },
+    { label: 'Best Seller',  href: '/?filter=bestseller'  },
+    { label: 'Semua Produk', href: '/'                    },
+    { label: 'Kitchen',      href: '/?filter=kitchen'     },
+    { label: 'Homedecor',    href: '/?filter=homedecor'   },
+    { label: 'Bathroom',     href: '/?filter=bathroom'    },
+    { label: 'Storage',      href: '/?filter=storage'     },
   ],
   bantuan: [
     { label: 'Pengiriman',   href: '/contact?section=shipping' },

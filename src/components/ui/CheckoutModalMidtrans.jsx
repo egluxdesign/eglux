@@ -786,26 +786,82 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
       onClose();
 
       // ⭐ STEP 4: Open Midtrans Snap popup — same callbacks as before
+      // ⭐ v2: Tambah polling check-payment-status untuk detect payment success REAL-TIME
+      //   (onSuccess callback gak reliable untuk VA/QRIS — bisa telat menit²)
+      let pollingTimer = null;
+      let pollingCount = 0;
+      const MAX_POLLS = 60;  // 60 × 3s = 3 menit max polling
+
+      const startPaymentPolling = (orderId) => {
+        console.log('[Checkout] Start polling payment status for order:', orderId);
+        pollingTimer = setInterval(async () => {
+          pollingCount++;
+          if (pollingCount > MAX_POLLS) {
+            console.log('[Checkout] Polling timeout (3 menit) — stop');
+            clearInterval(pollingTimer);
+            return;
+          }
+          try {
+            // Call check-payment-status edge function (query Midtrans API directly)
+            const { data: session } = await supabase.auth.getSession();
+            const token = session?.session?.access_token;
+            if (!token) return;
+
+            const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/check-payment-status`, {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ order_id: orderId }),
+            });
+            const result = await resp.json();
+
+            if (result.payment_status === 'paid') {
+              console.log('[Checkout] ✓ Payment confirmed via polling!');
+              clearInterval(pollingTimer);
+              showToast('✅ Pembayaran berhasil! Pesanan Anda sedang diproses.', 'success');
+              // Optional: refresh orders list if on /orders page
+              window.dispatchEvent(new CustomEvent('eglux:payment-success', { detail: { orderId } }));
+            }
+          } catch (e) {
+            console.warn('[Checkout] Polling error (continue):', e?.message);
+          }
+        }, 3000);  // Poll every 3 seconds
+      };
+
+      const stopPaymentPolling = () => {
+        if (pollingTimer) {
+          clearInterval(pollingTimer);
+          pollingTimer = null;
+        }
+      };
+
       window.snap.pay(data.token, {
         onSuccess: (result) => {
-          console.log('[Midtrans] Payment success:', result.transaction_id);
-          // ⭐ Defensive: reset body scroll lock yang mungkin di-set oleh Snap popup
-          // (Snap popup set body overflow:hidden saat render, kadang gak ke-release
-          // otomatis setelah auto-close → web "stuck" sampai refresh)
+          console.log('[Midtrans] Payment success (Snap callback):', result.transaction_id);
           document.body.style.overflow = '';
-          showToast('Pembayaran berhasil! Terima kasih ✓', 'success');
+          stopPaymentPolling();  // Stop polling — payment confirmed
+          showToast('✅ Pembayaran berhasil! Terima kasih.', 'success');
+          window.dispatchEvent(new CustomEvent('eglux:payment-success', { detail: { orderId: data.order_id } }));
         },
         onPending: () => {
           document.body.style.overflow = '';
-          showToast('Menunggu pembayaran. Cek WA/email untuk instruksi, atau bayar via Pesanan Saya.', 'info');
+          showToast('Menunggu pembayaran. Cek WA/email untuk instruksi.', 'info');
+          // ⭐ START polling — detect payment success untuk VA/QRIS yang telat
+          startPaymentPolling(data.order_id);
         },
         onError: (result) => {
           console.error('[Midtrans] Payment error:', result);
           document.body.style.overflow = '';
+          stopPaymentPolling();
           showToast('Pembayaran gagal. Bayar ulang via menu Pesanan Saya.', 'error');
         },
         onClose: () => {
           document.body.style.overflow = '';
+          // ⭐ User close Snap popup tanpa bayar — keep polling jika ada pending payment
+          // (user mungkin bayar via VA/QRIS di app lain)
+          // Polling akan auto-stop kalau payment confirmed atau timeout 3 menit
           showToast('Order tersimpan. Bayar nanti via menu Pesanan Saya.', 'warning');
         },
       });
@@ -871,7 +927,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
   return (
     <>
     <div
-      className="fixed inset-0 bg-black/60 z-[3500] h-[100dvh] flex items-center justify-center p-3 md:p-4"
+      className="fixed inset-0 bg-black/60 z-[3500] flex items-center justify-center p-3 md:p-4"
       onClick={(e) => e.target === e.currentTarget && onClose()}
       role="dialog"
       aria-modal="true"
@@ -883,7 +939,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
           <div className="min-w-0 pr-2">
             <h3 className="text-[1rem] md:text-[1.1rem] font-bold text-eglux-primary truncate">Checkout</h3>
             <p className="text-[0.72rem] text-gray-500 mt-0.5 flex items-center gap-1 truncate">
-              <ShieldCheck className="w-3 h-3 flex-shrink-0" /> EGLUX
+              <ShieldCheck className="w-3 h-3 flex-shrink-0" /> Midtrans · Biteship
             </p>
           </div>
           <button
@@ -900,7 +956,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
           {/* === Order Summary (v3: transparent breakdown) === */}
           <section className="bg-eglux-accent rounded-xl p-4 text-[0.85rem]">
             <h4 className="text-[0.78rem] uppercase tracking-[1px] text-[#666] mb-2 font-semibold flex items-center gap-1.5">
-              <Package className="w-3.5 h-3.5" />Detail Pesanan
+              <Package className="w-3.5 h-3.5" />Ringkasan Pesanan
             </h4>
 
             {/* Item list — tampilkan harga asli (strike) + harga diskon per item */}
@@ -948,7 +1004,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
               );
               const totalDiscount = originalSubtotal - discountedSubtotal;
               const hasAnyDiscount = totalDiscount > 0;
-              const shippingCost = selectedShipping?.price || 0;
+              const shippingCost = shippingCostForDisplay;
               // ⭐ Tax (biaya admin 3% dari base price = harga asli sebelum diskon)
               const taxFee = taxAmountForDisplay;
               const taxBase = taxBaseForDisplay;
@@ -1055,12 +1111,12 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
                   value={voucherCode}
                   onChange={(e) => { setVoucherCode(e.target.value); setVoucherError(''); }}
                   placeholder="Masukkan kode voucher"
-                  className="flex-1 px-3 py-2 text-[0.8rem] border border-gray-300 rounded-md uppercase"
+                  className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md uppercase"
                 />
                 <button
                   onClick={handleApplyVoucher}
                   disabled={voucherLoading || !voucherCode.trim()}
-                  className="px-4 py-2 text-sm font-semibold text-white bg-eglux-secondary rounded-md hover:bg-[#aaa] disabled: cursor-pointer border-none"
+                  className="px-4 py-2 text-sm font-semibold text-white bg-eglux-primary rounded-md hover:opacity-90 disabled:opacity-50 cursor-pointer border-none"
                 >
                   {voucherLoading ? '⏳' : 'Terapkan'}
                 </button>
@@ -1072,15 +1128,15 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
           </section>
 
           {/* === Data Pembeli === */}
-          <section className="space-y-4 pt-8">
+          <section className="space-y-4">
             <h4 className="text-[0.78rem] uppercase tracking-[1px] text-[#666] font-semibold flex items-center gap-1.5">
-              <User className="w-3.5 h-3.5" />Info Pesanan
+              <User className="w-3.5 h-3.5" />Data Pembeli
             </h4>
 
             {/* Name */}
             <div>
               <label className="block text-[0.8rem] font-semibold text-eglux-primary uppercase tracking-[0.5px] mb-1.5">
-                Nama Lengkap <span className="text-red-500">*</span>
+                Nama Lengkap *
               </label>
               <input
                 type="text"
@@ -1099,7 +1155,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
             {/* Phone — custom input dengan country selector (default +62, bisa ganti) */}
             <div>
               <label className="block text-[0.8rem] font-semibold text-eglux-primary uppercase tracking-[0.5px] mb-1.5">
-                WhatsApp <span className="text-red-500">*</span>
+                WhatsApp *
               </label>
               <div className="relative" ref={countryDropdownRef}>
                 {/* Country selector button — klik buka dropdown, TIDAK bisa di-backspace */}
@@ -1132,7 +1188,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
                   inputMode="numeric"
                   autoComplete="tel"
                   disabled={isLocked}
-                  className={`w-full py-3 pl-[100px] md:pl-[100px] pr-4 border-[1.5px] rounded-[10px] text-[0.88rem] text-eglux-primary bg-white outline-none focus:border-eglux-secondary transition-colors disabled:bg-[#f5f5f5] disabled:text-[#999] ${
+                  className={`w-full py-3 pl-[90px] md:pl-[100px] pr-4 border-[1.5px] rounded-[10px] text-[0.88rem] text-eglux-primary bg-white outline-none focus:border-eglux-secondary transition-colors disabled:bg-[#f5f5f5] disabled:text-[#999] ${
                     formErrors.phone ? 'border-red-500' : 'border-[#ddd]'
                   }`}
                 />
@@ -1168,10 +1224,10 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
                             }`}
                           >
                             <span className="text-base leading-none flex-shrink-0">{c.flag}</span>
-                            <span className="text-[0.8rem] text-eglux-primary flex-1 truncate">
+                            <span className="text-[0.85rem] text-eglux-primary flex-1 truncate">
                               {c.name}
                             </span>
-                            <span className="text-[0.8rem] text-gray-500 whitespace-nowrap flex-shrink-0">
+                            <span className="text-[0.78rem] text-gray-500 whitespace-nowrap flex-shrink-0">
                               +{c.dial}
                             </span>
                           </button>
@@ -1183,14 +1239,14 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
               </div>
               <InlineError msg={formErrors.phone} />
               <p className="text-[0.72rem] text-gray-500 mt-1">
-                {/* Klik bendera untuk ganti negara (default Indonesia +62). Ketik nomor tanpa kode negara. */}
-              </p>  
+                Klik bendera untuk ganti negara (default Indonesia +62). Ketik nomor tanpa kode negara.
+              </p>
             </div>
 
             {/* Email — full width + inline error */}
             <div>
               <label className="block text-[0.8rem] font-semibold text-eglux-primary uppercase tracking-[0.5px] mb-1.5">
-                Email <span className="text-red-500">*</span>
+                Email
               </label>
               <input
                 type="email"
@@ -1207,7 +1263,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
               />
               <InlineError msg={formErrors.email} />
               <p className="text-[0.72rem] text-gray-500 mt-1">
-                {/* Email opsional — Midtrans akan kirim e-receipt jika diisi. */}
+                Email opsional — Midtrans akan kirim e-receipt jika diisi.
               </p>
             </div>
           </section>
@@ -1221,7 +1277,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
             {/* Address */}
             <div>
               <label className="block text-[0.8rem] font-semibold text-eglux-primary uppercase tracking-[0.5px] mb-1.5">
-                Alamat Lengkap <span className="text-red-500">*</span>
+                Alamat Lengkap *
               </label>
               <textarea
                 name="address"
@@ -1239,7 +1295,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
             {/* City — react-select searchable dropdown */}
             <div>
               <label className="block text-[0.8rem] font-semibold text-eglux-primary uppercase tracking-[0.5px] mb-1.5">
-                Kota <span className="text-red-500">*</span>
+                Kota *
               </label>
               <Select
                 options={INDONESIAN_CITIES}
@@ -1247,23 +1303,23 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
                 onChange={onCityChange}
                 isDisabled={isLocked}
                 isSearchable
-                placeholder="Contoh: Tangerang, Jakarta, dll."
+                placeholder="Cari kota... (ketik nama kota atau provinsi)"
                 styles={selectStyles}
                 error={formErrors.city}
                 noOptionsMessage={() => 'Kota tidak ditemukan'}
-                className="text-[0.8rem]"
+                className="text-[0.88rem]"
                 classNamePrefix="react-select"
               />
               <InlineError msg={formErrors.city} />
               <p className="text-[0.72rem] text-gray-500 mt-1">
-                {/* 97 kota di Indonesia · ketik untuk cari (misal: "bandung", "jakarta", "surabaya") */}
+                97 kota di Indonesia · ketik untuk cari (misal: "bandung", "jakarta", "surabaya")
               </p>
             </div>
 
             {/* Postal code */}
             <div>
               <label className="block text-[0.8rem] font-semibold text-eglux-primary uppercase tracking-[0.5px] mb-1.5">
-                Kode Pos <span className="text-red-500">*</span>
+                Kode Pos *
               </label>
               <input
                 type="text"
@@ -1337,12 +1393,12 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
           {/* === Pilih Kurir === */}
           <section className="space-y-3">
             <h4 className="text-[0.78rem] uppercase tracking-[1px] text-[#666] font-semibold flex items-center gap-1.5">
-              <Truck className="w-3.5 h-3.5" />Pilih Kurir <span className="text-red-500">*</span>
+              <Truck className="w-3.5 h-3.5" />Pilih Kurir
             </h4>
 
             {!selectedAreaId && (
               <p className="text-[0.78rem] text-gray-500 italic">
-                Lengkapi Kota dan Kode Pos untuk melihat pilihan kurir.
+                Lengkapi kode pos & pilih area dulu untuk melihat opsi kurir.
               </p>
             )}
 
@@ -1409,7 +1465,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
               name="notes"
               value={form.notes}
               onChange={change}
-              placeholder="Tulis catatan di sini..."
+              placeholder="Warna, ukuran, atau permintaan khusus..."
               disabled={isLocked}
               className="w-full py-3 px-4 border-[1.5px] border-[#ddd] rounded-[10px] text-[0.88rem] text-eglux-primary bg-white outline-none resize-y min-h-[60px] focus:border-eglux-secondary transition-colors disabled:bg-[#f5f5f5] disabled:text-[#999]"
             />

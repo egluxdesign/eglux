@@ -1,22 +1,39 @@
 // src/components/layout/Sidebar.jsx
 // ============================================================================
 // Sidebar panel dengan kategori, submenu, dan background image per item.
-// v3: Pakai react-router useNavigate + parse filter dari href
+// v4: Fix filter bugs — extract filter + sub, validate, navigate dengan full URL
+// ============================================================================
+//
+// ⭐ FIX v4 (bugs yang diperbaiki):
+//   1. parseFilter sekarang return { filter, sub } — bukan cuma filter string
+//   2. handleNavigate construct URL lengkap: /?filter=xxx&sub=yyy
+//   3. Parent hasSubmenu items: klik parent → toggle submenu (gak navigate ke 'all')
+//   4. Submenu items: navigasi ke parent category + sub param untuk filter nama produk
+//
+// Cara kerja submenu (contoh: Kitchen → Prasmanan):
+//   - Klik "Prasmanan" → navigate ke /?filter=kitchen&sub=prasmanan
+//   - HomePage: filter by category=kitchen, lalu filter by name contains "prasmanan"
 // ============================================================================
 
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { SIDEBAR_CATEGORIES } from '../../data';
 
-// ── Helper: parse filter value dari href ──
-// Contoh: '/?filter=kitchen' → 'kitchen', '/' → 'all'
+// ── Helper: parse filter + sub dari href ──
+// Contoh:
+//   '/?filter=kitchen&sub=prasmanan' → { filter: 'kitchen', sub: 'prasmanan' }
+//   '/?filter=produkbaru'             → { filter: 'produkbaru', sub: null }
+//   '/'                               → { filter: 'all', sub: null }
+//   '#'                               → { filter: null, sub: null }  (parent toggle)
 function parseFilter(href) {
-  if (!href) return null;
+  if (!href || href === '#') return { filter: null, sub: null };
   try {
     const url = new URL(href, window.location.origin);
-    return url.searchParams.get('filter') || 'all';
+    const filter = url.searchParams.get('filter') || 'all';
+    const sub = url.searchParams.get('sub') || null;
+    return { filter, sub };
   } catch {
-    return null;
+    return { filter: null, sub: null };
   }
 }
 
@@ -24,15 +41,15 @@ function parseFilter(href) {
 const SidebarItem = ({ item, onNavigate }) => {
   const [submenuOpen, setSubmenuOpen] = useState(false);
 
-  // ⭐ Handler: klik item → navigate ke /?filter=xxx + close sidebar
+  // ⭐ Handler: klik item → navigate ke /?filter=xxx&sub=yyy + close sidebar
   const handleClick = (e, href) => {
     e.preventDefault();
-    const filter = parseFilter(href);
+    const { filter, sub } = parseFilter(href);
     if (filter) {
-      onNavigate(filter);
+      onNavigate(filter, sub);
     } else {
-      // Fallback: navigate to href directly
-      onNavigate('all');
+      // Parent hasSubmenu item dengan href='#' → toggle submenu, jangan navigate
+      setSubmenuOpen((v) => !v);
     }
   };
 
@@ -52,7 +69,7 @@ const SidebarItem = ({ item, onNavigate }) => {
           style={{ background: 'linear-gradient(90deg, rgba(255,255,255,0.2) 20%, rgba(49,41,8,0) 100%)' }}
           aria-hidden="true"
         />
-        {/* Toggle Button */}
+        {/* Toggle Button — klik parent → toggle submenu (gak navigate) */}
         <button
           onClick={() => setSubmenuOpen((v) => !v)}
           className="relative z-[2] flex items-center justify-center w-full min-h-[100px] px-8
@@ -123,9 +140,14 @@ const SidebarItem = ({ item, onNavigate }) => {
 const Sidebar = ({ isOpen, onClose }) => {
   const navigate = useNavigate();
 
-  // ⭐ Handler: navigate ke /?filter=xxx + close sidebar
-  const handleNavigate = (filter) => {
-    navigate(`/?filter=${filter}`);
+  // ⭐ Handler: navigate ke /?filter=xxx&sub=yyy + close sidebar
+  // sub optional — kalau ada, HomePage akan filter produk by name contains sub
+  const handleNavigate = (filter, sub = null) => {
+    if (sub) {
+      navigate(`/?filter=${filter}&sub=${sub}`);
+    } else {
+      navigate(`/?filter=${filter}`);
+    }
     onClose?.();
   };
 

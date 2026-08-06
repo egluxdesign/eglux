@@ -24,6 +24,7 @@ import HomePage from './pages/HomePage';
 import BlogPage from './pages/BlogPage';
 import Contact from './pages/ContactPage';
 import AboutPage from './pages/AboutPage';
+import AffiliatePage from './pages/AffiliatePage';
 import RegisterPage from './pages/RegisterPage';
 import AdminPage from './pages/AdminPage';
 import AdminProductsPage from './pages/AdminProductsPage';
@@ -35,6 +36,7 @@ import DiscountAdminPage from './pages/DiscountAdminPage';
 import BlogAdminPage from './pages/BlogAdminPage';
 import AboutAdminPage from './pages/AboutAdminPage';
 import ContactAdminPage from './pages/ContactAdminPage';
+import AdminOrdersPage from './pages/AdminOrdersPage';
 import UnsubscribePage from './pages/UnsubscribePage';
 
 // Protected route wrapper
@@ -112,6 +114,14 @@ const App = () => {
                 element={
                   <ProtectedRoute roles={['team_dev', 'master', 'admin']}>
                     <ContactAdminPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/orders-admin"
+                element={
+                  <ProtectedRoute roles={['team_dev', 'master', 'admin']}>
+                    <AdminOrdersPage />
                   </ProtectedRoute>
                 }
               />
