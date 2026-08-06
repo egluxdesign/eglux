@@ -708,9 +708,70 @@ const HeroSwiper = ({ banners, onBannerClick }) => {
     };
   }, []);
 
+  // ⭐ DEBUG: log computed height untuk diagnose
+  useEffect(() => {
+    if (banners.length === 0) return;
+    const hero = document.querySelector('.hero-parallax');
+    if (!hero) return;
+    const computed = window.getComputedStyle(hero);
+    console.log('[HeroSwiper] DEBUG height info:', {
+      computedHeight: computed.height,
+      inlineHeight: hero.style.height,
+      viewportInnerHeight: window.innerHeight,
+      viewportOuterHeight: window.outerHeight,
+      dvhSupported: CSS.supports('height: 100dvh'),
+      position: computed.position,
+      overflow: computed.overflow,
+      parentTag: hero.parentElement?.tagName,
+      parentHeight: hero.parentElement ? window.getComputedStyle(hero.parentElement).height : 'N/A',
+    });
+  }, [banners]);
+
   return (
+    <>
+      {/* ⭐ NUCLEAR FIX: inline <style> dengan !important supaya gak ada CSS manapun yang override */}
+      <style>{`
+        .hero-parallax {
+          position: relative !important;
+          top: 0 !important;
+          left: 0 !important;
+          width: 100% !important;
+          height: 100vh !important;
+          height: 100dvh !important;
+          min-height: 100vh !important;
+          margin: 0 !important;
+          padding: 0 !important;
+          z-index: 0 !important;
+          overflow: hidden !important;
+          background: var(--eglux-accent, #f7f3ed) !important;
+        }
+        .hero-parallax > div {
+          height: 100% !important;
+        }
+        .hero-parallax img {
+          height: 100% !important;
+          object-fit: cover !important;
+        }
+      `}</style>
     <section
       className="hero-parallax overflow-hidden select-none"
+      // ⭐ Inline style sebagai backup (kombinasi dengan <style> tag di atas = NUCLEAR)
+      style={{
+        height: '100dvh',
+        minHeight: '100vh',
+        width: '100%',
+        margin: 0,
+        padding: 0,
+        position: 'relative',  // ⭐ Ganti dari sticky ke relative — sticky bisa break kalau parent ada overflow
+        top: 0,
+        left: 0,
+        zIndex: 0,
+        overflow: 'hidden',
+        touchAction: 'pan-y',
+        WebkitUserSelect: 'none',
+        userSelect: 'none',
+        WebkitTouchCallout: 'none',
+      }}
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
       onMouseDown={handleMouseDown}
@@ -720,15 +781,20 @@ const HeroSwiper = ({ banners, onBannerClick }) => {
       {/* Slides container — transform translateX */}
       <div
         className="flex h-full transition-transform duration-700 ease-out"
-        style={{ transform: `translateX(-${activeIdx * 100}%)` }}
+        // ⭐ Explicit height supaya children (img) bisa fill
+        style={{
+          transform: `translateX(-${activeIdx * 100}%)`,
+          height: '100%',
+        }}
       >
         {banners.map((banner) => (
           <div
             key={banner.id}
             className="w-full h-full flex-shrink-0 relative cursor-pointer"
+            style={{ height: '100%' }}
             onClick={() => onBannerClick(banner)}
           >
-            <img src={banner.image_url} alt={banner.title || 'EGLUX'} className="w-full h-full object-cover" draggable={false} style={{ WebkitUserDrag: 'none', userSelect: 'none' }} />
+            <img src={banner.image_url} alt={banner.title || 'EGLUX'} className="w-full h-full object-cover" draggable={false} style={{ WebkitUserDrag: 'none', userSelect: 'none', height: '100%' }} />
             <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-black/10 pointer-events-none" />
             <div className="hero-overlay" style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
               <div className="max-w-container mx-auto text-center">
@@ -785,6 +851,7 @@ const HeroSwiper = ({ banners, onBannerClick }) => {
         </>
       )}
     </section>
+    </>
   );
 };
 
