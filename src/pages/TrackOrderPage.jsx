@@ -31,6 +31,7 @@ import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabaseClient';
 import { rupiah } from '../context/CartContext';
 import { friendlyErrorMessage } from '../lib/errorMessage';
+import CourierLogo from '../components/ui/CourierLogo';
 
 import '/src/assets/styles/orderpage.css'
 
@@ -469,11 +470,15 @@ const TrackOrderPage = () => {
                       {/* Info kurir + resi */}
                       <div className="grid grid-cols-2 gap-3 text-xs">
                         {order.courier_code && (
-                          <div>
-                            <p className="text-gray-500">Kurir</p>
-                            <p className="font-medium text-gray-900 uppercase">
-                              {order.courier_code}{order.courier_service ? ` · ${order.courier_service}` : ''}
-                            </p>
+                          <div className="col-span-2 flex items-center gap-3 p-2 bg-eglux-accent rounded-lg">
+                            {/* ⭐ Courier logo dari Biteship CDN */}
+                            <CourierLogo courierCode={order.courier_code} size={40} />
+                            <div>
+                              <p className="text-gray-500 text-[0.7rem]">Kurir</p>
+                              <p className="font-medium text-gray-900 uppercase">
+                                {order.courier_code}{order.courier_service ? ` · ${order.courier_service}` : ''}
+                              </p>
+                            </div>
                           </div>
                         )}
                         {order.courier_duration && (
@@ -629,6 +634,7 @@ const TrackOrderPage = () => {
         )}
       </div>
 
+      <Footer />
     </>
   );
 };

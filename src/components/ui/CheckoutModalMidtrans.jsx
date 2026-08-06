@@ -43,6 +43,7 @@ import { INDONESIAN_CITIES } from '../../data/indonesianCities';
 import { COUNTRIES, DEFAULT_COUNTRY } from '../../data/countries';
 import { ensureSnapLoaded } from '../../hooks/useMidtransSnap';
 import VoucherClaimModal from './VoucherClaimModal';
+import CourierLogo from './CourierLogo';
 import useAppSettings from '../../hooks/useAppSettings';
 
 // Key untuk sessionStorage — sinyal agar parent page auto-buka checkout modal
@@ -1037,7 +1038,9 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
                   {/* Ongkir */}
                   {selectedShipping && (
                     <div className="flex justify-between mt-1 text-[0.82rem]">
-                      <span className="text-gray-600">
+                      <span className="text-gray-600 flex items-center gap-2">
+                        {/* ⭐ Courier logo di selected shipping display */}
+                        <CourierLogo courierCode={selectedShipping.courier} size={24} />
                         Ongkir ({selectedShipping.courier} {selectedShipping.service})
                       </span>
                       <span className="font-medium text-eglux-primary">{rupiah(shippingCost)}</span>
@@ -1432,6 +1435,8 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
                           onChange={() => setSelectedShipping(opt)}
                           disabled={isLocked}
                         />
+                        {/* ⭐ Courier logo dari Biteship CDN */}
+                        <CourierLogo courierCode={opt.courier} size={36} />
                         <div>
                           <p className="text-[0.82rem] font-semibold text-eglux-primary">
                             {opt.courier} — {opt.service}
