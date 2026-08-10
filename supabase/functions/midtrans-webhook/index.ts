@@ -499,75 +499,85 @@ serve(async (req: Request) => {
       console.warn("[midtrans-webhook] Voucher usage record failed:", voucherErr?.message);
     }
 
-    console.log("[midtrans-webhook] Payment success → trigger WABA notification");
+    console.log("[midtrans-webhook] Payment success → trigger EMAIL notification via Resend");
+
+    let emailStatus = "email_unknown";
+    let emailErrorDetail = "";
 
     try {
-      // ⭐ INLINE WABA TEST MODE (langsung execute, tanpa invoke edge function lain)
-      // Ambil helper dari _shared/waba-shared.ts
-      const {
-        fetchOrderData,
-        buildPaymentSuccessMessage,
-        saveWabaMessage,
-        updateWabaMessageStatus,
-      } = await import("../_shared/waba-shared.ts");
+      // ⭐ EMAIL NOTIFICATION via Resend (replaces WABA)
+      // Call send-email-notification edge function
+      const emailResp = await fetch(`${SUPABASE_URL}/functions/v1/send-email-notification`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          event: "payment_success",
+          order_id,
+        }),
+      });
 
-      const wabaOrder = await fetchOrderData(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, order_id);
-      
-      if (wabaOrder && wabaOrder.customer_phone) {
-        const message = buildPaymentSuccessMessage(wabaOrder);
-        
-        console.log(`[midtrans-webhook] ===== MOCK WABA MESSAGE =====`);
-        console.log(`[midtrans-webhook] To: +${wabaOrder.customer_phone}`);
-        console.log(`[midtrans-webhook] Body: ${message.body.substring(0, 50)}...`);
-
-        const messageId = await saveWabaMessage(
-          SUPABASE_URL,
-          SUPABASE_SERVICE_ROLE_KEY,
-          {
-            order_id: wabaOrder.order_id,
-            phone: wabaOrder.customer_phone,
-            event: "payment_success",
-            template_name: message.template_name,
-            template_params: message.template_params,
-            message_body: message.body,
-            mode: "test",
-            status: "test_sent",
-          }
-        );
-
-        if (messageId) {
-          const mockResponse = {
-            messaging_product: "whatsapp",
-            messages: [{ id: `wamid.test_${Date.now()}_${messageId.slice(0, 8)}` }],
-            _mock: true,
-          };
-
-          await updateWabaMessageStatus(
-            SUPABASE_URL,
-            SUPABASE_SERVICE_ROLE_KEY,
-            messageId,
-            {
-              status: "test_sent",
-              provider_response: mockResponse,
-              provider_message_id: mockResponse.messages[0].id,
-            }
-          );
-
-          // Update waba_last_* di orders table
-          await supabase.from("orders").update({
-            waba_last_message_id: messageId,
-            waba_last_event: "payment_success",
-            waba_last_status: "test_sent",
-            waba_last_sent_at: new Date().toISOString(),
-          }).eq("id", order_id);
-
-          console.log("[midtrans-webhook] ✓ WABA test message saved & orders table updated");
-        }
-      } else {
-        console.warn("[midtrans-webhook] WABA skipped: order not found or phone empty");
+      // ⭐ Defensive: handle non-JSON response (e.g., 404 kalau function belum deploy)
+      const responseText = await emailResp.text();
+      let emailResult;
+      try {
+        emailResult = JSON.parse(responseText);
+      } catch (parseErr) {
+        console.error("[midtrans-webhook] send-email-notification returned non-JSON:", emailResp.status, responseText.substring(0, 200));
+        emailResult = { success: false, error: `HTTP ${emailResp.status}: ${responseText.substring(0, 100)}` };
       }
+
+      // ⭐ Distinguish 4 status:
+      //   - email_sent: berhasil kirim
+      //   - email_skipped: duplicate atau customer gak punya email (bukan error)
+      //   - email_failed: Resend API error / config issue
+      //   - email_unknown: unexpected response
+      if (emailResult.success && !emailResult.skipped) {
+        emailStatus = "email_sent";
+        console.log(`[midtrans-webhook] ✓ Email sent (resend_id: ${emailResult.resend_id || 'N/A'})`);
+      } else if (emailResult.success && emailResult.skipped) {
+        emailStatus = "email_skipped";
+        console.log(`[midtrans-webhook] ℹ️ Email skipped: ${emailResult.reason || 'duplicate'}`);
+      } else if (emailResult.skipped) {
+        // success=false + skipped=true → customer gak punya email
+        emailStatus = "email_skipped";
+        emailErrorDetail = emailResult.reason || "Customer has no email";
+        console.warn(`[midtrans-webhook] ⚠️ Email skipped (no email): ${emailErrorDetail}`);
+      } else {
+        emailStatus = "email_failed";
+        // ⭐ Extract error dari berbagai field yang mungkin (defensive)
+        emailErrorDetail = emailResult.error
+          || emailResult.error_detail
+          || emailResult.reason
+          || emailResult.message
+          || (emailResult.step ? `Failed at step: ${emailResult.step}` : null)
+          || `Unknown error (HTTP ${emailResp.status})`;
+        console.error(`[midtrans-webhook] ✗ Email FAILED: ${emailErrorDetail}`);
+        console.error(`[midtrans-webhook] Full send-email response:`, JSON.stringify(emailResult));
+      }
+
+      // Update orders table dengan email_last_* (untuk tracking)
+      await supabase.from("orders").update({
+        waba_last_event: "payment_success",
+        waba_last_status: emailStatus,
+        waba_last_sent_at: new Date().toISOString(),
+      }).eq("id", order_id);
     } catch (e) {
-      console.warn("[midtrans-webhook] WABA inline error:", e.message);
+      emailStatus = "email_failed";
+      emailErrorDetail = e.message;
+      console.error("[midtrans-webhook] Email notification exception:", e.message);
+      // Tetap update status supaya user bisa lihat di DB
+      try {
+        await supabase.from("orders").update({
+          waba_last_event: "payment_success",
+          waba_last_status: "email_failed",
+          waba_last_sent_at: new Date().toISOString(),
+        }).eq("id", order_id);
+      } catch (updateErr) {
+        console.error("[midtrans-webhook] Failed to update email status:", updateErr?.message);
+      }
     }
 
     // Auto-create Biteship order (setelah payment sukses)

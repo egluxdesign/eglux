@@ -133,6 +133,25 @@ serve(async (req: Request) => {
       } else {
         updatedCount += batchIds.length;
         console.log(`[cron-expire-pending-orders] Batch ${i / BATCH_SIZE + 1}: expired ${batchIds.length} orders`);
+
+        // ⭐ Trigger email notification untuk setiap expired order
+        for (const orderId of batchIds) {
+          try {
+            await fetch(`${SUPABASE_URL}/functions/v1/send-email-notification`, {
+              method: "POST",
+              headers: {
+                "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                event: "expired",
+                order_id: orderId,
+              }),
+            });
+          } catch (emailErr) {
+            console.warn(`[cron-expire-pending-orders] Email failed for ${orderId}:`, emailErr?.message);
+          }
+        }
       }
     }
 

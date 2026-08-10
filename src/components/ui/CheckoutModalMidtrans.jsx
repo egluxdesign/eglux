@@ -334,8 +334,14 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
   };
 
   // ===== Email handler =====
+  // ⭐ Email WAJIB diisi (untuk kirim notifikasi pembayaran via Resend)
   const onEmailBlur = () => {
-    if (form.email && !isEmailValid(form.email)) {
+    if (!form.email) {
+      setFormErrors((prev) => ({
+        ...prev,
+        email: 'Email wajib diisi untuk notifikasi pembayaran',
+      }));
+    } else if (!isEmailValid(form.email)) {
       setFormErrors((prev) => ({
         ...prev,
         email: 'Format email tidak valid (contoh: nama@contoh.com)',
@@ -496,6 +502,10 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
 
     if (form.email && !isEmailValid(form.email)) {
       errors.email = 'Format email tidak valid (contoh: nama@contoh.com)';
+    }
+    // ⭐ Email WAJIB (untuk notifikasi pembayaran via email)
+    if (!form.email) {
+      errors.email = 'Email wajib diisi untuk notifikasi pembayaran';
     }
     if (!form.address.trim()) errors.address = 'Alamat lengkap wajib diisi';
     if (!form.city.trim()) errors.city = 'Kota wajib dipilih';
@@ -1249,7 +1259,10 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
             {/* Email — full width + inline error */}
             <div>
               <label className="block text-[0.8rem] font-semibold text-eglux-primary uppercase tracking-[0.5px] mb-1.5">
-                Email
+                Email <span className="text-red-500">*</span>
+                <span className="text-gray-400 font-normal normal-case tracking-normal ml-1 text-[0.7rem]">
+                  (untuk notifikasi pembayaran)
+                </span>
               </label>
               <input
                 type="email"
@@ -1258,6 +1271,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
                 onChange={change}
                 onBlur={onEmailBlur}
                 placeholder="email@contoh.com"
+                required
                 disabled={isLocked}
                 autoComplete="email"
                 className={`w-full py-3 px-4 border-[1.5px] rounded-[10px] text-[0.88rem] text-eglux-primary bg-white outline-none focus:border-eglux-secondary transition-colors disabled:bg-[#f5f5f5] disabled:text-[#999] ${
