@@ -59,6 +59,24 @@ serve(async (req: Request) => {
       return json({ valid: false, error: "Kode voucher tidak ditemukan" });
     }
 
+    // 1b. ⭐ NEW: Check voucher_redemptions (kalau voucher ini adalah voucher fisik)
+    // Voucher fisik WAJIB di-claim duluan di membership page sebelum bisa dipakai checkout
+    const { data: redemption } = await supabase
+      .from("voucher_redemptions")
+      .select("id, phone, status")
+      .eq("voucher_code", code.trim().toUpperCase())
+      .maybeSingle();
+
+    if (redemption) {
+      // Voucher code ada di voucher_redemptions → ini voucher fisik
+      if (redemption.status === "used") {
+        return json({ valid: false, error: "Voucher ini sudah digunakan sebelumnya" });
+      }
+      // TODO (future): match phone user dengan phone yang claim
+      // Sekarang cuma cek status='claimed' (belum 'used')
+    }
+    // Kalau redemption gak ada → voucher biasa (bukan voucher fisik), lanjut validasi normal
+
     // 2. Check is_active
     if (!voucher.is_active) {
       return json({ valid: false, error: "Voucher ini tidak aktif" });

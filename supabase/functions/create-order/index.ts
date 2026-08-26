@@ -236,6 +236,24 @@ serve(async (req: Request) => {
       return json({ error: "Failed to insert order", details: orderError.message }, 500);
     }
 
+    // ⭐ NEW: Mark voucher redemption as 'used' (kalau voucher fisik)
+    if (order.voucher_code) {
+      try {
+        await supabase
+          .from("voucher_redemptions")
+          .update({
+            status: "used",
+            used_at: new Date().toISOString(),
+            used_in_order: orderId,
+          })
+          .eq("voucher_code", order.voucher_code.trim().toUpperCase())
+          .eq("status", "claimed");
+        console.log("[create-order] ✓ Voucher redemption marked as used:", order.voucher_code);
+      } catch (redemptionErr) {
+        console.warn("[create-order] Voucher redemption update failed (non-blocking):", redemptionErr?.message);
+      }
+    }
+
     // 3. Insert order_items
     // ⭐ Simpan original_unit_price + discount_amount untuk transparent discount display
     const itemsPayload = items.map((item: any) => {

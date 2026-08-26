@@ -55,7 +55,7 @@ export const AuthProvider = ({ children }) => {
         setProfile(data);
       }
     } catch (e) {
-      console.error('[AuthContext] fetchProfile exception:', e?.message);
+      console.error('[AuthContext] fetchProfile exception:', e);
       setProfile(null);
     }
   }, []);
@@ -75,7 +75,7 @@ export const AuthProvider = ({ children }) => {
           await fetchProfile(session.user.id);
         }
       } catch (e) {
-        console.error('[AuthContext] init error:', e?.message);
+        console.error('[AuthContext] init error:', e);
       } finally {
         if (mounted) setLoading(false);
       }
@@ -127,7 +127,7 @@ export const AuthProvider = ({ children }) => {
   // ============================================================================
   // REGISTER
   // ============================================================================
-  const register = async (email, password, fullName, phone, referralCode) => {
+  const register = async (email, password, fullName, phone, referralCode, newsletterOptIn = { email: false, wa: false }) => {
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
@@ -147,8 +147,6 @@ export const AuthProvider = ({ children }) => {
       setUser(data.user);
 
       // ⭐ Retry loop: fetch profile sampai tersedia (max 5 attempts, 300ms interval)
-      // Sebelumnya pakai setTimeout(500) sekali — race condition kalau trigger
-      // lambat (cold start DB, RLS policy eval, dll).
       const maxAttempts = 5;
       const intervalMs = 300;
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -162,17 +160,48 @@ export const AuthProvider = ({ children }) => {
 
           if (profileData) {
             setProfile(profileData);
-            // console.log(`[AuthContext] Profile fetched on attempt ${attempt}`);
+            console.log(`[AuthContext] Profile fetched on attempt ${attempt}`);
             break;
           }
           if (attempt === maxAttempts) {
             console.warn(`[AuthContext] Profile not found after ${maxAttempts} attempts. Trigger may have failed.`);
-            // Jangan throw — kasih user login dulu, profile bisa di-fetch ulang
-            // via onAuthStateChange atau refreshProfile nanti.
           }
         } catch (e) {
           console.warn(`[AuthContext] Profile fetch attempt ${attempt} error:`, e.message);
         }
+      }
+
+      // ⭐ NEW: Subscribe newsletter kalau user opt-in
+      // ⭐ CRITICAL: Fire-and-forget (NON-BLOCKING) — gak pakai await!
+      // Kalau pakai await, fetch() yang hang/error akan block setSuccess(true) di RegisterPage
+      if (newsletterOptIn.email || newsletterOptIn.wa) {
+        const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_KEY;
+
+        // ⭐ Fire and forget — jangan await! Biar setSuccess(true) langsung jalan
+        fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/subscribe-newsletter`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${anonKey}`,
+            'apikey': anonKey,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            email,
+            phone,
+            name: fullName,
+            source: 'register',
+            marketing_email_opt_in: newsletterOptIn.email,
+            marketing_wa_opt_in: newsletterOptIn.wa,
+            user_id: data.user?.id || null,
+          }),
+        }).then(resp => resp.json()).then(result => {
+          if (!result.success) {
+            console.warn('[AuthContext] Newsletter subscription failed:', result.error || result.message);
+          }
+        }).catch(err => {
+          console.warn('[AuthContext] Newsletter opt-in error (non-blocking):', err?.message);
+        });
+        // ⭐ Gak ada await di sini — fetch jalan di background, register langsung return
       }
     }
 

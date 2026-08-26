@@ -14,7 +14,7 @@ export const NAV_LINKS = [
   { label: 'Blog',         href: '/blog',      key: 'blog'      },
   { label: 'Tentang Kami', href: '/about',     key: 'about'     },
   { label: 'Kontak',       href: '/contact',   key: 'contact'   },
-  { label: 'Affiliate',    href: '/affiliate', key: 'affiliate' },
+  { label: 'Membership',    href: '/membership', key: 'membership' },
 ];
 
 export const SOCIAL_LINKS = [

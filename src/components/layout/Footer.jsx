@@ -61,17 +61,19 @@ const IconMail = ({ className = 'w-4 h-4' }) => (
 
 // ── Social links data ──
 const SOCIAL_LINKS = [
-  { label: 'Instagram', href: 'https://www.instagram.com/eglux_id', Icon: IconInstagram },
-  { label: 'WhatsApp',  href: 'https://api.whatsapp.com/send?phone=628118988301&text=Halo%20EGLUX!', Icon: IconWhatsApp  },
-  { label: 'TikTok',    href: 'https://www.tiktok.com/@egluxdecor',   Icon: IconTikTok    },
+  { label: 'Instagram', href: 'https://instagram.com/eglux', Icon: IconInstagram },
+  { label: 'WhatsApp',  href: 'https://wa.me/6281234567890', Icon: IconWhatsApp  },
+  { label: 'TikTok',    href: 'https://tiktok.com/@eglux',   Icon: IconTikTok    },
 ];
 
 // ── Navigation links data ──
 const NAV_LINKS = [
   { label: 'Beranda',      href: '/'          },
+  { label: 'Produk',       href: '/products'  },
   { label: 'Blog',         href: '/blog'      },
   { label: 'Tentang Kami', href: '/about'     },
   { label: 'Kontak',       href: '/contact'   },
+  { label: 'Membership',    href: '/membership' },
 ];
 
 const HELP_LINKS = [
@@ -79,8 +81,8 @@ const HELP_LINKS = [
   { label: 'Lacak Pesanan',    href: '/track'          },
   { label: 'Riwayat Order',    href: '/order-history'  },
   { label: 'Tiket Bantuan',    href: null, isTicket: true },
-  // { label: 'Pengiriman',       href: '/contact?section=shipping' },
-  // { label: 'Kebijakan Return', href: '/contact?section=returns'  },
+  { label: 'Pengiriman',       href: '/contact?section=shipping' },
+  { label: 'Kebijakan Return', href: '/contact?section=returns'  },
 ];
 
 // ── Helper: cek internal vs external link ──
@@ -90,12 +92,26 @@ const Footer = () => {
   // ── Newsletter state ──
   const { openTicket } = useCartActions();
   const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');         // ⭐ NEW: nomor WhatsApp
+  const [name, setName] = useState('');             // ⭐ NEW: nama subscriber
   const [subscribing, setSubscribing] = useState(false);
   const [message, setMessage] = useState(null); // { type: 'success' | 'error', text: string }
   const [agreed, setAgreed] = useState(false);
 
   const handleSubscribe = async () => {
     // Validate
+    if (!name.trim()) {
+      setMessage({ type: 'error', text: 'Nama wajib diisi' });
+      return;
+    }
+    if (!phone.trim()) {
+      setMessage({ type: 'error', text: 'Nomor WhatsApp wajib diisi' });
+      return;
+    }
+    if (phone.replace(/\D/g, '').length < 8) {
+      setMessage({ type: 'error', text: 'Nomor WhatsApp tidak valid (minimal 8 digit)' });
+      return;
+    }
     if (!email.trim()) {
       setMessage({ type: 'error', text: 'Email wajib diisi' });
       return;
@@ -113,16 +129,39 @@ const Footer = () => {
     setMessage(null);
 
     try {
+      // ⭐ Normalize phone ke E.164 (+62xxx)
+      let phoneE164 = null;
+      if (phone.trim()) {
+        let digits = phone.replace(/\D/g, '');
+        if (digits.startsWith('0')) digits = '62' + digits.slice(1);
+        else if (!digits.startsWith('62')) digits = '62' + digits;
+        phoneE164 = `+${digits}`;
+      }
+
       const { data, error } = await supabase.functions.invoke('subscribe-newsletter', {
-        body: { email: email.trim().toLowerCase(), source: 'footer' },
+        body: {
+          email: email.trim().toLowerCase(),
+          phone: phoneE164,
+          name: name.trim(),
+          source: 'footer',
+          marketing_email_opt_in: true,
+          marketing_wa_opt_in: true,
+        },
       });
 
       if (error) throw new Error(error.message);
       if (!data?.success) throw new Error(data?.error || 'Gagal subscribe');
 
-      setMessage({ type: 'success', text: data.message || 'Berhasil subscribe!' });
+      setMessage({ type: 'success', text: 'Berhasil subscribe! Join grup WhatsApp untuk promo real-time.' });
       setEmail('');
+      setPhone('');
+      setName('');
       setAgreed(false);
+
+      // ⭐ Auto-redirect ke WA group setelah 1.5 detik
+      setTimeout(() => {
+        window.open('https://chat.whatsapp.com/JjbuZvAkRSA4yPL0E3aDRQ?s=qs&p=i&ilr=2', '_blank', 'noopener,noreferrer');
+      }, 1500);
     } catch (e) {
       const msg = e.message?.includes('Failed to fetch')
         ? 'Gagal terhubung ke server. Coba lagi.'
@@ -134,7 +173,7 @@ const Footer = () => {
   };
 
   return (
-    <footer className="bg-[#554521] text-white">
+    <footer className="bg-eglux-primary text-white">
       {/* === Main grid: Logo + Nav + Social === */}
       <div className="max-w-container mx-auto px-4 md:px-8 py-12 md:py-16">
         <div className="grid grid-cols-1 md:grid-cols-12 gap-8 md:gap-6">
@@ -144,7 +183,7 @@ const Footer = () => {
             <Link to="/" aria-label="EGLUX Beranda">
               <img src={logo2} alt="Eglux Logo" className="h-[48px] w-auto mb-4" />
             </Link>
-            <p className="text-white/65 text-[0.8rem] leading-relaxed pointer-events-none">
+            <p className="text-white/50 text-[0.82rem] leading-relaxed">
               Produk rumah tangga & dapur berkualitas.
               Keindahan bertemu fungsionalitas.
             </p>
@@ -152,14 +191,14 @@ const Footer = () => {
 
           {/* Navigation links (col-span-2) */}
           <div className="md:col-span-2 lg:col-span-2">
-            <h4 className="text-white text-[0.8rem] font-semibold uppercase tracking-wide mb-4 pointer-events-none">Navigasi</h4>
+            <h4 className="text-white/80 text-[0.78rem] font-semibold uppercase tracking-wide mb-4">Navigasi</h4>
             <ul className="space-y-2">
               {NAV_LINKS.map((link) => (
                 <li key={link.href + link.label}>
                   {isInternalLink(link.href) ? (
                     <Link
                       to={link.href}
-                      className="text-white/65 text-[0.8rem] no-underline transition-colors hover:text-eglux-secondary"
+                      className="text-white/50 text-[0.82rem] no-underline transition-colors hover:text-white"
                     >
                       {link.label}
                     </Link>
@@ -168,7 +207,7 @@ const Footer = () => {
                       href={link.href}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="text-white/65 text-[0.8rem] no-underline transition-colors hover:text-eglux-secondary"
+                      className="text-white/50 text-[0.82rem] no-underline transition-colors hover:text-white"
                     >
                       {link.label}
                     </a>
@@ -180,21 +219,21 @@ const Footer = () => {
 
           {/* Help links (col-span-2) */}
           <div className="md:col-span-2 lg:col-span-2">
-            <h4 className="text-white text-[0.8rem] font-semibold uppercase tracking-wide mb-4 pointer-events-none">Bantuan</h4>
+            <h4 className="text-white/80 text-[0.78rem] font-semibold uppercase tracking-wide mb-4">Bantuan</h4>
             <ul className="space-y-2">
               {HELP_LINKS.map((link) => (
                 <li key={link.label}>
                   {link.isTicket ? (
                     <button
                       onClick={openTicket}
-                      className="text-white/65 text-[0.8rem] no-underline transition-colors hover:text-eglux-secondary bg-transparent border-none cursor-pointer p-0"
+                      className="text-white/50 text-[0.82rem] no-underline transition-colors hover:text-white bg-transparent border-none cursor-pointer p-0"
                     >
                       {link.label}
                     </button>
                   ) : isInternalLink(link.href) ? (
                     <Link
                       to={link.href}
-                      className="text-white/65 text-[0.8rem] no-underline transition-colors hover:text-eglux-secondary"
+                      className="text-white/50 text-[0.82rem] no-underline transition-colors hover:text-white"
                     >
                       {link.label}
                     </Link>
@@ -203,7 +242,7 @@ const Footer = () => {
                       href={link.href}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="text-white/65 text-[0.8rem] no-underline transition-colors hover:text-eglux-secondary"
+                      className="text-white/50 text-[0.82rem] no-underline transition-colors hover:text-white"
                     >
                       {link.label}
                     </a>
@@ -215,7 +254,7 @@ const Footer = () => {
 
           {/* Social (col-span-2) */}
           <div className="md:col-span-2 lg:col-span-2">
-            <h4 className="text-white text-[0.8rem] font-semibold uppercase tracking-wide mb-4 pointer-events-none">Ikuti Kami</h4>
+            <h4 className="text-white/80 text-[0.78rem] font-semibold uppercase tracking-wide mb-4">Ikuti Kami</h4>
             <div className="flex gap-3">
               {SOCIAL_LINKS.map(({ label, href, Icon }) => (
                 <a
@@ -224,7 +263,7 @@ const Footer = () => {
                   target="_blank"
                   rel="noopener noreferrer"
                   aria-label={label}
-                  className="w-9 h-9 rounded-full border border-white/65 flex items-center justify-center text-white/65 transition-all hover:text-eglux-secondary hover:border-eglux-secondary"
+                  className="w-9 h-9 rounded-full border border-white/15 flex items-center justify-center text-white/50 transition-all hover:text-white hover:border-white/40"
                 >
                   <Icon className="w-4 h-4" />
                 </a>
@@ -234,15 +273,56 @@ const Footer = () => {
 
           {/* Newsletter (col-span-3) */}
           <div className="md:col-span-3 lg:col-span-4">
-            <h4 className="text-white text-[1rem] font-bold mb-2 pointer-events-none">Update Newsletter</h4>
-            <p className="text-white/40 text-[0.82rem] leading-relaxed mb-4">
+            <h4 className="text-white text-[1rem] font-bold mb-2">Tetap Update</h4>
+            <p className="text-white/50 text-[0.82rem] leading-relaxed mb-4">
               Jadilah yang pertama menerima berita, penawaran, dan update produk terbaru dari EGLUX.
             </p>
 
-            {/* Email input + Subscribe button */}
+            {/* ⭐ NEW: Name input (required) */}
             <div className="flex gap-2 mb-3">
               <div className="flex-1 relative">
-                <div className="absolute left-3 top-1/2 -translate-y-1/2 text-white/40">
+                <div className="absolute left-3 top-1/2 -translate-y-1/2 text-white/30">
+                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                    <circle cx="12" cy="7" r="4" />
+                  </svg>
+                </div>
+                <input
+                  type="text"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleSubscribe()}
+                  placeholder="Nama kamu"
+                  disabled={subscribing}
+                  className="w-full pl-9 pr-3 py-2.5 bg-white/5 border border-white/15 rounded-lg text-white text-[0.85rem] placeholder:text-white/30 outline-none focus:border-eglux-secondary/50 transition-colors"
+                />
+              </div>
+            </div>
+
+            {/* ⭐ WhatsApp input (required) */}
+            <div className="flex gap-2 mb-3">
+              <div className="flex-1 relative">
+                <div className="absolute left-3 top-1/2 -translate-y-1/2 text-white/30">
+                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.149-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.149-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0 0 12.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 0 0 5.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 0 0-3.48-8.413Z"/>
+                  </svg>
+                </div>
+                <input
+                  type="tel"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleSubscribe()}
+                  placeholder="No. WhatsApp (08xxx)"
+                  disabled={subscribing}
+                  className="w-full pl-9 pr-3 py-2.5 bg-white/5 border border-white/15 rounded-lg text-white text-[0.85rem] placeholder:text-white/30 outline-none focus:border-eglux-secondary/50 transition-colors"
+                />
+              </div>
+            </div>
+
+            {/* Email input + Subscribe button (side by side) */}
+            <div className="flex gap-2 mb-3">
+              <div className="flex-1 relative">
+                <div className="absolute left-3 top-1/2 -translate-y-1/2 text-white/30">
                   <IconMail className="w-4 h-4" />
                 </div>
                 <input
@@ -252,7 +332,7 @@ const Footer = () => {
                   onKeyDown={(e) => e.key === 'Enter' && handleSubscribe()}
                   placeholder="Email kamu"
                   disabled={subscribing}
-                  className="w-full pl-9 pr-3 py-2.5 bg-white/5 border border-white/45 rounded-lg text-white text-[0.85rem] placeholder:text-white/30 outline-none focus:border-eglux-secondary/50 transition-colors"
+                  className="w-full pl-9 pr-3 py-2.5 bg-white/5 border border-white/15 rounded-lg text-white text-[0.85rem] placeholder:text-white/30 outline-none focus:border-eglux-secondary/50 transition-colors"
                 />
               </div>
               <button
@@ -272,10 +352,10 @@ const Footer = () => {
                 onChange={(e) => setAgreed(e.target.checked)}
                 className="mt-0.5 cursor-pointer accent-eglux-secondary"
               />
-              <span className="text-white/45 text-[0.7rem] leading-relaxed">
+              <span className="text-white/40 text-[0.7rem] leading-relaxed">
                 Dengan klik Subscribe, saya setuju menerima newsletter EGLUX dengan update produk dan berita.
                 Saya bisa unsubscribe kapan saja via link di setiap email. Lihat{' '}
-                <a href="/privacy" className="text-eglux-secondary underline hover:text-white">Privacy Policy</a>{' '}
+                <a href="/privacy" className="text-white/60 underline hover:text-white">Privacy Policy</a>{' '}
                 untuk info lebih lanjut.
               </span>
             </label>
@@ -293,16 +373,16 @@ const Footer = () => {
       </div>
 
       {/* === Bottom bar === */}
-      <div className="border-t border-white/30">
+      <div className="border-t border-white/10">
         <div className="max-w-container mx-auto px-4 md:px-8 py-5 flex flex-col md:flex-row items-center justify-between gap-3">
-          <p className="text-white/65 text-[0.78rem]">
+          <p className="text-white/40 text-[0.78rem]">
             © 2026 EGLUX — All rights reserved.
           </p>
           <div className="flex items-center gap-5">
-            <a href="/terms" className="text-white/65 text-[0.78rem] no-underline transition-colors hover:text-eglux-secondary">
+            <a href="/terms" className="text-white/40 text-[0.78rem] no-underline transition-colors hover:text-white/70">
               Terms of Use
             </a>
-            <a href="/privacy" className="text-white/65 text-[0.78rem] no-underline transition-colors hover:text-eglux-secondary">
+            <a href="/privacy" className="text-white/40 text-[0.78rem] no-underline transition-colors hover:text-white/70">
               Privacy & Cookies
             </a>
           </div>

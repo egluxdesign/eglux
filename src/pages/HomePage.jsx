@@ -10,7 +10,7 @@
 // ============================================================================
 
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useLocation } from 'react-router-dom';
 import HeaderProducts from '../components/layout/HeaderProducts';
 import Footer from '../components/layout/Footer';
 import ProductModal from '../components/ui/ProductModal';
@@ -76,10 +76,28 @@ function filterProducts(products, filterValue, subValue = null) {
   return categoryFiltered;
 }
 
+const WA_GROUP_LINK = 'https://chat.whatsapp.com/JjbuZvAkRSA4yPL0E3aDRQ?s=qs&p=i&ilr=2';
+
 const HomePage = () => {
   const { openCart, handleAddToCart } = useCartActions();
   const { products, filterButtons, loading, error } = useProducts();
     const { toast, showToast, closeToast } = useToast();
+  const location = useLocation();
+
+  // ⭐ NEW: Detect register redirect — tampilkan membership card
+  const [showMembershipCard, setShowMembershipCard] = useState(false);
+  const [regWaOptIn, setRegWaOptIn] = useState(false);
+  const [regPhone, setRegPhone] = useState('');
+
+  useEffect(() => {
+    if (location.state?.justRegistered) {
+      setShowMembershipCard(true);
+      setRegWaOptIn(location.state?.waOptIn || false);
+      setRegPhone(location.state?.phone || '');
+      // Clear state supaya gak muncul lagi saat refresh
+      window.history.replaceState({}, document.title);
+    }
+  }, [location.state]);
 
   const [banners, setBanners] = useState([]);
   const [overlayTimedOut, setOverlayTimedOut] = useState(false);
@@ -608,6 +626,67 @@ const HomePage = () => {
 
       {/* ⭐ Toast notifications — untuk feedback CTA banner (filter invalid, product not found, dll) */}
       <Toast toast={toast} onClose={closeToast} />
+
+      {/* ⭐ NEW: Membership Card Modal — muncul setelah register redirect */}
+      {showMembershipCard && (
+        <div
+          className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[5000] flex items-center justify-center p-4"
+          onClick={() => setShowMembershipCard(false)}
+        >
+          <div
+            className="bg-white rounded-2xl max-w-md w-full p-6 md:p-8 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Success Icon */}
+            <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <svg className="w-8 h-8 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+
+            <h2 className="text-lg font-bold text-gray-900 text-center mb-1">Registrasi Berhasil! 🎉</h2>
+            <p className="text-sm text-gray-500 text-center mb-6">Akun EGLUX Anda telah dibuat.</p>
+
+            {/* WA Group Card */}
+            {regWaOptIn && (
+              <div className="bg-eglux-accent rounded-xl p-4 mb-4 border border-eglux-secondary/20">
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="w-10 h-10 bg-eglux-secondary rounded-full flex items-center justify-center flex-shrink-0">
+                    <svg className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.149-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.149-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0 0 12.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 0 0 5.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 0 0-3.48-8.413Z"/>
+                    </svg>
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold text-eglux-primary">Anda terdaftar untuk promo WhatsApp!</p>
+                    {regPhone && <p className="text-xs text-gray-500">Nomor: {regPhone}</p>}
+                  </div>
+                </div>
+                <p className="text-xs text-gray-600 mb-3">
+                  Join grup eksklusif EGLUX untuk menerima promo real-time langsung ke WhatsApp.
+                </p>
+                <a
+                  href={WA_GROUP_LINK}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-eglux-secondary text-white rounded-xl text-sm font-bold hover:opacity-90 transition-opacity cursor-pointer border-none no-underline"
+                >
+                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.149-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.149-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0 0 12.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 0 0 5.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 0 0-3.48-8.413Z"/>
+                  </svg>
+                  Join Grup WhatsApp
+                </a>
+              </div>
+            )}
+
+            <button
+              onClick={() => setShowMembershipCard(false)}
+              className="w-full px-4 py-3 bg-white text-gray-600 border border-gray-200 rounded-xl text-sm font-medium hover:bg-gray-50 cursor-pointer"
+            >
+              Lanjut Belanja →
+            </button>
+          </div>
+        </div>
+      )}
     </>
   );
 };

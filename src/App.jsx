@@ -26,6 +26,7 @@ import Contact from './pages/ContactPage';
 import AboutPage from './pages/AboutPage';
 import AffiliatePage from './pages/AffiliatePage';
 import RegisterPage from './pages/RegisterPage';
+import MembershipPage from './pages/MembershipPage';
 import AdminPage from './pages/AdminPage';
 import AdminProductsPage from './pages/AdminProductsPage';
 import OrdersPage from './pages/OrdersPage';
@@ -38,6 +39,8 @@ import AboutAdminPage from './pages/AboutAdminPage';
 import ContactAdminPage from './pages/ContactAdminPage';
 import AdminOrdersPage from './pages/AdminOrdersPage';
 import UnsubscribePage from './pages/UnsubscribePage';
+import TermsPage from './pages/TermsPage';
+import PrivacyPage from './pages/PrivacyPage';
 
 // Protected route wrapper
 import ProtectedRoute from './components/ui/ProtectedRoute';
@@ -58,6 +61,7 @@ const App = () => {
               <Route path="/blog" element={<BlogPage />} />
               <Route path="/contact" element={<Contact />} />
               <Route path="/about" element={<AboutPage />} />
+              <Route path="/membership" element={<MembershipPage />} />
 
               {/* ── Standalone routes (tanpa storefront layout) ── */}
               <Route path="/register" element={<RegisterPage />} />
@@ -65,6 +69,8 @@ const App = () => {
               <Route path="/orders" element={<OrdersPage />} />
               <Route path="/order-history" element={<OrderHistoryPage />} />
               <Route path="/track" element={<TrackOrderPage />} />
+              <Route path="/terms" element={<TermsPage />} />
+              <Route path="/privacy" element={<PrivacyPage />} />
               <Route path="/unsubscribe" element={<UnsubscribePage />} />
 
               {/* ── Protected admin routes ──

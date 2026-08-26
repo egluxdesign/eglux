@@ -34,6 +34,9 @@ const RegisterPage = () => {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [referralCode, setReferralCode] = useState('');
+  // ⭐ NEW: Newsletter opt-in checkbox
+  const [newsletterEmailOptIn, setNewsletterEmailOptIn] = useState(true);   // default true (email)
+  const [newsletterWaOptIn, setNewsletterWaOptIn] = useState(true);         // default true (WA)
 
   // Baca referral code dari URL (?ref=EGL-XXXX)
   useEffect(() => {
@@ -42,13 +45,14 @@ const RegisterPage = () => {
     if (ref) setReferralCode(ref);
   }, [location]);
 
-  // Kalau sudah login, redirect ke beranda
+  // Kalau sudah login, redirect ke beranda — TAPI jangan kalau lagi di success screen
+  // (setelah register, user login tapi kita mau tampilkan success card dulu)
   useEffect(() => {
-    if (user) {
+    if (user && !success) {
       const from = location.state?.from || '/';
       navigate(from, { replace: true });
     }
-  }, [user, navigate, location]);
+  }, [user, navigate, location, success]);
 
   // Click-outside handler untuk country dropdown
   useEffect(() => {
@@ -113,12 +117,15 @@ const RegisterPage = () => {
     }
 
     try {
-      await register(email, password, fullName, phoneE164, referralCode);
-      setSuccess(true);
-      setTimeout(() => {
-        const from = location.state?.from || '/';
-        navigate(from, { replace: true });
-      }, 2000);
+      // ⭐ Pass newsletter opt-in flags ke register function
+      await register(email, password, fullName, phoneE164, referralCode, {
+        email: newsletterEmailOptIn,
+        wa: newsletterWaOptIn,
+      });
+      setSuccess(false);
+      // ⭐ Redirect ke homepage dengan state untuk trigger membership card
+      const from = location.state?.from || '/';
+      navigate(from, { replace: true, state: { justRegistered: true, waOptIn: newsletterWaOptIn, phone: phoneDisplay } });
     } catch (err) {
       setError(err.message || 'Registrasi gagal. Coba lagi.');
     } finally {
@@ -142,17 +149,7 @@ const RegisterPage = () => {
 
         {/* Body */}
         <div className="px-5 md:px-8 py-5 md:py-6">
-          {success ? (
-            <div className="text-center py-8">
-              <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                <svg className="w-8 h-8 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
-                </svg>
-              </div>
-              <h2 className="text-lg font-bold text-gray-900 mb-2">Registrasi Berhasil!</h2>
-              <p className="text-gray-500 text-sm">Akun Anda telah dibuat. Mengalihkan...</p>
-            </div>
-          ) : (
+          {success ? null : (
             <>
               {error && (
                 <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-[0.82rem] text-red-600">
@@ -349,6 +346,26 @@ const RegisterPage = () => {
                     className="w-full py-3 px-4 border-[1.5px] border-[#ddd] rounded-[10px] text-[0.88rem] text-eglux-primary bg-white outline-none focus:border-eglux-secondary transition-colors"
                   />
                 </div>
+
+                {/* ⭐ Newsletter opt-in + Terms agreement (single checkbox) */}
+                <label className="flex items-start gap-2.5 cursor-pointer py-1">
+                  <input
+                    type="checkbox"
+                    checked={newsletterEmailOptIn}
+                    onChange={(e) => {
+                      const val = e.target.checked;
+                      setNewsletterEmailOptIn(val);
+                      setNewsletterWaOptIn(val);
+                    }}
+                    className="mt-0.5 w-4 h-4 cursor-pointer accent-eglux-secondary flex-shrink-0"
+                  />
+                  <span className="text-[0.72rem] text-gray-500 leading-relaxed">
+                    Kirimkan saya penawaran eksklusif dan promo melalui Email &amp; WhatsApp. Saya juga telah membaca dan menyetujui{' '}
+                    <a href="/terms" className="text-eglux-secondary underline hover:opacity-80">Terms of Use</a>{' '}
+                    serta{' '}
+                    <a href="/privacy" className="text-eglux-secondary underline hover:opacity-80">Privacy Policy</a>.
+                  </span>
+                </label>
 
                 {/* Submit */}
                 <button

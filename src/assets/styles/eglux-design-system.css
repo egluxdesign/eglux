@@ -252,7 +252,6 @@ h1, h2, h3, h4, h5, h6,
 .pagination-btn {
   width: 36px;
   height: 36px;
-  border: 1px solid var(--eglux-border);
   background: transparent;
   color: var(--eglux-text);
   font-family: var(--font-body);
@@ -264,7 +263,7 @@ h1, h2, h3, h4, h5, h6,
 
 .pagination-btn:hover:not(:disabled) {
   border-color: var(--eglux-primary);
-  color: var(--eglux-primary);
+  color: var(--eglux-secondary);
 }
 
 .pagination-btn:disabled {
