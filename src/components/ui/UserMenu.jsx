@@ -14,6 +14,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
+import { supabase } from '../../lib/supabaseClient';
 import { useCartActions } from '../../pages/CartPage';
 import ProfileModal from './ProfileModal';
 
@@ -57,6 +58,25 @@ const IconLogOut = ({ className = 'w-4 h-4' }) => (
   </svg>
 );
 
+// ⭐ NEW: Points icon (star/award)
+const IconPoints = ({ className = 'w-4 h-4' }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+    <circle cx="12" cy="8" r="6" />
+    <path d="M15.477 12.89 17 22l-5-3-5 3 1.523-9.11" />
+  </svg>
+);
+
+// ⭐ NEW: Gift icon (for claim points)
+const IconGift = ({ className = 'w-4 h-4' }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+    <polyline points="20 12 20 22 4 22 4 12" />
+    <rect x="2" y="7" width="20" height="5" />
+    <line x1="12" y1="22" x2="12" y2="7" />
+    <path d="M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7z" />
+    <path d="M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z" />
+  </svg>
+);
+
 // ============================================================================
 // UserMenu component
 // ============================================================================
@@ -65,6 +85,7 @@ const UserMenu = ({ variant = 'storefront', isScrolled = true }) => {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [profileModalOpen, setProfileModalOpen] = useState(false);
   const dropdownRef = useRef(null);
+  const [points, setPoints] = useState(null);  // ⭐ NEW: loyalty points balance
 
   // ⭐ 'admin' variant: selalu dark text (header admin selalu putih)
   //   'storefront' variant: text color depends on isScrolled
@@ -85,6 +106,20 @@ const UserMenu = ({ variant = 'storefront', isScrolled = true }) => {
     document.addEventListener('click', handler);
     return () => document.removeEventListener('click', handler);
   }, []);
+
+  // ⭐ NEW: Fetch user points balance
+  useEffect(() => {
+    if (!user?.id) return;
+    const fetchPoints = async () => {
+      const { data } = await supabase
+        .from('user_points')
+        .select('balance')
+        .eq('user_id', user.id)
+        .maybeSingle();
+      setPoints(data?.balance ?? 0);
+    };
+    fetchPoints();
+  }, [user?.id]);
 
   if (!user) {
     return (
@@ -110,6 +145,8 @@ const UserMenu = ({ variant = 'storefront', isScrolled = true }) => {
   // User account menu items
   const USER_MENU_ITEMS = [
     { label: 'Profil Saya', href: null, icon: IconUser, action: () => { setDropdownOpen(false); setProfileModalOpen(true); } },
+    { label: 'Poin Saya', href: '/rewards', icon: IconPoints },  // ⭐ NEW: link to rewards page
+    { label: 'Klaim Poin', href: '/claim-points', icon: IconGift },  // ⭐ NEW: marketplace claim
     { label: 'Pesanan Saya', href: '/orders', icon: IconPackage2 },
     { label: 'Lacak Pesanan', href: '/track', icon: IconTruck },
     { label: 'Riwayat Order', href: '/order-history', icon: IconClipboard },
@@ -129,17 +166,30 @@ const UserMenu = ({ variant = 'storefront', isScrolled = true }) => {
             {displayName.charAt(0).toUpperCase()}
           </div>
         )}
+        {/* ⭐ NEW: Points badge next to avatar */}
+        {points !== null && points > 0 && (
+          <span className={`absolute -bottom-1 -right-1 text-[0.55rem] font-bold px-1.5 py-0.5 rounded-full whitespace-nowrap ${variant === 'admin' || isScrolled ? 'bg-eglux-secondary text-white' : 'bg-eglux-secondary text-white'}`}>
+            {points}
+          </span>
+        )}
       </button>
 
       {dropdownOpen && (
         <div className="absolute right-0 top-full mt-2 w-56 bg-white rounded-xl shadow-2xl border border-[#eee] overflow-hidden z-[2000]">
-          {/* Header with name + email + role */}
+          {/* Header with name + email + role + points */}
           <div className="px-4 py-3 border-b border-[#eee] bg-[var(--eglux-accent)]">
             <p className="text-[0.78rem] font-medium text-eglux-primary truncate">{displayName}</p>
             <p className="text-[0.68rem] text-gray-500 truncate">{user.email}</p>
-            <span className="inline-block mt-1 text-[0.55rem] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-eglux-secondary/10 text-eglux-secondary">
-              {profile?.role || 'verified'}
-            </span>
+            <div className="flex items-center gap-2 mt-1">
+              <span className="inline-block text-[0.55rem] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-eglux-secondary/10 text-eglux-secondary">
+                {profile?.role || 'verified'}
+              </span>
+              {points !== null && points > 0 && (
+                <span className="inline-block text-[0.55rem] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">
+                  ⭐ {points} poin
+                </span>
+              )}
+            </div>
           </div>
 
           {/* Admin panel link (atas, hanya untuk admin) */}

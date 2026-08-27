@@ -203,6 +203,25 @@ export const AuthProvider = ({ children }) => {
         });
         // ⭐ Gak ada await di sini — fetch jalan di background, register langsung return
       }
+
+      // ⭐ NEW: Auto-add +20 register bonus points (fire-and-forget, non-blocking)
+      // Pakai anon key + apikey header (sama seperti newsletter subscribe)
+      const anonKey2 = import.meta.env.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_KEY;
+      fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/add-register-bonus`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${anonKey2}`,
+          'apikey': anonKey2,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ user_id: data.user.id }),
+      }).then(resp => resp.json()).then(result => {
+        if (!result.success) {
+          console.warn('[AuthContext] Register bonus failed:', result.error);
+        }
+      }).catch(err => {
+        console.warn('[AuthContext] Register bonus error (non-blocking):', err?.message);
+      });
     }
 
     return data;

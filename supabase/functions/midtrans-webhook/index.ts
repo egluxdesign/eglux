@@ -641,6 +641,60 @@ serve(async (req: Request) => {
     } catch (e) {
       console.warn("[midtrans-webhook] Notification creation failed:", e);
     }
+
+    // ⭐ NEW: Auto-add loyalty points (1 poin = Rp 1.000, round down)
+    // Poin dihitung dari total_amount yang dibayar customer
+    try {
+      const { data: pointsOrder } = await supabase
+        .from("orders")
+        .select(`
+          id, total_amount,
+          customer:customers(user_id)
+        `)
+        .eq("id", order_id)
+        .single();
+
+      const userId = (pointsOrder?.customer as any)?.user_id;
+      const totalAmount = Number(pointsOrder?.total_amount) || 0;
+
+      if (userId && totalAmount > 0) {
+        const points = Math.floor(totalAmount / 1000);
+        if (points > 0) {
+          // Cek apakah poin sudah di-add sebelumnya (idempotent — prevent double-add kalau webhook retry)
+          const { data: existingTxn } = await supabase
+            .from("point_transactions")
+            .select("id")
+            .eq("user_id", userId)
+            .eq("source", "website_purchase")
+            .eq("order_id", order_id)
+            .maybeSingle();
+
+          if (existingTxn) {
+            console.log("[midtrans-webhook] Points already added for order — skip (idempotent)");
+          } else {
+            // Panggil RPC add_points (atomic: insert transaction + update balance)
+            const { error: pointsErr } = await supabase.rpc("add_points", {
+              p_user_id: userId,
+              p_amount: points,
+              p_source: "website_purchase",
+              p_description: `Pembelian order #${order_id.slice(0, 8).toUpperCase()}`,
+              p_order_id: order_id,
+              p_expires_at: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(), // expire 1 tahun
+            });
+
+            if (pointsErr) {
+              console.warn("[midtrans-webhook] Points add failed:", pointsErr.message);
+            } else {
+              console.log(`[midtrans-webhook] ✓ Added ${points} points to user ${userId.slice(0, 8)} (order ${orderAmount})`);
+            }
+          }
+        }
+      } else {
+        console.warn("[midtrans-webhook] Cannot add points — no user_id or total_amount=0");
+      }
+    } catch (pointsErr) {
+      console.warn("[midtrans-webhook] Points add error (non-blocking):", pointsErr?.message);
+    }
   }
 
   // 5. Return 200 ke Midtrans (penting — kalau tidak 200, Midtrans retry)

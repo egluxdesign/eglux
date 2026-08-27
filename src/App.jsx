@@ -41,6 +41,9 @@ import AdminOrdersPage from './pages/AdminOrdersPage';
 import UnsubscribePage from './pages/UnsubscribePage';
 import TermsPage from './pages/TermsPage';
 import PrivacyPage from './pages/PrivacyPage';
+import AdminPointsPage from './pages/AdminPointsPage';
+import ClaimPointsPage from './pages/ClaimPointsPage';
+import RewardsPage from './pages/RewardsPage';
 
 // Protected route wrapper
 import ProtectedRoute from './components/ui/ProtectedRoute';
@@ -62,6 +65,8 @@ const App = () => {
               <Route path="/contact" element={<Contact />} />
               <Route path="/about" element={<AboutPage />} />
               <Route path="/membership" element={<MembershipPage />} />
+              <Route path="/claim-points" element={<ClaimPointsPage />} />
+              <Route path="/rewards" element={<RewardsPage />} />
 
               {/* ── Standalone routes (tanpa storefront layout) ── */}
               <Route path="/register" element={<RegisterPage />} />
@@ -131,6 +136,14 @@ const App = () => {
                   </ProtectedRoute>
                 }
               />
+              <Route
+                              path="/points-admin"
+                              element={
+                                <ProtectedRoute roles={['team_dev', 'master', 'admin']}>
+                                  <AdminPointsPage />
+                                </ProtectedRoute>
+                              }
+                            />
 
               {/* Fallback */}
               <Route path="*" element={<HomePage />} />

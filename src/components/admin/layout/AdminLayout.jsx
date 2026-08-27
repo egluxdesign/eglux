@@ -26,6 +26,7 @@ import logoImg from '../../../assets/img/Logo1.png';
 const ADMIN_NAV_ITEMS = [
   { label: '📦 Products Admin', href: '/products-admin' },
   { label: '📋 Pesanan Aktif', href: '/orders-admin' },
+  { label: '⭐ Points Management', href: '/points-admin' },
   { label: '🏠 Homepage Content', href: '/homepage-admin' },
   { label: '🏷️ Discount & Voucher', href: '/discount-admin' },
   { label: '📝 Blog', href: '/blog-admin' },

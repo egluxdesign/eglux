@@ -678,6 +678,17 @@ const HomePage = () => {
               </div>
             )}
 
+            {/* ⭐ NEW: Lihat Poin Saya */}
+            <button
+              onClick={() => {
+                setShowMembershipCard(false);
+                window.location.href = '/rewards';
+              }}
+              className="w-full px-4 py-3 bg-eglux-primary text-white rounded-xl text-sm font-bold hover:opacity-90 cursor-pointer border-none mb-2"
+            >
+              🏆 Lihat Poin Saya (Bonus +20 Poin!)
+            </button>
+
             <button
               onClick={() => setShowMembershipCard(false)}
               className="w-full px-4 py-3 bg-white text-gray-600 border border-gray-200 rounded-xl text-sm font-medium hover:bg-gray-50 cursor-pointer"

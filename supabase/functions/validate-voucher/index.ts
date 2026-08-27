@@ -59,8 +59,7 @@ serve(async (req: Request) => {
       return json({ valid: false, error: "Kode voucher tidak ditemukan" });
     }
 
-    // 1b. ⭐ NEW: Check voucher_redemptions (kalau voucher ini adalah voucher fisik)
-    // Voucher fisik WAJIB di-claim duluan di membership page sebelum bisa dipakai checkout
+    // 1b. ⭐ Check voucher_redemptions (kalau voucher ini adalah voucher fisik)
     const { data: redemption } = await supabase
       .from("voucher_redemptions")
       .select("id, phone, status")
@@ -68,14 +67,32 @@ serve(async (req: Request) => {
       .maybeSingle();
 
     if (redemption) {
-      // Voucher code ada di voucher_redemptions → ini voucher fisik
       if (redemption.status === "used") {
         return json({ valid: false, error: "Voucher ini sudah digunakan sebelumnya" });
       }
-      // TODO (future): match phone user dengan phone yang claim
-      // Sekarang cuma cek status='claimed' (belum 'used')
     }
-    // Kalau redemption gak ada → voucher biasa (bukan voucher fisik), lanjut validasi normal
+
+    // 1c. ⭐ NEW: Check point_redemptions (kalau voucher ini dari redeem poin)
+    const { data: pointRedemption } = await supabase
+      .from("point_redemptions")
+      .select("id, status, expires_at, user_id")
+      .eq("voucher_code", code.trim().toUpperCase())
+      .maybeSingle();
+
+    if (pointRedemption) {
+      // Voucher dari points
+      if (pointRedemption.status === "used") {
+        return json({ valid: false, error: "Voucher ini sudah digunakan sebelumnya" });
+      }
+      if (pointRedemption.status === "expired" || new Date(pointRedemption.expires_at) < new Date()) {
+        return json({ valid: false, error: "Voucher ini sudah expired" });
+      }
+      // Cek kepemilikan: voucher harus dipakai oleh user yang redeem
+      if (pointRedemption.user_id !== userId) {
+        return json({ valid: false, error: "Voucher ini bukan milik akun Anda" });
+      }
+    }
+    // Kalau gak ada di kedua table → voucher biasa, lanjut validasi normal
 
     // 2. Check is_active
     if (!voucher.is_active) {
