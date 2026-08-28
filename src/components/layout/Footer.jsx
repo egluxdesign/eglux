@@ -376,7 +376,7 @@ const Footer = () => {
       <div className="border-t border-white/10">
         <div className="max-w-container mx-auto px-4 md:px-8 py-5 flex flex-col md:flex-row items-center justify-between gap-3">
           <p className="text-white/40 text-[0.78rem]">
-            © 2026 EGLUX — All rights reserved.
+            © 2026 PT. RAYEE INVESTMENT INDONESIA — All rights reserved.
           </p>
           <div className="flex items-center gap-5">
             <a href="/terms" className="text-white/40 text-[0.78rem] no-underline transition-colors hover:text-white/70">

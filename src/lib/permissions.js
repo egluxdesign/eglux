@@ -21,17 +21,17 @@ const ROLE_DEFAULTS = {
   team_dev: {
     dashboard: true, products: true, orders: true, discount: true,
     points: true, homepage: true, blog: true, about: true, contact: true,
-    users: true,
+    users: true, reviews: true,
   },
   master: {
     dashboard: true, products: true, orders: true, discount: true,
     points: true, homepage: true, blog: true, about: true, contact: true,
-    users: true,
+    users: true, reviews: true,
   },
   admin: {
     dashboard: true, products: true, orders: true, discount: false,
     points: false, homepage: false, blog: false, about: false, contact: false,
-    users: false,
+    users: false, reviews: false,
   },
 };
 
@@ -43,6 +43,7 @@ export const ADMIN_PAGES = [
   { key: 'discount', label: 'Discount & Voucher', href: '/discount-admin', icon: '🏷️' },
   { key: 'points', label: 'Points Management', href: '/points-admin', icon: '⭐' },
   { key: 'users', label: 'User Management', href: '/users-admin', icon: '👥' },
+  { key: 'reviews', label: 'Reviews', href: '/reviews-admin', icon: '⭐' },
   { key: 'homepage', label: 'Homepage Content', href: '/homepage-admin', icon: '🏠' },
   { key: 'blog', label: 'Blog', href: '/blog-admin', icon: '📝' },
   { key: 'about', label: 'About Page', href: '/about-admin', icon: 'ℹ️' },

@@ -1,19 +1,3 @@
-// src/App.jsx
-// ============================================================================
-// App routing — flat routes, tiap page handle layout sendiri.
-//
-// CartPage di sini sebagai PROVIDER yang wrap seluruh app supaya
-// useCartActions() available di semua page. CartPage juga render
-// CartPanel + CheckoutModal + CheckoutModalMidtrans + Toast.
-//
-// Pattern tiap page:
-//   <HeaderProducts onCartOpen={openCart} />   ← sticky header + primary nav + swiper
-//   <HeroSection />                            ← page-specific hero
-//   <DuplicateNav activePage="..." />          ← content sticky nav (self-contained)
-//   <main>{content}</main>                     ← page content
-//   <Footer />                                 ← footer
-// ============================================================================
-
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
 import { CartProvider } from './context/CartContext';
@@ -46,6 +30,7 @@ import UnsubscribePage from './pages/UnsubscribePage';
 import ProfilePage from './pages/ProfilePage';
 import ForgotPasswordPage from './pages/ForgotPasswordPage';
 import ResetPasswordPage from './pages/ResetPasswordPage';
+import AdminReviewsPage from './pages/AdminReviewsPage';
 
 // Protected route wrapper
 import ProtectedRoute from './components/ui/ProtectedRoute';
@@ -157,6 +142,16 @@ const App = () => {
                 element={
                   <ProtectedRoute roles={['team_dev', 'master']} page="users">
                     <UsersAdminPage />
+                  </ProtectedRoute>
+                }
+              />
+
+              {/* Reviews — all admin roles */}
+              <Route
+                path="/reviews-admin"
+                element={
+                  <ProtectedRoute roles={['team_dev', 'master', 'admin']} page="reviews">
+                    <AdminReviewsPage />
                   </ProtectedRoute>
                 }
               />

@@ -177,7 +177,7 @@
 
         .timeline-content p {
             font-size: 0.9rem;
-            color: var(--text-light);
+            color: var(--text-white);
         }
 
         /* Stats */
@@ -195,7 +195,7 @@
 
         .stat-item h3 {
             font-size: 3rem;
-            color: var(--secondary);
+            color: #cba65a;
             font-weight: 700;
             margin-bottom: 0.5rem;
         }
@@ -208,7 +208,7 @@
         /* ===== NEW LEADERSHIP CARD - HORIZONTAL FLOW ===== */
         .team-section {
             background: var(--light);
-            padding: 4rem;
+            padding: 2.5rem 1.5rem;
         }
 
         .leadership-card {
@@ -296,7 +296,7 @@
         .leadership-right h3 {
             font-size: 1.3rem;
             font-weight: 700;
-            color: var(--primary);
+            color: #cba65a;
             margin-bottom: 1rem;
             position: relative;
             padding-bottom: 0.6rem;
@@ -309,7 +309,7 @@
             left: 0;
             width: 50px;
             height: 3px;
-            background: var(--secondary);
+            background: #cba65a;
             border-radius: 2px;
         }
 
@@ -429,6 +429,8 @@
     .stat-item h3 {
         font-size: 1.8rem !important;
         margin-bottom: 0.25rem !important;
+        color: #cba65a !important;
+
     }
 
     /* Label stat lebih kecil di mobile */
@@ -437,7 +439,7 @@
     }
 
     /* Section padding lebih ramping di mobile */
-    .stats-section {
+    .stats-section{
         padding: 2.5rem 1rem !important;
     }
 

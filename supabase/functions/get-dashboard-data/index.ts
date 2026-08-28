@@ -1,4 +1,4 @@
-// supabase/functions/get-dashboard-data/index.ts
+/ supabase/functions/get-dashboard-data/index.ts
 // ============================================================================
 // get-dashboard-data — Aggregate all dashboard metrics in 1 API call
 // ============================================================================
@@ -40,17 +40,51 @@ function getDateRange(range: string, customFrom?: string, customTo?: string): { 
     case "today":
       from = new Date(now.getFullYear(), now.getMonth(), now.getDate());
       break;
+    case "yesterday":
+      // Yesterday 00:00 - 23:59
+      from = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+      return {
+        from: from.toISOString(),
+        to: new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 23, 59, 59).toISOString(),
+      };
     case "7d":
       from = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
       break;
+    case "last_week":
+      // Last week (Mon-Sun, Indonesian week starts Monday)
+      const dayOfWeek = now.getDay() === 0 ? 6 : now.getDay() - 1; // 0=Mon, 6=Sun
+      const thisMonday = new Date(now);
+      thisMonday.setDate(now.getDate() - dayOfWeek);
+      thisMonday.setHours(0, 0, 0, 0);
+      const lastMonday = new Date(thisMonday);
+      lastMonday.setDate(thisMonday.getDate() - 7);
+      const lastSunday = new Date(thisMonday);
+      lastSunday.setDate(thisMonday.getDate() - 1);
+      lastSunday.setHours(23, 59, 59, 999);
+      return {
+        from: lastMonday.toISOString(),
+        to: lastSunday.toISOString(),
+      };
     case "30d":
       from = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
       break;
     case "month":
       from = new Date(now.getFullYear(), now.getMonth(), 1);
       break;
+    case "last_month":
+      // Last month 1st - last day
+      from = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const lastDayOfLastMonth = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59);
+      return {
+        from: from.toISOString(),
+        to: lastDayOfLastMonth.toISOString(),
+      };
     case "3month":
       from = new Date(now.getFullYear(), now.getMonth() - 2, 1);
+      break;
+    case "ytd":
+      // Year to date: Jan 1 - now
+      from = new Date(now.getFullYear(), 0, 1);
       break;
     case "custom":
       from = customFrom ? new Date(customFrom) : new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
@@ -60,6 +94,26 @@ function getDateRange(range: string, customFrom?: string, customTo?: string): { 
       from = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
   }
   return { from: from.toISOString(), to };
+}
+
+// ⭐ Phase 3A.4: Calculate previous period for trend comparison
+// Returns the equivalent previous period (e.g., if current = 7d, previous = 7d before that)
+function getPreviousRange(from: string, to: string): { from: string; to: string } {
+  const fromMs = new Date(from).getTime();
+  const toMs = new Date(to).getTime();
+  const duration = toMs - fromMs;
+  return {
+    from: new Date(fromMs - duration).toISOString(),
+    to: new Date(fromMs - 1).toISOString(),
+  };
+}
+
+// ⭐ Phase 3A.4: Calculate trend percentage
+function calcTrend(current: number, previous: number): number | null {
+  if (previous === 0 || previous === null || previous === undefined) {
+    return current > 0 ? 100 : 0; // 100% growth if from 0
+  }
+  return ((current - previous) / Math.abs(previous)) * 100;
 }
 
 const rupiah = (n: number) => n || 0;
@@ -101,12 +155,15 @@ serve(async (req: Request) => {
     const shippingRate = deliveredOrders.length > 0 ? 100 : 0;
 
     // Order Pipeline (computed from allOrders — no DB query needed)
+    // ⭐ Added 'return' & 'refund' buckets untuk Phase 1.4
     const pipeline = {
       pending: allOrders.filter((o: any) => o.status === "pending").length,
       paid: allOrders.filter((o: any) => o.status === "processing" && o.payment_status === "paid" && !o.biteship_order_id).length,
       processing: allOrders.filter((o: any) => o.status === "processing").length,
       shipped: allOrders.filter((o: any) => o.status === "shipped").length,
       delivered: deliveredOrders.length,
+      return: allOrders.filter((o: any) => o.status === "return").length,
+      refund: allOrders.filter((o: any) => o.status === "refund").length,
       cancelled: allOrders.filter((o: any) => o.status === "cancelled" || o.status === "expired").length,
     };
 
@@ -171,8 +228,18 @@ serve(async (req: Request) => {
       supabase.from("newsletter_subscribers").select("*", { count: "exact", head: true }).eq("status", "active"),
       // WA subscribers
       supabase.from("newsletter_subscribers").select("*", { count: "exact", head: true }).eq("status", "active").eq("marketing_wa_opt_in", true),
+      // ⭐ Phase 1.1: Page views (untuk conversion rate)
+      supabase.from("page_views").select("*", { count: "exact", head: true }).gte("created_at", from).lte("created_at", to),
+      // ⭐ Phase 1.1: Product page views (lebih spesifik untuk conversion)
+      supabase.from("page_views").select("*", { count: "exact", head: true }).eq("page_type", "product").gte("created_at", from).lte("created_at", to),
+      // ⭐ Phase 2.1: Active vouchers (marketing center)
+      supabase.from("vouchers").select("id, code, discount_type, discount_value, is_active, valid_until").eq("is_active", true).order("valid_until", { ascending: true }).limit(5),
+      // ⭐ Phase 2.1: Active point rewards (marketing center)
+      supabase.from("point_rewards").select("id, name, points_cost, is_active").eq("is_active", true).order("points_cost", { ascending: true }).limit(5),
+      // ⭐ Visitor Analytics: page_views dengan session_id + user_id + page_path (untuk unique visitors + top pages)
+      supabase.from("page_views").select("session_id, user_id, page_path, page_type, created_at").gte("created_at", from).lte("created_at", to).limit(5000),
     ]);
-    const [pointsCountRes, pointsBalanceRes, vouchersRes, pendingOrdersRes, pendingClaimsRes, shippingDelaysRes, itemsRes, recentOrdersRes, recentPointsRes, totalCustRes, newCustRes, custOrderCountsRes, newsletterRes, waSubsRes] = parallelResults;
+    const [pointsCountRes, pointsBalanceRes, vouchersRes, pendingOrdersRes, pendingClaimsRes, shippingDelaysRes, itemsRes, recentOrdersRes, recentPointsRes, totalCustRes, newCustRes, custOrderCountsRes, newsletterRes, waSubsRes, pageViewsRes, productViewsRes, activeVouchersRes, activeRewardsRes, pageViewsDetailRes] = parallelResults;
     console.log("[get-dashboard-data] parallel batch:", `${Date.now() - tParallel}ms`);
     // Surface per-query errors so they don't silently zero out KPIs
     const errs = parallelResults.map((r: any, i: number) => r?.error ? `[${i}] ${r.error.message}` : null).filter(Boolean);
@@ -248,6 +315,199 @@ serve(async (req: Request) => {
     const newsletterCount = newsletterRes.count || 0;
     const waSubscribers = waSubsRes.count || 0;
 
+    // ── 12. ⭐ Phase 1.1: Conversion Funnel ──
+    const totalViews = pageViewsRes.count || 0;
+    const productViews = productViewsRes.count || 0;
+    const conversionRate = totalViews > 0 ? Math.round((paidCount / totalViews) * 1000) / 10 : 0; // 1 decimal place
+    const productConversionRate = productViews > 0 ? Math.round((paidCount / productViews) * 1000) / 10 : 0;
+
+    // ── 13. ⭐ Phase 1.2: Shop Health Score (composite 0-100) ──
+    // Formula:
+    //   shipping_on_time (40%) — based on delivered vs delayed
+    //   cancel_rate (30%) — lower is better, invert: (100 - cancel_rate)
+    //   fulfillment_rate (20%) — paid orders vs total orders
+    //   base_score (10%) — flat 10 points
+    const cancelledOrExpired = allOrders.filter((o: any) => ["cancelled", "expired"].includes(o.status)).length;
+    const returnedCount = allOrders.filter((o: any) => o.status === "return").length;
+    const cancelRate = totalOrders > 0 ? Math.round(((cancelledOrExpired + returnedCount) / totalOrders) * 100) : 0;
+    const fulfillmentRate = totalOrders > 0 ? Math.round((paidCount / totalOrders) * 100) : 0;
+    const shippingOnTimeRaw = (deliveredOrders.length + shippingDelays.length) > 0
+      ? Math.round((deliveredOrders.length / (deliveredOrders.length + shippingDelays.length)) * 100)
+      : 100;
+    const healthScore = Math.min(100, Math.max(0, Math.round(
+      (shippingOnTimeRaw * 0.4) +
+      ((100 - cancelRate) * 0.3) +
+      (fulfillmentRate * 0.2) +
+      10  // base score
+    )));
+
+    const healthBreakdown = {
+      shipping_on_time: shippingOnTimeRaw,
+      cancel_rate: cancelRate,
+      fulfillment_rate: fulfillmentRate,
+      response_time_hours: null, // TODO: add when ticket system has response tracking
+    };
+
+    // ── 14. ⭐ Phase 2.1: Marketing Center summary ──
+    const activeVouchers = (activeVouchersRes.data || []).map((v: any) => ({
+      id: v.id,
+      code: v.code,
+      discount_type: v.discount_type,
+      discount_value: v.discount_value,
+      valid_until: v.valid_until,
+    }));
+    const activeRewards = (activeRewardsRes.data || []).map((r: any) => ({
+      id: r.id,
+      name: r.name,
+      points_cost: r.points_cost,
+    }));
+
+    // ── 14.75. ⭐ Visitor Analytics (unique visitors + top pages + visits chart) ──
+    const pageViewsDetail = (pageViewsDetailRes.data || []) as any[];
+
+    // Unique visitors: distinct (session_id for anonymous + user_id for logged in)
+    const uniqueSessions = new Set<string>();
+    const uniqueUsers = new Set<string>();
+    pageViewsDetail.forEach((pv: any) => {
+      if (pv.session_id) uniqueSessions.add(pv.session_id);
+      if (pv.user_id) uniqueUsers.add(pv.user_id);
+    });
+
+    // Top pages: group by page_path, count views
+    const pageCounts: Record<string, { path: string; visits: number; type: string }> = {};
+    pageViewsDetail.forEach((pv: any) => {
+      const path = pv.page_path || "/";
+      if (!pageCounts[path]) pageCounts[path] = { path, visits: 0, type: pv.page_type || "other" };
+      pageCounts[path].visits++;
+    });
+    const topPages = Object.values(pageCounts)
+      .sort((a, b) => b.visits - a.visits)
+      .slice(0, 10)
+      .map(p => ({ path: p.path, visits: p.visits, type: p.type }));
+
+    // Visits per day chart (group by date)
+    const visitsChartMap: Record<string, number> = {};
+    pageViewsDetail.forEach((pv: any) => {
+      const dateKey = new Date(pv.created_at).toISOString().split("T")[0];
+      visitsChartMap[dateKey] = (visitsChartMap[dateKey] || 0) + 1;
+    });
+    const visitsChart: { date: string; label: string; visits: number }[] = [];
+    const vStart = new Date(from);
+    const vEnd = new Date(to);
+    const vDayCount = Math.min(Math.ceil((vEnd.getTime() - vStart.getTime()) / (24 * 60 * 60 * 1000)), 90);
+    for (let i = 0; i <= vDayCount; i++) {
+      const d = new Date(vStart.getTime() + i * 24 * 60 * 60 * 1000);
+      const dateKey = d.toISOString().split("T")[0];
+      visitsChart.push({
+        date: dateKey,
+        label: d.toLocaleDateString("id-ID", { day: "2-digit", month: "short" }),
+        visits: visitsChartMap[dateKey] || 0,
+      });
+    }
+
+    const visitorStats = {
+      total_views: pageViewsDetail.length,
+      unique_visitors: uniqueSessions.size + uniqueUsers.size,
+      unique_sessions: uniqueSessions.size,
+      logged_in_visitors: uniqueUsers.size,
+      anonymous_visitors: uniqueSessions.size,
+    };
+
+    // ── 14.5. ⭐ Phase 3A.4: Previous period data untuk trend comparison ──
+    // Query 1 extra: orders di previous period (untuk calc trend revenue & orders)
+    const prevRange = getPreviousRange(from, to);
+    const { data: prevOrdersData } = await supabase
+      .from("orders")
+      .select("id, payment_status, total_amount")
+      .gte("created_at", prevRange.from)
+      .lte("created_at", prevRange.to);
+    const prevOrders = prevOrdersData || [];
+    const prevPaidOrders = prevOrders.filter((o: any) => o.payment_status === "paid");
+    const prevRevenue = prevPaidOrders.reduce((s: number, o: any) => s + Number(o.total_amount || 0), 0);
+    const prevPaidCount = prevPaidOrders.length;
+    const prevTotalOrders = prevOrders.length;
+
+    // Calculate trends
+    const revenueTrend = calcTrend(totalRevenue, prevRevenue);
+    const ordersTrend = calcTrend(totalOrders, prevTotalOrders);
+    const paidOrdersTrend = calcTrend(paidCount, prevPaidCount);
+
+    // ⭐ Phase 3A.1: Build sparkline data dari revenue_chart (last 10 days)
+    const revChart = revenueChart || [];
+    const sparklineData = revChart.slice(-10).map((d: any) => d.revenue || 0);
+    const sparklineOrders = revChart.slice(-10).map((d: any) => d.orders || 0);
+
+    // ── 15. ⭐ Phase 2.3: Finance Summary ──
+    // Compute dari data orders yang sudah ada (tanpa extra query)
+    const totalTax = paidOrders.reduce((s: number, o: any) => s + Number(o.tax_amount || 0), 0);
+    const totalShipping = paidOrders.reduce((s: number, o: any) => s + Number(o.shipping_cost || 0), 0);
+    const totalSubtotal = paidOrders.reduce((s: number, o: any) => s + Number(o.subtotal || 0), 0);
+    const refundOrders = allOrders.filter((o: any) => o.status === "refund");
+    const totalRefund = refundOrders.reduce((s: number, o: any) => s + Number(o.total_amount || 0), 0);
+    // Estimasi fee Midtrans (MDR 0.7% + Rp 2000 per transaksi)
+    const estimatedMdrFee = Math.round(totalRevenue * 0.007);
+    const estimatedFixedFee = paidCount * 2000;
+    const estimatedNetIncome = totalRevenue - estimatedMdrFee - estimatedFixedFee - totalRefund;
+
+    const financeSummary = {
+      gross_revenue: totalRevenue,
+      product_subtotal: totalSubtotal,
+      tax_collected: totalTax,
+      shipping_collected: totalShipping,
+      refund_amount: totalRefund,
+      refund_count: refundOrders.length,
+      estimated_mdr_fee: estimatedMdrFee,
+      estimated_fixed_fee: estimatedFixedFee,
+      estimated_net_income: estimatedNetIncome,
+      mdr_rate: 0.7, // percentage
+    };
+
+    // ── 16. ⭐ Phase 2.4 & 2.5: Sales by Category + Traffic Sources (RPC calls) ──
+    // Pakai RPC function yang sudah dibuat di SQL 058 (SECURITY DEFINER, bypass RLS)
+    let salesByCategory: any[] = [];
+    let trafficSources: any[] = [];
+    try {
+      const [catResult, trafficResult] = await Promise.all([
+        supabase.rpc("get_sales_by_category", { p_from: from, p_to: to }),
+        supabase.rpc("get_traffic_sources", { p_from: from, p_to: to }),
+      ]);
+      salesByCategory = (catResult.data || []) as any[];
+      trafficSources = (trafficResult.data || []) as any[];
+    } catch (e) {
+      console.warn("[get-dashboard-data] RPC category/traffic error:", e?.message);
+    }
+
+    // ── 17. ⭐ Phase 4: Team Activity + Online Admins ──
+    let teamActivity: any[] = [];
+    let onlineAdmins: any[] = [];
+    try {
+      const [activityResult, onlineResult] = await Promise.all([
+        supabase.rpc("get_team_activity", { p_limit: 15 }),
+        supabase.rpc("get_online_admins"),
+      ]);
+      teamActivity = (activityResult.data || []) as any[];
+      onlineAdmins = (onlineResult.data || []) as any[];
+    } catch (e) {
+      console.warn("[get-dashboard-data] RPC team/online error:", e?.message);
+    }
+
+    // ── 17.5. ⭐ Customer Activity + Online Customers + Stats ──
+    let customerActivity: any[] = [];
+    let onlineCustomers: any[] = [];
+    let customerStats: any = null;
+    try {
+      const [custActivityResult, onlineCustResult, custStatsResult] = await Promise.all([
+        supabase.rpc("get_customer_activity", { p_limit: 20, p_role_filter: null }),
+        supabase.rpc("get_online_customers"),
+        supabase.rpc("get_customer_activity_stats"),
+      ]);
+      customerActivity = (custActivityResult.data || []) as any[];
+      onlineCustomers = (onlineCustResult.data || []) as any[];
+      customerStats = custStatsResult.data;
+    } catch (e) {
+      console.warn("[get-dashboard-data] RPC customer activity error:", e?.message);
+    }
+
     // ── Assemble response ──
     console.log("[get-dashboard-data] total:", `${Date.now() - t0}ms`);
     return json({
@@ -262,7 +522,51 @@ serve(async (req: Request) => {
         points_active: totalPointsActive,
         points_transactions: pointsCountRes.count || 0,
         vouchers_used: vouchersRes.count || 0,
+        // ⭐ Phase 1.1: Conversion metrics
+        page_views: totalViews,
+        product_views: productViews,
+        conversion_rate: conversionRate,
+        product_conversion_rate: productConversionRate,
+        // ⭐ Phase 1.2: Health score
+        health_score: healthScore,
+        cancel_rate: cancelRate,
+        fulfillment_rate: fulfillmentRate,
+        // ⭐ Phase 3A.4: Trend indicators (vs previous period)
+        trends: {
+          revenue: revenueTrend,
+          orders: ordersTrend,
+          paid_orders: paidOrdersTrend,
+        },
+        // ⭐ Phase 3A.1: Sparkline data (last 10 days)
+        sparkline: {
+          revenue: sparklineData,
+          orders: sparklineOrders,
+        },
       },
+      // ⭐ Phase 1.2: Shop Health breakdown
+      shop_health: healthBreakdown,
+      // ⭐ Phase 2.1: Marketing Center
+      marketing: {
+        active_vouchers: activeVouchers,
+        active_rewards: activeRewards,
+      },
+      // ⭐ Phase 2.3: Finance Summary
+      finance: financeSummary,
+      // ⭐ Phase 2.4: Sales by Category
+      sales_by_category: salesByCategory,
+      // ⭐ Phase 2.5: Traffic Sources
+      traffic_sources: trafficSources,
+      // ⭐ Visitor Analytics (unique visitors + top pages + visits chart)
+      visitor_stats: visitorStats,
+      top_pages: topPages,
+      visits_chart: visitsChart,
+      // ⭐ Phase 4: Team Activity + Online Admins
+      team_activity: teamActivity,
+      online_admins: onlineAdmins,
+      // ⭐ Customer Activity (pro/verified)
+      customer_activity: customerActivity,
+      online_customers: onlineCustomers,
+      customer_stats: customerStats,
       alerts: {
         pending_orders: pendingOrders || [],
         pending_orders_count: pendingOrders?.length || 0,
