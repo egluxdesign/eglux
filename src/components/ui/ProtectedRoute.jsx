@@ -1,9 +1,9 @@
 // src/components/ui/ProtectedRoute.jsx
 // ============================================================================
-// ProtectedRoute — gate untuk route yang butuh auth + role check
+// ProtectedRoute — gate untuk route yang butuh auth + role + page permission
 // ============================================================================
 // Usage:
-//   <ProtectedRoute roles={['team_dev', 'master', 'admin']}>
+//   <ProtectedRoute roles={['team_dev', 'master', 'admin']} page="products">
 //     <AdminProductsPage />
 //   </ProtectedRoute>
 //
@@ -14,9 +14,10 @@
 
 import { useAuth } from '../../context/AuthContext';
 import { Navigate, useLocation } from 'react-router-dom';
+import { canAccess } from '../../lib/permissions';
 
-const ProtectedRoute = ({ children, roles = null }) => {
-  const { user, role, loading } = useAuth();
+const ProtectedRoute = ({ children, roles = null, page = null }) => {
+  const { user, profile, loading } = useAuth();
   const location = useLocation();
 
   // Loading state
@@ -37,13 +38,8 @@ const ProtectedRoute = ({ children, roles = null }) => {
   }
 
   // Role check (kalau roles specified)
-  // FIX: Sebelumnya `roles && role && !roles.includes(role)` — kalau role === null
-  // (profile belum load / fetch gagal), check dilewati → akses DIBERIKAN ke route admin.
-  // Sekarang: kalau roles specified tapi role belum load (null/undefined), TOLAK.
-  // Lebih aman: deny by default kalau role belum diketahui.
-  if (roles && (!role || !roles.includes(role))) {
-    // Kalau role belum load sama sekali (null), kirim ke login biar reload auth state
-    if (!role) {
+  if (roles && (!profile?.role || !roles.includes(profile.role))) {
+    if (!profile?.role) {
       return <Navigate to="/admin" state={{ from: location.pathname }} replace />;
     }
     return (
@@ -56,19 +52,48 @@ const ProtectedRoute = ({ children, roles = null }) => {
           </div>
           <h2 className="text-xl font-bold text-gray-900 mb-2">Akses Ditolak</h2>
           <p className="text-gray-500 text-sm mb-6">
-            Role Anda ({role}) tidak memiliki izin untuk mengakses halaman ini.
+            Role Anda ({profile.role}) tidak memiliki izin untuk mengakses halaman ini.
             <br />
             Hubungi administrator jika Anda merasa ini adalah kesalahan.
           </p>
           <button
-            onClick={() => window.location.href = '/'}
+            onClick={() => window.location.href = '/dashboard-admin'}
             className="px-6 py-3 bg-eglux-primary text-white rounded-xl font-bold text-sm hover:opacity-90 cursor-pointer"
           >
-            Kembali ke Beranda
+            Kembali ke Dashboard
           </button>
         </div>
       </div>
     );
+  }
+
+  // ⭐ NEW: Page-level permission check (kalau page specified)
+  if (page && profile) {
+    if (!canAccess(page, profile)) {
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-gray-50">
+          <div className="text-center max-w-md px-6">
+            <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <svg className="w-8 h-8 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+              </svg>
+            </div>
+            <h2 className="text-xl font-bold text-gray-900 mb-2">Tidak Ada Akses</h2>
+            <p className="text-gray-500 text-sm mb-6">
+              Anda tidak memiliki izin untuk mengakses halaman ini.
+              <br />
+              Hubungi manager/administrator untuk meminta akses.
+            </p>
+            <button
+              onClick={() => window.location.href = '/dashboard-admin'}
+              className="px-6 py-3 bg-eglux-primary text-white rounded-xl font-bold text-sm hover:opacity-90 cursor-pointer"
+            >
+              Kembali ke Dashboard
+            </button>
+          </div>
+        </div>
+      );
+    }
   }
 
   // All checks passed → render children

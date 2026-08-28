@@ -151,9 +151,7 @@ export async function authenticate(
   }
 
   // ── 3. Fetch profile dari tabel `profiles` ──
-  // Pakai service_role client supaya pasti dapat profile (RLS profiles hanya
-  // allow owner select, jadi gak bisa pakai user JWT untuk fetch profile sendiri
-  // di edge function — atau sebenarnya bisa, tapi lebih reliable pakai service_role).
+  // Pakai service_role client supaya pasti dapat profile (bypass RLS).
   const adminClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
   const { data: profile, error: profileError } = await adminClient
@@ -163,7 +161,7 @@ export async function authenticate(
     .single();
 
   if (profileError || !profile) {
-    // Profile belum ada (trigger handle_new_user belum jalan, atau RLS block)
+    // Profile belum ada (trigger handle_new_user belum jalan, atau user baru register)
     // Return error — jangan allow akses kalau profile belum ada.
     return {
       success: false,

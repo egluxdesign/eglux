@@ -21,26 +21,21 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '../../../context/AuthContext';
 import UserMenu from '../../ui/UserMenu';
 import logoImg from '../../../assets/img/Logo1.png';
+import { ADMIN_PAGES, canAccess } from '../../../lib/permissions';
 
-// ── Admin nav items ──
-const ADMIN_NAV_ITEMS = [
-  { label: '📦 Products Admin', href: '/products-admin' },
-  { label: '📋 Pesanan Aktif', href: '/orders-admin' },
-  { label: '⭐ Points Management', href: '/points-admin' },
-  { label: '🏠 Homepage Content', href: '/homepage-admin' },
-  { label: '🏷️ Discount & Voucher', href: '/discount-admin' },
-  { label: '📝 Blog', href: '/blog-admin' },
-  { label: 'ℹ️ About Page', href: '/about-admin' },
-  { label: '📞 Contact Page', href: '/contact-admin' },
-];
+// ── Admin nav items (dari permissions.js ADMIN_PAGES) ──
+// ⭐ Filter berdasarkan canAccess() — hidden kalau gak punya akses
 
 // ============================================================================
 // AdminLayout (root)
 // ============================================================================
 const AdminLayout = ({ children, title = 'Admin', subtitle, actions }) => {
-  const { user, role, logout } = useAuth();
+  const { user, profile, logout } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const currentPath = window.location.pathname;
+
+  // ⭐ Filter nav items berdasarkan user permissions
+  const visibleNavItems = ADMIN_PAGES.filter(page => canAccess(page.key, profile));
 
   const handleLogout = async () => {
     await logout();
@@ -137,7 +132,7 @@ const AdminLayout = ({ children, title = 'Admin', subtitle, actions }) => {
         </div>
 
         <nav className="flex-1 py-4 px-3 space-y-1">
-          {ADMIN_NAV_ITEMS.map((item) => (
+          {visibleNavItems.map((item) => (
             <Link
               key={item.href}
               to={item.href}
@@ -148,7 +143,7 @@ const AdminLayout = ({ children, title = 'Admin', subtitle, actions }) => {
                   : 'text-gray-700 hover:bg-eglux-accent'
               }`}
             >
-              {item.label}
+              {item.icon} {item.label}
             </Link>
           ))}
           <div className="border-t border-gray-100 my-3" />
@@ -163,7 +158,7 @@ const AdminLayout = ({ children, title = 'Admin', subtitle, actions }) => {
 
         {/* Footer: role + email + logout */}
         <div className="px-4 py-3 border-t border-gray-200">
-          <p className="text-sm font-bold text-eglux-primary uppercase tracking-wider">{role}</p>
+          <p className="text-sm font-bold text-eglux-primary uppercase tracking-wider">{profile?.role || 'user'}</p>
           <p className="text-xs text-gray-500 truncate mb-3">{user?.email}</p>
           <button
             onClick={handleLogout}

@@ -143,8 +143,9 @@ const UserMenu = ({ variant = 'storefront', isScrolled = true }) => {
   const displayName = profile?.full_name || user.email?.split('@')[0] || 'Akun';
 
   // User account menu items
+  // ⭐ "Profil Saya" → link ke /profile (halaman terpisah, bukan modal)
   const USER_MENU_ITEMS = [
-    { label: 'Profil Saya', href: null, icon: IconUser, action: () => { setDropdownOpen(false); setProfileModalOpen(true); } },
+    { label: 'Profil Saya', href: '/profile', icon: IconUser },
     { label: 'Poin Saya', href: '/rewards', icon: IconPoints },  // ⭐ NEW: link to rewards page
     { label: 'Klaim Poin', href: '/claim-points', icon: IconGift },  // ⭐ NEW: marketplace claim
     { label: 'Pesanan Saya', href: '/orders', icon: IconPackage2 },
@@ -195,9 +196,9 @@ const UserMenu = ({ variant = 'storefront', isScrolled = true }) => {
           {/* Admin panel link (atas, hanya untuk admin) */}
           {isAdmin && (
             <div className="py-1">
-              <a href="/products-admin" className="flex items-center gap-3 px-4 py-2.5 text-[0.78rem] font-semibold text-eglux-secondary hover:bg-eglux-secondary/5 transition-colors no-underline">
+              <a href="/dashboard-admin" className="flex items-center gap-3 px-4 py-2.5 text-[0.78rem] font-semibold text-eglux-secondary hover:bg-eglux-secondary/5 transition-colors no-underline">
                 <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" /><rect x="14" y="14" width="7" height="7" /><rect x="3" y="14" width="7" height="7" /></svg>
-                Admin Panel
+                Dashboard Admin
               </a>
             </div>
           )}

@@ -56,15 +56,18 @@ const LoginForm = () => {
         friendlyError = error.message;
       }
       setError(friendlyError);
-      console.error('[Login] Supabase auth error:', error?.message);
+      console.error('[Login] Supabase auth error:', error);
       setLoading(false);
       return;
     }
-    // Setelah login: tetap di page asal (jika ada state.from),
-    // atau balik ke homepage. TIDAK auto-redirect ke /products-admin.
-    // Admin bisa akses panel produk lewat menu dropdown di header (role-based).
-    const from = location.state?.from || '/';
-    navigate(from, { replace: true });
+    // ⭐ Setelah login sukses, redirect logic:
+    // Kalau dari checkout intent (location.state.from) → balik ke page asal
+    // Kalau gak ada from → biar AdminPage useEffect handle (cek role → dashboard/homepage)
+    const from = location.state?.from;
+    if (from && !from.startsWith('/admin') && !from.startsWith('/dashboard')) {
+      navigate(from, { replace: true });
+    }
+    // Kalau gak ada from → setLoading(false), session change akan trigger useEffect redirect
     setLoading(false);
   };
 
@@ -354,8 +357,9 @@ const SettingsPage = () => {
 // };
 
 // ── AdminPage (root) ───────────────────────────────────────
-// Pure login page. Kalau user sudah login → langsung redirect ke page asal.
-// AdminLayout (dashboard) tidak dirender karena pagenya belum fix.
+// Pure login page. Kalau user sudah login → redirect:
+//   - Admin (team_dev/master/admin) → /dashboard-admin
+//   - Customer → page asal atau homepage
 const AdminPage = () => {
   const [session, setSession] = useState(undefined);
   const navigate = useNavigate();
@@ -369,14 +373,35 @@ const AdminPage = () => {
     return () => subscription.unsubscribe();
   }, []);
 
-  // ── Redirect kalau user sudah login ──
-  // Pakai useEffect (bukan langsung navigate di body) supaya tidak trigger
-  // warning "Cannot update during render". Spinner ditampilkan sebagai
-  // placeholder saat redirect berlangsung — BUKAN AdminLayout.
+  // ⭐ Redirect kalau user sudah login
   useEffect(() => {
     if (session) {
-      const from = location.state?.from || '/';
-      navigate(from, { replace: true });
+      // Cek role: fetch profile untuk determine redirect target
+      const checkAndRedirect = async () => {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('role')
+          .eq('id', session.user.id)
+          .maybeSingle();
+
+        const isAdmin = profile?.role === 'team_dev' || profile?.role === 'master' || profile?.role === 'admin';
+        const from = location.state?.from;
+
+        // Kalau dari checkout intent (ada from) → balik ke page asal
+        if (from && !from.startsWith('/admin') && !from.startsWith('/dashboard')) {
+          navigate(from, { replace: true });
+          return;
+        }
+
+        // Kalau admin → redirect ke dashboard
+        if (isAdmin) {
+          navigate('/dashboard-admin', { replace: true });
+        } else {
+          // Customer → homepage
+          navigate(from || '/', { replace: true });
+        }
+      };
+      checkAndRedirect();
     }
   }, [session, navigate, location]);
 
