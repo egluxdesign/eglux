@@ -12,7 +12,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import AdminLayout from '../components/admin/layout/AdminLayout';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabaseClient';
-import { ADMIN_PAGES, getDefaultPermissions } from '../lib/permissions';
+import { ADMIN_PAGES, DASHBOARD_SECTIONS, getDefaultPermissions } from '../lib/permissions';
 
 function shortId(uuid) { return (uuid || '').replace(/-/g, '').slice(0, 8).toUpperCase(); }
 
@@ -283,6 +283,52 @@ const UsersAdminPage = () => {
                               </label>
                             ))}
                           </div>
+
+                          {/* ⭐ Dashboard sub-sections (hanya tampil kalau dashboard checkbox = true) */}
+                          {editingPermissions.dashboard === true && (
+                            <div className="mb-4 p-3 bg-white border border-gray-200 rounded-lg">
+                              <p className="text-[0.65rem] font-semibold text-gray-500 uppercase mb-2 flex items-center gap-1">
+                                📊 Dashboard Sections
+                                <span className="text-gray-400 normal-case font-normal">(granular control per section)</span>
+                              </p>
+                              <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+                                {DASHBOARD_SECTIONS.map((section) => (
+                                  <label key={section.key} className="flex items-center gap-1.5 cursor-pointer p-1.5 rounded hover:bg-gray-50 transition-colors">
+                                    <input
+                                      type="checkbox"
+                                      checked={editingPermissions[section.key] === true}
+                                      onChange={(e) => setEditingPermissions({ ...editingPermissions, [section.key]: e.target.checked })}
+                                      className="w-3.5 h-3.5 cursor-pointer accent-eglux-secondary"
+                                    />
+                                    <span className="text-[0.7rem] text-gray-600">{section.icon} {section.label}</span>
+                                  </label>
+                                ))}
+                              </div>
+                              <div className="flex gap-2 mt-2 pt-2 border-t border-gray-100">
+                                <button
+                                  onClick={() => {
+                                    const updated = { ...editingPermissions };
+                                    DASHBOARD_SECTIONS.forEach(s => { updated[s.key] = true; });
+                                    setEditingPermissions(updated);
+                                  }}
+                                  className="text-[0.65rem] text-eglux-secondary font-semibold hover:underline cursor-pointer bg-transparent border-none"
+                                >
+                                  ✅ Enable All
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    const updated = { ...editingPermissions };
+                                    DASHBOARD_SECTIONS.forEach(s => { updated[s.key] = false; });
+                                    setEditingPermissions(updated);
+                                  }}
+                                  className="text-[0.65rem] text-gray-400 font-semibold hover:underline cursor-pointer bg-transparent border-none"
+                                >
+                                  ❌ Disable All
+                                </button>
+                              </div>
+                            </div>
+                          )}
+
                           <div className="flex gap-2 flex-wrap">
                             <button onClick={() => handleSave(u.id)} disabled={saving} className="px-4 py-2 bg-eglux-secondary text-white rounded-lg text-xs font-semibold hover:opacity-90 disabled:opacity-50 cursor-pointer border-none">
                               {saving ? '⏳ Menyimpan...' : '💾 Save Custom'}
@@ -393,6 +439,26 @@ const UsersAdminPage = () => {
                         </label>
                       ))}
                     </div>
+
+                    {/* ⭐ Dashboard sub-sections */}
+                    {promotePermissions.dashboard === true && (
+                      <div className="mt-3 p-3 bg-gray-50 border border-gray-200 rounded-lg">
+                        <p className="text-[0.65rem] font-semibold text-gray-500 uppercase mb-2">📊 Dashboard Sections</p>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+                          {DASHBOARD_SECTIONS.map((section) => (
+                            <label key={section.key} className="flex items-center gap-1.5 cursor-pointer p-1.5 rounded hover:bg-white transition-colors">
+                              <input
+                                type="checkbox"
+                                checked={promotePermissions[section.key] === true}
+                                onChange={(e) => setPromotePermissions({ ...promotePermissions, [section.key]: e.target.checked })}
+                                className="w-3.5 h-3.5 cursor-pointer accent-eglux-secondary"
+                              />
+                              <span className="text-[0.7rem] text-gray-600">{section.icon} {section.label}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
 

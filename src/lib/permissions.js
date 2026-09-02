@@ -50,6 +50,19 @@ export const ADMIN_PAGES = [
   { key: 'contact', label: 'Contact Page', href: '/contact-admin', icon: '📞' },
 ];
 
+export const DASHBOARD_SECTIONS = [
+  { key: 'dashboard_revenue', label: 'Revenue & KPI Cards', icon: '💰' },
+  { key: 'dashboard_health', label: 'Shop Health Score', icon: '🏪' },
+  { key: 'dashboard_conversion', label: 'Conversion Funnel', icon: '📈' },
+  { key: 'dashboard_marketing', label: 'Marketing Center', icon: '📣' },
+  { key: 'dashboard_finance', label: 'Finance Summary', icon: '💵' },
+  { key: 'dashboard_category', label: 'Sales by Category', icon: '📊' },
+  { key: 'dashboard_traffic', label: 'Traffic Sources', icon: '🌐' },
+  { key: 'dashboard_visitor', label: 'Visitor Analytics', icon: '👁️' },
+  { key: 'dashboard_team', label: 'Team Activity & Online Admins', icon: '🟢' },
+  { key: 'dashboard_customer', label: 'Customer Activity & Online', icon: '👥' },
+];
+
 /**
  * Check if user can access a specific admin page
  * @param {string} page - Page key (e.g., 'dashboard', 'products', 'discount')

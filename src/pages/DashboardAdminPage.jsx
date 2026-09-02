@@ -18,6 +18,7 @@ import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabaseClient';
 import Sparkline from '../components/ui/Sparkline';
 import EmptyState from '../components/ui/EmptyState';
+import { canAccess } from '../lib/permissions';
 
 const DATE_RANGES = [
   { value: 'today', label: 'Hari Ini' },
@@ -65,7 +66,14 @@ function formatTimeAgo(seconds) {
 
 const DashboardAdminPage = () => {
   const { user, profile } = useAuth();
-  const isAdmin = profile?.role === 'team_dev' || profile?.role === 'master';
+  // ⭐ FIX: Include 'admin' role supaya dashboard lengkap (sama seperti team_dev/master)
+  // Sebelumnya: cuma team_dev + master → admin lihat dashboard yang gak lengkap
+  const isAdmin = profile?.role === 'team_dev' || profile?.role === 'master' || profile?.role === 'admin';
+
+  // ⭐ Helper: check granular dashboard section access
+  // Admin role bisa di-custom per section via User Management
+  // team_dev/master selalu true (full access)
+  const canSee = (sectionKey) => canAccess(sectionKey, profile);
 
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -289,7 +297,7 @@ const DashboardAdminPage = () => {
                   <Link to="/products-admin" className="flex-shrink-0 px-3 py-2 bg-eglux-secondary text-white rounded-lg text-xs font-semibold hover:opacity-90 transition-opacity no-underline flex items-center gap-1.5">
                     <span>+</span> Tambah Produk
                   </Link>
-                  <Link to="/discount-admin" className="flex-shrink-0 px-3 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg text-xs font-semibold hover:bg-gray-50 transition-colors no-underline flex items-center gap-1.5">
+                  <Link to="/discount-admin" className={`flex-shrink-0 px-3 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg text-xs font-semibold hover:bg-gray-50 transition-colors no-underline flex items-center gap-1.5 ${!canSee('dashboard_marketing') ? 'hidden' : ''}`}>
                     <span>🎫</span> Buat Voucher
                   </Link>
                   <Link to="/points-admin" className="flex-shrink-0 px-3 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg text-xs font-semibold hover:bg-gray-50 transition-colors no-underline flex items-center gap-1.5">
@@ -306,61 +314,49 @@ const DashboardAdminPage = () => {
             )}
 
             {/* ⭐ Phase 1.2: Shop Health Score + Phase 1.1: Conversion Funnel */}
-            {isAdmin && (
+            {isAdmin && canSee('dashboard_health') && canSee('dashboard_conversion') && (
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
                 {/* Shop Health Score */}
                 <div className="bg-white border border-gray-200 rounded-xl p-5">
                   <h3 className="text-sm font-bold text-gray-700 mb-3">🏪 Shop Health Score</h3>
-                  {(() => {
-                    const score = data.kpis?.health_score || 0;
-                    const health = getHealthColor(score);
-                    const sh = data.shop_health || {};
-                    const shippingOnTime = sh.shipping_on_time ?? 0;
-                    const cancelRate = sh.cancel_rate ?? 0;
-                    const fulfillmentRate = sh.fulfillment_rate ?? 0;
-                    return (
-                      <>
-                        <div className="flex items-center gap-4">
-                          {/* Score Ring (CSS-based) */}
-                          <div className="relative w-20 h-20 flex-shrink-0">
-                            <svg className="w-20 h-20 -rotate-90" viewBox="0 0 80 80">
-                              <circle cx="40" cy="40" r="35" fill="none" stroke="#e5e7eb" strokeWidth="6" />
-                              <circle
-                                cx="40" cy="40" r="35" fill="none"
-                                stroke="currentColor"
-                                strokeWidth="6"
-                                strokeDasharray={`${(score / 100) * 220} 220`}
-                                strokeLinecap="round"
-                                className={health.text}
-                              />
-                            </svg>
-                            <div className="absolute inset-0 flex items-center justify-center">
-                              <span className={`text-xl font-bold ${health.text}`}>{score}</span>
-                            </div>
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <p className={`text-sm font-bold ${health.text}`}>{health.label}</p>
-                            <p className="text-[0.65rem] text-gray-400 mt-0.5">Composite score 0-100</p>
-                          </div>
-                        </div>
-                        {/* Breakdown */}
-                        <div className="mt-3 space-y-1.5">
-                          <div className="flex justify-between text-[0.7rem]">
-                            <span className="text-gray-500">🚚 Shipping On-time</span>
-                            <span className={`font-semibold ${shippingOnTime >= 90 ? 'text-green-600' : 'text-amber-600'}`}>{shippingOnTime}%</span>
-                          </div>
-                          <div className="flex justify-between text-[0.7rem]">
-                            <span className="text-gray-500">❌ Cancel Rate</span>
-                            <span className={`font-semibold ${cancelRate <= 5 ? 'text-green-600' : 'text-red-600'}`}>{cancelRate}%</span>
-                          </div>
-                          <div className="flex justify-between text-[0.7rem]">
-                            <span className="text-gray-500">✅ Fulfillment Rate</span>
-                            <span className={`font-semibold ${fulfillmentRate >= 80 ? 'text-green-600' : 'text-amber-600'}`}>{fulfillmentRate}%</span>
-                          </div>
-                        </div>
-                      </>
-                    );
-                  })()}
+                  {/* Score Ring + Label */}
+                  <div className="flex items-center gap-4">
+                    <div className="relative w-20 h-20 flex-shrink-0">
+                      <svg className="w-20 h-20 -rotate-90" viewBox="0 0 80 80">
+                        <circle cx="40" cy="40" r="35" fill="none" stroke="#e5e7eb" strokeWidth="6" />
+                        <circle
+                          cx="40" cy="40" r="35" fill="none"
+                          stroke="currentColor"
+                          strokeWidth="6"
+                          strokeDasharray={`${((data.kpis?.health_score || 0) / 100) * 220} 220`}
+                          strokeLinecap="round"
+                          className={getHealthColor(data.kpis?.health_score || 0).text}
+                        />
+                      </svg>
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <span className={`text-xl font-bold ${getHealthColor(data.kpis?.health_score || 0).text}`}>{data.kpis?.health_score || 0}</span>
+                      </div>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className={`text-sm font-bold ${getHealthColor(data.kpis?.health_score || 0).text}`}>{getHealthColor(data.kpis?.health_score || 0).label}</p>
+                      <p className="text-[0.65rem] text-gray-400 mt-0.5">Composite score 0-100</p>
+                    </div>
+                  </div>
+                  {/* Breakdown */}
+                  <div className="mt-3 space-y-1.5">
+                    <div className="flex justify-between text-[0.7rem]">
+                      <span className="text-gray-500">🚚 Shipping On-time</span>
+                      <span className={`font-semibold ${(data.shop_health?.shipping_on_time ?? 0) >= 90 ? 'text-green-600' : 'text-amber-600'}`}>{data.shop_health?.shipping_on_time ?? 0}%</span>
+                    </div>
+                    <div className="flex justify-between text-[0.7rem]">
+                      <span className="text-gray-500">❌ Cancel Rate</span>
+                      <span className={`font-semibold ${(data.shop_health?.cancel_rate ?? 0) <= 5 ? 'text-green-600' : 'text-red-600'}`}>{data.shop_health?.cancel_rate ?? 0}%</span>
+                    </div>
+                    <div className="flex justify-between text-[0.7rem]">
+                      <span className="text-gray-500">✅ Fulfillment Rate</span>
+                      <span className={`font-semibold ${(data.shop_health?.fulfillment_rate ?? 0) >= 80 ? 'text-green-600' : 'text-amber-600'}`}>{data.shop_health?.fulfillment_rate ?? 0}%</span>
+                    </div>
+                  </div>
                 </div>
 
                 {/* Conversion Funnel */}
@@ -417,8 +413,8 @@ const DashboardAdminPage = () => {
 
             {/* === KPI CARDS (with Sparkline + Trend) === */}
             <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-              {/* Revenue — only for team_dev/master */}
-              {isAdmin && (
+              {/* Revenue — only for admin with dashboard_revenue permission */}
+              {isAdmin && canSee('dashboard_revenue') && (
                 <div className="bg-gradient-to-br from-eglux-primary to-gray-800 rounded-xl p-4 text-white relative overflow-hidden">
                   <div className="flex items-start justify-between mb-1">
                     <div className="text-[0.65rem] uppercase tracking-wider text-white/60">💰 Revenue</div>
@@ -478,7 +474,7 @@ const DashboardAdminPage = () => {
             </div>
 
             {/* === REVENUE CHART (team_dev/master only) === */}
-            {isAdmin && data.revenue_chart && (
+            {isAdmin && canSee('dashboard_revenue') && data.revenue_chart && (
               <div className="bg-white border border-gray-200 rounded-xl p-5">
                 <div className="flex items-center justify-between mb-4">
                   <h3 className="text-sm font-bold text-gray-700">💰 Revenue Trend</h3>
@@ -639,7 +635,7 @@ const DashboardAdminPage = () => {
             </div>
 
             {/* ⭐ Phase 2.1: Marketing Center (preview) */}
-            {isAdmin && data.marketing && (
+            {isAdmin && canSee('dashboard_marketing') && data.marketing && (
               <div className="bg-white border border-gray-200 rounded-xl p-5">
                 <div className="flex items-center justify-between mb-3">
                   <h3 className="text-sm font-bold text-gray-700">📣 Marketing Center</h3>
@@ -752,7 +748,7 @@ const DashboardAdminPage = () => {
             )}
 
             {/* === ⭐ Phase 2.3: Finance Summary === */}
-            {isAdmin && data.finance && (
+            {isAdmin && canSee('dashboard_finance') && data.finance && (
               <div className="bg-white border border-gray-200 rounded-xl p-5">
                 <div className="flex items-center justify-between mb-3">
                   <h3 className="text-sm font-bold text-gray-700">💰 Finance Summary</h3>
@@ -822,91 +818,97 @@ const DashboardAdminPage = () => {
             )}
 
             {/* === ⭐ Phase 2.4: Sales by Category + Phase 2.5: Traffic Sources === */}
-            {isAdmin && (
+            {isAdmin && (canSee('dashboard_category') || canSee('dashboard_traffic')) && (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                <div className="bg-white border border-gray-200 rounded-xl p-5">
-                  <h3 className="text-sm font-bold text-gray-700 mb-3">📊 Penjualan per Kategori</h3>
-                  {(data.sales_by_category || []).length === 0 ? (
-                    <EmptyState
-                      icon="📊"
-                      title="Belum ada data penjualan"
-                      description="Data penjualan per kategori akan muncul setelah ada order yang dibayar."
-                      size="sm"
-                    />
-                  ) : (
-                    <div className="space-y-2">
-                      {(data.sales_by_category || []).slice(0, 6).map((cat, i) => {
-                        const maxRevenue = Math.max(...(data.sales_by_category || []).map(c => c.total_revenue), 1);
-                        const widthPct = Math.max((cat.total_revenue / maxRevenue) * 100, 5);
-                        return (
-                          <div key={i} className="space-y-1">
-                            <div className="flex items-center justify-between text-xs">
-                              <span className="text-gray-700 font-medium truncate flex-1">{cat.category}</span>
-                              <div className="flex items-center gap-3 flex-shrink-0 ml-2">
-                                <span className="text-gray-400">{cat.total_sold} terjual</span>
-                                <span className="text-eglux-secondary font-semibold">{rupiah(cat.total_revenue)}</span>
+                {/* Sales by Category */}
+                {canSee('dashboard_category') && (
+                  <div className="bg-white border border-gray-200 rounded-xl p-5">
+                    <h3 className="text-sm font-bold text-gray-700 mb-3">📊 Penjualan per Kategori</h3>
+                    {(data.sales_by_category || []).length === 0 ? (
+                      <EmptyState
+                        icon="📊"
+                        title="Belum ada data penjualan"
+                        description="Data penjualan per kategori akan muncul setelah ada order yang dibayar."
+                        size="sm"
+                      />
+                    ) : (
+                      <div className="space-y-2">
+                        {(data.sales_by_category || []).slice(0, 6).map((cat, i) => {
+                          const maxRevenue = Math.max(...(data.sales_by_category || []).map(c => c.total_revenue), 1);
+                          const widthPct = Math.max((cat.total_revenue / maxRevenue) * 100, 5);
+                          return (
+                            <div key={i} className="space-y-1">
+                              <div className="flex items-center justify-between text-xs">
+                                <span className="text-gray-700 font-medium truncate flex-1">{cat.category}</span>
+                                <div className="flex items-center gap-3 flex-shrink-0 ml-2">
+                                  <span className="text-gray-400">{cat.total_sold} terjual</span>
+                                  <span className="text-eglux-secondary font-semibold">{rupiah(cat.total_revenue)}</span>
+                                </div>
+                              </div>
+                              <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                                <div
+                                  className="h-full rounded-full transition-all"
+                                  style={{
+                                    width: `${widthPct}%`,
+                                    background: `linear-gradient(90deg, hsl(${i * 45}, 70%, 55%), hsl(${i * 45 + 30}, 70%, 60%))`,
+                                  }}
+                                ></div>
                               </div>
                             </div>
-                            <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                              <div
-                                className="h-full rounded-full transition-all"
-                                style={{
-                                  width: `${widthPct}%`,
-                                  background: `linear-gradient(90deg, hsl(${i * 45}, 70%, 55%), hsl(${i * 45 + 30}, 70%, 60%))`,
-                                }}
-                              ></div>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
 
-                <div className="bg-white border border-gray-200 rounded-xl p-5">
-                  <h3 className="text-sm font-bold text-gray-700 mb-3">🌐 Sumber Trafik</h3>
-                  {(data.traffic_sources || []).length === 0 ? (
-                    <p className="text-xs text-gray-400 py-4 text-center">
-                      Belum ada data trafik.
-                      <br />
-                      <span className="text-[0.6rem]">Integrate <code className="bg-gray-100 px-1 rounded">trackPageView</code> di frontend.</span>
-                    </p>
-                  ) : (
-                    <div className="space-y-2">
-                      {(data.traffic_sources || []).slice(0, 8).map((src, i) => {
-                        const sourceIcons = {
-                          'Direct': '🔗',
-                          'Google Search': '🔍',
-                          'Facebook': '📘',
-                          'Instagram': '📷',
-                          'TikTok': '🎵',
-                          'Twitter/X': '🐦',
-                          'YouTube': '▶️',
-                          'WhatsApp': '💬',
-                          'Telegram': '✈️',
-                          'Shopee': '🛍️',
-                          'Tokopedia': '🛒',
-                          'Internal': '🏠',
-                          'Other': '🌐',
-                        };
-                        const icon = sourceIcons[src.source] || '🌐';
-                        return (
-                          <div key={i} className="flex items-center gap-2 text-xs py-1.5 border-b border-gray-50 last:border-0">
-                            <span className="flex-shrink-0 w-6 text-center">{icon}</span>
-                            <span className="text-gray-700 font-medium flex-1 truncate">{src.source}</span>
-                            <span className="text-gray-500 flex-shrink-0">{src.visits} visits</span>
-                            <span className="font-semibold text-eglux-secondary flex-shrink-0 w-12 text-right">{src.percentage}%</span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
+                {/* Traffic Sources */}
+                {canSee('dashboard_traffic') && (
+                  <div className="bg-white border border-gray-200 rounded-xl p-5">
+                    <h3 className="text-sm font-bold text-gray-700 mb-3">🌐 Sumber Trafik</h3>
+                    {(data.traffic_sources || []).length === 0 ? (
+                      <p className="text-xs text-gray-400 py-4 text-center">
+                        Belum ada data trafik.
+                        <br />
+                        <span className="text-[0.6rem]">Integrate <code className="bg-gray-100 px-1 rounded">trackPageView</code> di frontend.</span>
+                      </p>
+                    ) : (
+                      <div className="space-y-2">
+                        {(data.traffic_sources || []).slice(0, 8).map((src, i) => {
+                          const sourceIcons = {
+                            'Direct': '🔗',
+                            'Google Search': '🔍',
+                            'Facebook': '📘',
+                            'Instagram': '📷',
+                            'TikTok': '🎵',
+                            'Twitter/X': '🐦',
+                            'YouTube': '▶️',
+                            'WhatsApp': '💬',
+                            'Telegram': '✈️',
+                            'Shopee': '🛍️',
+                            'Tokopedia': '🛒',
+                            'Internal': '🏠',
+                            'Other': '🌐',
+                          };
+                          const icon = sourceIcons[src.source] || '🌐';
+                          return (
+                            <div key={i} className="flex items-center gap-2 text-xs py-1.5 border-b border-gray-50 last:border-0">
+                              <span className="flex-shrink-0 w-6 text-center">{icon}</span>
+                              <span className="text-gray-700 font-medium flex-1 truncate">{src.source}</span>
+                              <span className="text-gray-500 flex-shrink-0">{src.visits} visits</span>
+                              <span className="font-semibold text-eglux-secondary flex-shrink-0 w-12 text-right">{src.percentage}%</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 
             {/* === ⭐ Visitor Analytics (Unique Visitors + Top Pages + Visits Chart) === */}
-            {isAdmin && (
+            {isAdmin && canSee('dashboard_visitor') && (
               <>
                 {/* Visitor Stats Cards */}
                 {data.visitor_stats && (
@@ -1025,7 +1027,7 @@ const DashboardAdminPage = () => {
             )}
 
             {/* === ⭐ Phase 4: Team Activity + Online Admins === */}
-            {isAdmin && (
+            {isAdmin && canSee('dashboard_team') && (
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
                 {/* Online Admins (1 col) */}
                 <div className="bg-white border border-gray-200 rounded-xl p-5">
@@ -1120,7 +1122,7 @@ const DashboardAdminPage = () => {
             )}
 
             {/* === ⭐ Customer Activity (pro/verified) === */}
-            {isAdmin && (
+            {isAdmin && canSee('dashboard_customer') && (
               <>
                 {/* Stats Cards */}
                 {data.customer_stats && (
