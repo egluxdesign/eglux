@@ -1,3 +1,19 @@
+// src/App.jsx
+// ============================================================================
+// App routing — flat routes, tiap page handle layout sendiri.
+//
+// CartPage di sini sebagai PROVIDER yang wrap seluruh app supaya
+// useCartActions() available di semua page. CartPage juga render
+// CartPanel + CheckoutModal + CheckoutModalMidtrans + Toast.
+//
+// Pattern tiap page:
+//   <HeaderProducts onCartOpen={openCart} />   ← sticky header + primary nav + swiper
+//   <HeroSection />                            ← page-specific hero
+//   <DuplicateNav activePage="..." />          ← content sticky nav (self-contained)
+//   <main>{content}</main>                     ← page content
+//   <Footer />                                 ← footer
+// ============================================================================
+
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
 import { CartProvider } from './context/CartContext';
@@ -35,11 +51,22 @@ import AdminReviewsPage from './pages/AdminReviewsPage';
 // Protected route wrapper
 import ProtectedRoute from './components/ui/ProtectedRoute';
 
+// ⭐ Customer activity tracking hook (track page views + presence)
+import { useUserActivity } from './hooks/useUserActivity';
+
+// ⭐ Wrapper component untuk call hook di dalam BrowserRouter
+// (useLocation() butuh Router context)
+const StorefrontActivityTracker = () => {
+  useUserActivity();
+  return null; // gak render apa-apa, cuma track
+};
+
 const App = () => {
   return (
     <AuthProvider>
       <CartProvider>
         <BrowserRouter>
+          <StorefrontActivityTracker />
           <CartPage>
             <Routes>
               {/* ── Storefront routes ── */}

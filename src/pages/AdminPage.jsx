@@ -12,13 +12,15 @@
 //
 // Catatan: kalau dashboard admin sudah fix nanti, balikin render AdminLayout
 // di bagian `if (session) { ... }` di bawah. Untuk sekarang cukup redirect.
+//
+// ⭐ UPDATE: Tambah link "Lupa Password?" di form login
 // ============================================================================
 
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 
-// ── Login Form (Matched Style dengan RegisterPage) ───────────
+// ── Login Form (Matched style dengan RegisterPage) ───────────
 const LoginForm = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -154,6 +156,16 @@ const LoginForm = () => {
               </div>
             </div>
 
+            {/* ⭐ NEW: Lupa Password link */}
+            <div className="flex justify-end -mt-2">
+              <Link
+                to="/forgot-password"
+                className="text-[0.75rem] text-eglux-secondary font-semibold hover:underline no-underline"
+              >
+                Lupa Password?
+              </Link>
+            </div>
+
             {/* Submit */}
             <button
               type="submit"
@@ -190,8 +202,8 @@ const LoginForm = () => {
 const SettingsPage = () => {
   const [form, setForm] = useState({
     storeName: 'EGLUX',
-    email: 'hello@eglux.id',
-    phone: '+62 812-3456-7890',
+    email: 'contact@eglux.co.id',
+    phone: '+62 811-8988-301',
     midtransClientKey: '',
   });
   const [saving, setSaving] = useState(false);

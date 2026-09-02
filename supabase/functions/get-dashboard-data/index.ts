@@ -1,4 +1,4 @@
-/ supabase/functions/get-dashboard-data/index.ts
+// supabase/functions/get-dashboard-data/index.ts
 // ============================================================================
 // get-dashboard-data — Aggregate all dashboard metrics in 1 API call
 // ============================================================================
@@ -233,13 +233,11 @@ serve(async (req: Request) => {
       // ⭐ Phase 1.1: Product page views (lebih spesifik untuk conversion)
       supabase.from("page_views").select("*", { count: "exact", head: true }).eq("page_type", "product").gte("created_at", from).lte("created_at", to),
       // ⭐ Phase 2.1: Active vouchers (marketing center)
-      supabase.from("vouchers").select("id, code, discount_type, discount_value, is_active, valid_until").eq("is_active", true).order("valid_until", { ascending: true }).limit(5),
+      supabase.from("vouchers").select("id, code, discount_type, discount_value, is_active, end_at").eq("is_active", true).order("end_at", { ascending: true }).limit(5),
       // ⭐ Phase 2.1: Active point rewards (marketing center)
       supabase.from("point_rewards").select("id, name, points_cost, is_active").eq("is_active", true).order("points_cost", { ascending: true }).limit(5),
-      // ⭐ Visitor Analytics: page_views dengan session_id + user_id + page_path (untuk unique visitors + top pages)
-      supabase.from("page_views").select("session_id, user_id, page_path, page_type, created_at").gte("created_at", from).lte("created_at", to).limit(5000),
     ]);
-    const [pointsCountRes, pointsBalanceRes, vouchersRes, pendingOrdersRes, pendingClaimsRes, shippingDelaysRes, itemsRes, recentOrdersRes, recentPointsRes, totalCustRes, newCustRes, custOrderCountsRes, newsletterRes, waSubsRes, pageViewsRes, productViewsRes, activeVouchersRes, activeRewardsRes, pageViewsDetailRes] = parallelResults;
+    const [pointsCountRes, pointsBalanceRes, vouchersRes, pendingOrdersRes, pendingClaimsRes, shippingDelaysRes, itemsRes, recentOrdersRes, recentPointsRes, totalCustRes, newCustRes, custOrderCountsRes, newsletterRes, waSubsRes, pageViewsRes, productViewsRes, activeVouchersRes, activeRewardsRes] = parallelResults;
     console.log("[get-dashboard-data] parallel batch:", `${Date.now() - tParallel}ms`);
     // Surface per-query errors so they don't silently zero out KPIs
     const errs = parallelResults.map((r: any, i: number) => r?.error ? `[${i}] ${r.error.message}` : null).filter(Boolean);
@@ -354,7 +352,7 @@ serve(async (req: Request) => {
       code: v.code,
       discount_type: v.discount_type,
       discount_value: v.discount_value,
-      valid_until: v.valid_until,
+      valid_until: v.end_at,
     }));
     const activeRewards = (activeRewardsRes.data || []).map((r: any) => ({
       id: r.id,
@@ -362,56 +360,28 @@ serve(async (req: Request) => {
       points_cost: r.points_cost,
     }));
 
-    // ── 14.75. ⭐ Visitor Analytics (unique visitors + top pages + visits chart) ──
-    const pageViewsDetail = (pageViewsDetailRes.data || []) as any[];
+    // ── 14.75. ⭐ Visitor Analytics via RPC (aggregasi di PostgreSQL, bukan JS) ──
+    let visitorStats: any = { total_views: 0, unique_visitors: 0, unique_sessions: 0, logged_in_visitors: 0, anonymous_visitors: 0 };
+    let topPages: any[] = [];
+    let visitsChart: any[] = [];
+    try {
+      const [visitorStatsRes, topPagesRes, visitsChartRes] = await Promise.all([
+        supabase.rpc("get_visitor_stats", { p_from: from, p_to: to }),
+        supabase.rpc("get_top_pages", { p_from: from, p_to: to, p_limit: 10 }),
+        supabase.rpc("get_visits_chart", { p_from: from, p_to: to }),
+      ]);
 
-    // Unique visitors: distinct (session_id for anonymous + user_id for logged in)
-    const uniqueSessions = new Set<string>();
-    const uniqueUsers = new Set<string>();
-    pageViewsDetail.forEach((pv: any) => {
-      if (pv.session_id) uniqueSessions.add(pv.session_id);
-      if (pv.user_id) uniqueUsers.add(pv.user_id);
-    });
+      if (visitorStatsRes.data) visitorStats = visitorStatsRes.data;
+      if (topPagesRes.data) topPages = topPagesRes.data as any[];
+      if (visitsChartRes.data) visitsChart = visitsChartRes.data as any[];
 
-    // Top pages: group by page_path, count views
-    const pageCounts: Record<string, { path: string; visits: number; type: string }> = {};
-    pageViewsDetail.forEach((pv: any) => {
-      const path = pv.page_path || "/";
-      if (!pageCounts[path]) pageCounts[path] = { path, visits: 0, type: pv.page_type || "other" };
-      pageCounts[path].visits++;
-    });
-    const topPages = Object.values(pageCounts)
-      .sort((a, b) => b.visits - a.visits)
-      .slice(0, 10)
-      .map(p => ({ path: p.path, visits: p.visits, type: p.type }));
-
-    // Visits per day chart (group by date)
-    const visitsChartMap: Record<string, number> = {};
-    pageViewsDetail.forEach((pv: any) => {
-      const dateKey = new Date(pv.created_at).toISOString().split("T")[0];
-      visitsChartMap[dateKey] = (visitsChartMap[dateKey] || 0) + 1;
-    });
-    const visitsChart: { date: string; label: string; visits: number }[] = [];
-    const vStart = new Date(from);
-    const vEnd = new Date(to);
-    const vDayCount = Math.min(Math.ceil((vEnd.getTime() - vStart.getTime()) / (24 * 60 * 60 * 1000)), 90);
-    for (let i = 0; i <= vDayCount; i++) {
-      const d = new Date(vStart.getTime() + i * 24 * 60 * 60 * 1000);
-      const dateKey = d.toISOString().split("T")[0];
-      visitsChart.push({
-        date: dateKey,
-        label: d.toLocaleDateString("id-ID", { day: "2-digit", month: "short" }),
-        visits: visitsChartMap[dateKey] || 0,
-      });
+      // Log errors if any (don't crash, just warn)
+      if (visitorStatsRes.error) console.warn("[get-dashboard-data] visitor_stats RPC error:", visitorStatsRes.error.message);
+      if (topPagesRes.error) console.warn("[get-dashboard-data] top_pages RPC error:", topPagesRes.error.message);
+      if (visitsChartRes.error) console.warn("[get-dashboard-data] visits_chart RPC error:", visitsChartRes.error.message);
+    } catch (e) {
+      console.warn("[get-dashboard-data] Visitor analytics RPC failed:", e?.message);
     }
-
-    const visitorStats = {
-      total_views: pageViewsDetail.length,
-      unique_visitors: uniqueSessions.size + uniqueUsers.size,
-      unique_sessions: uniqueSessions.size,
-      logged_in_visitors: uniqueUsers.size,
-      anonymous_visitors: uniqueSessions.size,
-    };
 
     // ── 14.5. ⭐ Phase 3A.4: Previous period data untuk trend comparison ──
     // Query 1 extra: orders di previous period (untuk calc trend revenue & orders)
