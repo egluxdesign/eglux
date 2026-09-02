@@ -31,10 +31,10 @@ const ForgotPasswordPage = () => {
       return;
     }
 
+    const appUrl = import.meta.env.VITE_APP_URL || 'https://eglux.co.id/reset-password';
     setLoading(true);
     try {
       const { error } = await supabase.auth.resetPasswordForEmail(email.trim().toLowerCase(), {
-        const appUrl = import.meta.env.VITE_APP_URL || 'https://eglux.co.id/reset-password';
         redirectTo: `${appUrl}/reset-password`,
       });
 
