@@ -1,0 +1,16 @@
+import AdminLayout from '../components/admin/layout/AdminLayout';
+import { useAuth } from '../context/AuthContext';
+
+const DashboardAdminPage = () => {
+  const { profile } = useAuth();
+  return (
+    <AdminLayout title="Dashboard" subtitle="Test">
+      <div className="p-8">
+        <h1 className="text-2xl font-bold">Dashboard Test</h1>
+        <p>Role: {profile?.role || 'unknown'}</p>
+      </div>
+    </AdminLayout>
+  );
+};
+
+export default DashboardAdminPage;
