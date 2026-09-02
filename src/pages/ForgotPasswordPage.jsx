@@ -34,6 +34,7 @@ const ForgotPasswordPage = () => {
     setLoading(true);
     try {
       const { error } = await supabase.auth.resetPasswordForEmail(email.trim().toLowerCase(), {
+        const appUrl = import.meta.env.VITE_APP_URL || 'https://eglux.co.id';
         redirectTo: `${appUrl}/reset-password`,
       });
 
