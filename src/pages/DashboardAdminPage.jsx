@@ -80,9 +80,31 @@ const DashboardAdminPage = () => {
     setLoading(true);
     setError(null);
     try {
-      const { data: session } = await supabase.auth.getSession();
-      const token = session?.session?.access_token;
-      if (!token) { setError('Sesi berakhir'); setLoading(false); return; }
+      // ⭐ FIX: Refresh session dulu kalau hampir expired
+      const { data: sessionData } = await supabase.auth.getSession();
+      let token = sessionData?.session?.access_token;
+
+      if (!token) {
+        // Coba refresh
+        const { data: refreshData, error: refreshErr } = await supabase.auth.refreshSession();
+        if (refreshErr || !refreshData?.session) {
+          setError('Sesi berakhir. Silakan login ulang.');
+          setTimeout(() => { window.location.href = '/admin'; }, 2000);
+          setLoading(false);
+          return;
+        }
+        token = refreshData.session.access_token;
+      } else {
+        // Cek apakah token hampir expired (<5 menit)
+        const expiresAt = sessionData.session.expires_at;
+        const now = Math.floor(Date.now() / 1000);
+        if (expiresAt && expiresAt - now < 300) {
+          const { data: refreshData } = await supabase.auth.refreshSession();
+          if (refreshData?.session?.access_token) {
+            token = refreshData.session.access_token;
+          }
+        }
+      }
 
       const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/get-dashboard-data`, {
         method: 'POST',
@@ -92,6 +114,33 @@ const DashboardAdminPage = () => {
         },
         body: JSON.stringify({ date_range: dateRange }),
       });
+
+      // ⭐ Handle 401 — token invalid/expired
+      if (resp.status === 401) {
+        const { data: refreshData } = await supabase.auth.refreshSession();
+        if (refreshData?.session?.access_token) {
+          // Retry dengan token baru
+          const retryResp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/get-dashboard-data`, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${refreshData.session.access_token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ date_range: dateRange }),
+          });
+          const retryResult = await retryResp.json();
+          if (!retryResp.ok || !retryResult.success) {
+            throw new Error(retryResult.error || 'Gagal memuat data');
+          }
+          setData(retryResult);
+          return;
+        } else {
+          setError('Sesi berakhir. Silakan login ulang.');
+          setTimeout(() => { window.location.href = '/admin'; }, 2000);
+          setLoading(false);
+          return;
+        }
+      }
 
       const result = await resp.json();
       if (!resp.ok || !result.success) {
@@ -854,6 +903,125 @@ const DashboardAdminPage = () => {
                   )}
                 </div>
               </div>
+            )}
+
+            {/* === ⭐ Visitor Analytics (Unique Visitors + Top Pages + Visits Chart) === */}
+            {isAdmin && (
+              <>
+                {/* Visitor Stats Cards */}
+                {data.visitor_stats && (
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl p-4 text-white">
+                      <div className="text-[0.65rem] uppercase tracking-wider text-white/70 mb-1">👁️ Total Views</div>
+                      <div className="text-xl font-bold">{(data.visitor_stats.total_views || 0).toLocaleString('id-ID')}</div>
+                      <div className="text-[0.65rem] text-white/60 mt-1">page views di periode ini</div>
+                    </div>
+                    <div className="bg-white border border-gray-200 rounded-xl p-4">
+                      <div className="text-[0.65rem] uppercase tracking-wider text-gray-400 mb-1">👥 Unique Visitors</div>
+                      <div className="text-xl font-bold text-eglux-primary">{(data.visitor_stats.unique_visitors || 0).toLocaleString('id-ID')}</div>
+                      <div className="text-[0.65rem] text-gray-400 mt-1">
+                        {data.visitor_stats.logged_in_visitors || 0} login · {data.visitor_stats.anonymous_visitors || 0} anon
+                      </div>
+                    </div>
+                    <div className="bg-white border border-gray-200 rounded-xl p-4">
+                      <div className="text-[0.65rem] uppercase tracking-wider text-gray-400 mb-1">📄 Avg Views/Visitor</div>
+                      <div className="text-xl font-bold text-eglux-primary">
+                        {data.visitor_stats.unique_visitors > 0
+                          ? (data.visitor_stats.total_views / data.visitor_stats.unique_visitors).toFixed(1)
+                          : '0'}
+                      </div>
+                      <div className="text-[0.65rem] text-gray-400 mt-1">halaman per visitor</div>
+                    </div>
+                    <div className="bg-white border border-gray-200 rounded-xl p-4">
+                      <div className="text-[0.65rem] uppercase tracking-wider text-gray-400 mb-1">🔄 Bounce Rate</div>
+                      <div className="text-xl font-bold text-eglux-primary">
+                        {data.visitor_stats.unique_visitors > 0
+                          ? Math.round(((data.visitor_stats.unique_visitors - data.kpis?.paid_count) / data.visitor_stats.unique_visitors) * 100)
+                          : 0}%
+                      </div>
+                      <div className="text-[0.65rem] text-gray-400 mt-1">visitor tanpa order</div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Visits Chart + Top Pages */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  {/* Visits per Day Chart */}
+                  {data.visits_chart && data.visits_chart.length > 0 && (
+                    <div className="bg-white border border-gray-200 rounded-xl p-5">
+                      <div className="flex items-center justify-between mb-4">
+                        <h3 className="text-sm font-bold text-gray-700">📈 Kunjungan per Hari</h3>
+                        <span className="text-[0.65rem] text-gray-400">
+                          Total: {(data.visits_chart.reduce((s, d) => s + (d.visits || 0), 0)).toLocaleString('id-ID')} visits
+                        </span>
+                      </div>
+                      <div className="flex items-end gap-[2px] h-32 overflow-x-auto pb-2">
+                        {data.visits_chart.map((d, i) => {
+                          const maxVisits = Math.max(...data.visits_chart.map(x => x.visits || 0), 1);
+                          const heightPct = d.visits > 0 ? Math.max((d.visits / maxVisits) * 100, 3) : 0;
+                          return (
+                            <div key={i} className="flex-shrink-0 group relative" style={{ width: '20px' }}>
+                              <div className="absolute bottom-full mb-1 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10 whitespace-nowrap bg-gray-900 text-white text-[0.6rem] px-2 py-1 rounded">
+                                {d.label}: {d.visits} visits
+                              </div>
+                              <div
+                                className={`rounded-t-sm transition-all ${d.visits > 0 ? 'bg-blue-500 hover:bg-blue-400' : 'bg-gray-100'}`}
+                                style={{ height: `${heightPct}%`, minHeight: d.visits > 0 ? '3px' : '0' }}
+                              ></div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <div className="flex justify-between mt-2 text-[0.6rem] text-gray-400">
+                        <span>{data.visits_chart[0]?.label || ''}</span>
+                        {data.visits_chart.length > 2 && <span>{data.visits_chart[Math.floor(data.visits_chart.length / 2)]?.label || ''}</span>}
+                        <span>{data.visits_chart[data.visits_chart.length - 1]?.label || ''}</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Top Pages */}
+                  <div className="bg-white border border-gray-200 rounded-xl p-5">
+                    <h3 className="text-sm font-bold text-gray-700 mb-3">📄 Halaman Terpopuler</h3>
+                    {(data.top_pages || []).length === 0 ? (
+                      <EmptyState
+                        icon="📄"
+                        title="Belum ada data kunjungan"
+                        description="Integrate trackPageView di frontend untuk mulai tracking."
+                        size="sm"
+                      />
+                    ) : (
+                      <div className="space-y-2">
+                        {(data.top_pages || []).slice(0, 8).map((page, i) => {
+                          const maxVisits = Math.max(...(data.top_pages || []).map(p => p.visits), 1);
+                          const widthPct = Math.max((page.visits / maxVisits) * 100, 5);
+                          const pageTypeIcons = {
+                            home: '🏠', product: '🏷️', category: '📂', checkout: '💳', other: '📄',
+                          };
+                          const icon = pageTypeIcons[page.type] || '📄';
+                          return (
+                            <div key={i} className="space-y-1">
+                              <div className="flex items-center justify-between text-xs">
+                                <span className="text-gray-700 font-medium truncate flex-1 flex items-center gap-1.5">
+                                  <span>{icon}</span>
+                                  <span className="truncate">{page.path}</span>
+                                </span>
+                                <span className="text-eglux-secondary font-semibold flex-shrink-0 ml-2">{page.visits}x</span>
+                              </div>
+                              <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                                <div
+                                  className="h-full bg-blue-400 rounded-full transition-all"
+                                  style={{ width: `${widthPct}%` }}
+                                ></div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </>
             )}
 
             {/* === ⭐ Phase 4: Team Activity + Online Admins === */}

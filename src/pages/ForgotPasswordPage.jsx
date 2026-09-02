@@ -10,6 +10,11 @@
 //   4. Tampilkan success message (regardless of whether email exists — security best practice)
 //
 // Routing: /forgot-password (public)
+//
+// ⭐ FIX: Pakai VITE_APP_URL (bukan window.location.origin) supaya email link
+//    mengarah ke production domain, bukan localhost
+// ⭐ FIX: Tampilkan error sebenarnya (bukan generic "terjadi kesalahan")
+//    supaya bisa debug
 // ============================================================================
 
 import { useState } from 'react';
@@ -21,33 +26,64 @@ const ForgotPasswordPage = () => {
   const [loading, setLoading] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState('');
+  const [debugError, setDebugError] = useState('');
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+    setDebugError('');
 
     if (!email.trim() || !email.includes('@')) {
       setError('Email tidak valid');
       return;
     }
 
-    const appUrl = import.meta.env.VITE_APP_URL || 'https://eglux.co.id/reset-password';
     setLoading(true);
     try {
-      const { error } = await supabase.auth.resetPasswordForEmail(email.trim().toLowerCase(), {
-        redirectTo: `${appUrl}/reset-password`,
-      });
+      // ⭐ Pakai production URL supaya email link mengarah ke eglux.co.id
+      // Bukan window.location.origin (yang return localhost saat develop)
+      const appUrl = import.meta.env.VITE_APP_URL || 'https://eglux.co.id';
+      const redirectUrl = `${appUrl}/reset-password`;
+      console.log('[ForgotPassword] Redirect URL:', redirectUrl);
+
+      const { data, error } = await supabase.auth.resetPasswordForEmail(
+        email.trim().toLowerCase(),
+        { redirectTo: redirectUrl }
+      );
 
       if (error) {
-        // Jangan expose apakah email ada atau tidak (security)
-        // Tetap tampilkan success message
-        console.warn('[ForgotPassword] Error (masked):', error.message);
-      }
+        // ⭐ Tampilkan error sebenarnya untuk debugging
+        console.error('[ForgotPassword] Supabase error:', error);
+        setDebugError(error.message || 'Unknown Supabase error');
 
-      // Selalu tampilkan success message (anti email enumeration)
-      setSent(true);
+        // Kalau error karena redirect URL belum di-whitelist
+        if (error.message?.includes('redirect') || error.message?.includes('URL')) {
+          setError('URL redirect belum dikonfigurasi. Hubungi admin untuk whitelist URL di Supabase Dashboard.');
+        }
+        // Kalau rate limited
+        else if (error.message?.includes('rate limit') || error.message?.includes('too many')) {
+          setError('Terlalu banyak request. Tunggu 1 jam lalu coba lagi.');
+        }
+        // Kalau SMTP belum setup
+        else if (error.message?.includes('smtp') || error.message?.includes('email')) {
+          setError('Server email belum dikonfigurasi. Hubungi admin.');
+        }
+        // Default: tetap tampilkan success message (anti email enumeration)
+        // TAPI simpan error untuk debug
+        else {
+          // Tetap tampilkan success message (anti email enumeration)
+          setSent(true);
+        }
+      } else {
+        // Success — tampilkan success message
+        console.log('[ForgotPassword] Reset email sent successfully');
+        setSent(true);
+      }
     } catch (e) {
+      // ⭐ Catch uncaught exceptions (network error, dll)
+      console.error('[ForgotPassword] Uncaught error:', e);
       setError('Terjadi kesalahan. Coba lagi.');
+      setDebugError(e?.message || 'Unknown error');
     } finally {
       setLoading(false);
     }
@@ -77,14 +113,24 @@ const ForgotPasswordPage = () => {
                   <input
                     type="email"
                     value={email}
-                    onChange={(e) => { setEmail(e.target.value); setError(''); }}
+                    onChange={(e) => { setEmail(e.target.value); setError(''); setDebugError(''); }}
                     placeholder="email@eglux.co.id"
                     autoFocus
                     className="w-full px-3 py-2.5 text-sm border border-gray-300 rounded-lg outline-none focus:border-eglux-secondary"
                   />
                 </div>
 
-                {error && <p className="text-xs text-red-500">⚠️ {error}</p>}
+                {error && (
+                  <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-xs text-red-600">
+                    ⚠️ {error}
+                    {debugError && (
+                      <details className="mt-2">
+                        <summary className="cursor-pointer text-[0.65rem] text-red-400">Detail error (debug)</summary>
+                        <p className="mt-1 text-[0.65rem] text-red-400 font-mono break-all">{debugError}</p>
+                      </details>
+                    )}
+                  </div>
+                )}
 
                 <button
                   type="submit"
@@ -109,7 +155,7 @@ const ForgotPasswordPage = () => {
                 </p>
               </div>
               <button
-                onClick={() => { setSent(false); setEmail(''); }}
+                onClick={() => { setSent(false); setEmail(''); setDebugError(''); }}
                 className="text-sm text-eglux-secondary font-semibold hover:underline cursor-pointer bg-transparent border-none"
               >
                 ← Coba email lain
@@ -118,7 +164,7 @@ const ForgotPasswordPage = () => {
           )}
 
           <div className="mt-6 pt-6 border-t border-gray-100 text-center">
-            <Link to="/login" className="text-sm text-gray-500 hover:text-gray-700">
+            <Link to="/admin" className="text-sm text-gray-500 hover:text-gray-700">
               ← Kembali ke Login
             </Link>
           </div>
