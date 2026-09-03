@@ -160,15 +160,15 @@ export function useUserActivity() {
         if (user) {
           setUserId(user.id);
           setAuthReady(true);
-          console.log(`[useUserActivity] v${HOOK_VERSION} Auth ready: ${user.email}`);
+          // console.log(`[useUserActivity] v${HOOK_VERSION} Auth ready: ${user.email}`);
         } else {
-          console.log(`[useUserActivity] v${HOOK_VERSION} Anonymous visitor (no login)`);
+          // console.log(`[useUserActivity] v${HOOK_VERSION} Anonymous visitor (no login)`);
           const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
             if (!mounted) return;
             if (event === 'SIGNED_IN' && session?.user) {
               setUserId(session.user.id);
               setAuthReady(true);
-              console.log(`[useUserActivity] User signed in: ${session.user.email}`);
+              // console.log(`[useUserActivity] User signed in: ${session.user.email}`);
             } else if (event === 'SIGNED_OUT') {
               setUserId(null);
               setAuthReady(false);
