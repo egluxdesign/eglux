@@ -1,13 +1,6 @@
 // src/pages/DashboardAdminPage.jsx
 // ============================================================================
-// DashboardAdminPage v3 - Full dashboard (Shopee-inspired)
-// ============================================================================
-// v3 CHANGES (all fixes applied):
-//   [CRITICAL] All data.xxx access pakai ?. atau || [] / || {} (anti crash)
-//   [LOGIC] Shop Health + Conversion: OR condition + conditional per card
-//   [LOGIC] Bounce Rate -> "No Purchase Rate" (label sesuai logic)
-//   [LOGIC] canSee() check untuk SEMUA section (consistent)
-//   [MINOR] Semua .map() pakai || [] (defensive)
+// DashboardAdminPage v5 - Full dashboard (Shopee-inspired)
 // ============================================================================
 
 import { useState, useEffect, useCallback, useRef } from 'react';
@@ -175,7 +168,6 @@ const DashboardAdminPage = () => {
 
   const dismissNotification = (id) => setNotifications((prev) => prev.filter((n) => n.id !== id));
 
-  // * FIX: Compute health data sekali (avoid 5x function call)
   const healthScore = data?.kpis?.health_score || 0;
   const healthInfo = getHealthColor(healthScore);
   const shopHealth = data?.shop_health || {};
@@ -224,7 +216,7 @@ const DashboardAdminPage = () => {
           </div>
         ) : data ? (
           <>
-            {/* * Phase 1.5: Quick Actions Menu */}
+            {/* Quick Actions Menu */}
             {isAdmin && (
               <div className="bg-white border border-gray-200 rounded-xl p-3">
                 <div className="flex items-center gap-2 overflow-x-auto pb-1">
@@ -249,10 +241,124 @@ const DashboardAdminPage = () => {
               </div>
             )}
 
-            {/* * Phase 1.2 + 1.1: Shop Health Score + Conversion Funnel - FIX: OR condition + conditional per card */}
+            {/* Sales Report (Shopee-style) */}
+            {isAdmin && canSee('dashboard_revenue') && data.sales_report && (
+              <div className="bg-white border border-gray-200 rounded-xl p-5">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-sm font-bold text-gray-700">📊 Laporan Penjualan</h3>
+                  <span className="text-[0.6rem] text-gray-400">Standar Shopee Seller Center</span>
+                </div>
+
+                {/* 4 Metric Cards */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                  <div className="bg-blue-50 rounded-lg p-3">
+                    <p className="text-[0.6rem] text-gray-500 uppercase">Jumlah Pesanan</p>
+                    <p className="text-xl font-bold text-blue-700">{data.sales_report.jumlah_pesanan || 0}</p>
+                    <p className="text-[0.6rem] text-gray-400 mt-0.5">excl belum bayar</p>
+                  </div>
+                  <div className="bg-purple-50 rounded-lg p-3">
+                    <p className="text-[0.6rem] text-gray-500 uppercase">Penjualan Produk</p>
+                    <p className="text-xl font-bold text-purple-700">{(data.sales_report.penjualan_produk_sku || 0).toLocaleString('id-ID')}</p>
+                    <p className="text-[0.6rem] text-gray-400 mt-0.5">SKU terjual</p>
+                  </div>
+                  <div className="bg-green-50 rounded-lg p-3">
+                    <p className="text-[0.6rem] text-gray-500 uppercase">Dana Penjualan</p>
+                    <p className="text-lg font-bold text-green-700">{rupiah(data.sales_report.dana_penjualan)}</p>
+                    <p className="text-[0.6rem] text-gray-400 mt-0.5">produk + ongkir + tax</p>
+                  </div>
+                  <div className="bg-amber-50 rounded-lg p-3">
+                    <p className="text-[0.6rem] text-gray-500 uppercase">Dana Penjualan Produk</p>
+                    <p className="text-lg font-bold text-amber-700">{rupiah(data.sales_report.dana_penjualan_produk)}</p>
+                    <p className="text-[0.6rem] text-gray-400 mt-0.5">subtotal produk saja</p>
+                  </div>
+                </div>
+
+                {/* Grafik Trend Pendapatan Kotor per Hari */}
+                {(data.sales_report.daily_chart || []).length > 0 && (
+                  <div className="mb-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-[0.65rem] font-semibold text-gray-500 uppercase">📈 Trend Pendapatan Kotor per Hari</p>
+                      <div className="flex items-center gap-3 text-[0.6rem] text-gray-400">
+                        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-green-500"></span> Revenue</span>
+                        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-red-400"></span> Cancelled</span>
+                        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-orange-400"></span> Refund</span>
+                      </div>
+                    </div>
+                    <div className="flex items-end gap-[2px] h-40 overflow-x-auto pb-2">
+                      {(data.sales_report.daily_chart || []).map((d, i) => {
+                        const maxRev = Math.max(...(data.sales_report.daily_chart || []).map(x => x.revenue || 0), 1);
+                        const revHeight = d.revenue > 0 ? Math.max((d.revenue / maxRev) * 100, 3) : 0;
+                        return (
+                          <div key={i} className="flex-shrink-0 group relative" style={{ width: '20px' }}>
+                            <div className="absolute bottom-full mb-1 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10 whitespace-nowrap bg-gray-900 text-white text-[0.6rem] px-2 py-1 rounded">
+                              {d.label}: Rp {(d.revenue || 0).toLocaleString('id-ID')} ({d.orders || 0} orders)
+                              {(d.cancelled > 0 || d.refund > 0) && (
+                                <span className="block text-[0.55rem] text-red-300">Cancel: {d.cancelled} Refund: {d.refund}</span>
+                              )}
+                            </div>
+                            <div className={`rounded-t-sm transition-all ${d.revenue > 0 ? 'bg-green-500 hover:bg-green-400' : 'bg-gray-100'}`} style={{ height: `${revHeight}%`, minHeight: d.revenue > 0 ? '3px' : '2px' }}></div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="flex justify-between mt-2 text-[0.6rem] text-gray-400">
+                      <span>{(data.sales_report.daily_chart || [])[0]?.label || ''}</span>
+                      {(data.sales_report.daily_chart || []).length > 2 && <span>{(data.sales_report.daily_chart || [])[Math.floor((data.sales_report.daily_chart || []).length / 2)]?.label || ''}</span>}
+                      <span>{(data.sales_report.daily_chart || [])[(data.sales_report.daily_chart || []).length - 1]?.label || ''}</span>
+                    </div>
+                  </div>
+                )}
+
+                {/* Pendapatan Kotor highlight */}
+                <div className="bg-gradient-to-r from-eglux-primary to-gray-800 rounded-lg p-4 text-white mb-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-[0.65rem] uppercase tracking-wider text-white/60">Pendapatan Kotor</p>
+                      <p className="text-2xl font-bold">{rupiah(data.sales_report.pendapatan_kotor)}</p>
+                      <p className="text-[0.6rem] text-white/50 mt-0.5">excl dibatalkan & refund + voucher</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-[0.6rem] text-white/60">Pesanan Valid</p>
+                      <p className="text-lg font-bold">{data.sales_report.pesanan_valid || 0}</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Cancel & Refund indicators */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-[0.6rem] text-gray-500 uppercase">Pesanan Dibatalkan</p>
+                        <p className="text-lg font-bold text-red-700">{data.sales_report.pesanan_dibatalkan || 0}</p>
+                        <p className="text-[0.6rem] text-gray-400">{rupiah(data.sales_report.detail?.cancelled_amount || 0)}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-[0.6rem] text-red-400">Cancel Rate</p>
+                        <p className="text-sm font-bold text-red-600">{data.sales_report.detail?.cancel_rate || 0}%</p>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="bg-orange-50 border border-orange-200 rounded-lg p-3">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-[0.6rem] text-gray-500 uppercase">Pengembalian Dana</p>
+                        <p className="text-lg font-bold text-orange-700">{data.sales_report.pesanan_pengembalian_dana || 0}</p>
+                        <p className="text-[0.6rem] text-gray-400">{rupiah(data.sales_report.detail?.refund_amount || 0)}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-[0.6rem] text-orange-400">Refund Rate</p>
+                        <p className="text-sm font-bold text-orange-600">{data.sales_report.detail?.refund_rate || 0}%</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+                        {/* Shop Health Score + Conversion Funnel */}
             {isAdmin && (canSee('dashboard_health') || canSee('dashboard_conversion')) && (
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                {/* Shop Health Score */}
                 {canSee('dashboard_health') && (
                   <div className="bg-white border border-gray-200 rounded-xl p-5">
                     <h3 className="text-sm font-bold text-gray-700 mb-3">🏪 Shop Health Score</h3>
@@ -288,57 +394,59 @@ const DashboardAdminPage = () => {
                   </div>
                 )}
 
-                {/* Conversion Funnel */}
+                {/* 5-Stage Conversion Funnel */}
                 {canSee('dashboard_conversion') && (
                   <div className="bg-white border border-gray-200 rounded-xl p-5 lg:col-span-2">
-                    <h3 className="text-sm font-bold text-gray-700 mb-3">📈 Conversion Funnel</h3>
-                    <div className="space-y-3">
-                      <div>
-                        <div className="flex justify-between text-xs mb-1">
-                          <span className="text-gray-600">👁️ Page Views</span>
-                          <span className="font-semibold text-gray-900">{(data.kpis?.page_views || 0).toLocaleString('id-ID')}</span>
+                    <h3 className="text-sm font-bold text-gray-700 mb-3">📈 Conversion Funnel (5-Stage)</h3>
+                    {(() => {
+                      const funnel = data.conversion_funnel;
+                      const stages = funnel?.stages || [];
+                      const rates = funnel?.conversion_rates || {};
+                      const maxCount = Math.max(...stages.map(s => s.count || 0), 1);
+                      const stageColors = ['bg-blue-500', 'bg-purple-500', 'bg-amber-500', 'bg-orange-500', 'bg-green-500'];
+                      const rateLabels = [
+                        { key: 'impression_to_view', from: 'Impressions', to: 'Views' },
+                        { key: 'view_to_cart', from: 'Views', to: 'Cart' },
+                        { key: 'cart_to_checkout', from: 'Cart', to: 'Checkout' },
+                        { key: 'checkout_to_paid', from: 'Checkout', to: 'Paid' },
+                      ];
+                      return (
+                        <div className="space-y-2">
+                          {stages.map((stage, i) => {
+                            const widthPct = stage.count > 0 ? Math.max((stage.count / maxCount) * 100, 5) : 0;
+                            return (
+                              <div key={stage.stage}>
+                                <div className="flex justify-between text-xs mb-1">
+                                  <span className="text-gray-600">{stage.icon} {stage.label}</span>
+                                  <span className="font-semibold text-gray-900">{(stage.count || 0).toLocaleString('id-ID')}</span>
+                                </div>
+                                <div className="h-2.5 bg-gray-100 rounded-full overflow-hidden">
+                                  <div className={`h-full ${stageColors[i] || 'bg-gray-400'} rounded-full transition-all`} style={{ width: `${widthPct}%` }}></div>
+                                </div>
+                                {i < stages.length - 1 && rateLabels[i] && (
+                                  <p className="text-[0.6rem] text-gray-400 mt-0.5 ml-1">
+                                    {rates[rateLabels[i].key] || 0}% {rateLabels[i].from} → {rateLabels[i].to}
+                                  </p>
+                                )}
+                              </div>
+                            );
+                          })}
+                          <div className="mt-4 pt-3 border-t border-gray-100">
+                            <div className="bg-gradient-to-r from-green-50 to-blue-50 rounded-lg p-2.5 text-center">
+                              <p className="text-[0.6rem] text-gray-500 uppercase">Overall Conversion Rate</p>
+                              <p className="text-lg font-bold text-green-700">{rates.overall || 0}%</p>
+                              <p className="text-[0.6rem] text-gray-400">dari {stages[0]?.count || 0} impressions → {stages[4]?.count || 0} paid orders</p>
+                            </div>
+                          </div>
                         </div>
-                        <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                          <div className="h-full bg-blue-500 rounded-full" style={{ width: '100%' }}></div>
-                        </div>
-                      </div>
-                      <div>
-                        <div className="flex justify-between text-xs mb-1">
-                          <span className="text-gray-600">🔍 Product Views</span>
-                          <span className="font-semibold text-gray-900">{(data.kpis?.product_views || 0).toLocaleString('id-ID')}</span>
-                        </div>
-                        <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                          <div className="h-full bg-purple-500 rounded-full" style={{ width: `${Math.min(((data.kpis?.product_views || 0) / Math.max(data.kpis?.page_views || 1, 1)) * 100, 100)}%` }}></div>
-                        </div>
-                      </div>
-                      <div>
-                        <div className="flex justify-between text-xs mb-1">
-                          <span className="text-gray-600">🛒 Orders (Paid)</span>
-                          <span className="font-semibold text-gray-900">{data.kpis?.paid_count || 0}</span>
-                        </div>
-                        <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                          <div className="h-full bg-green-500 rounded-full" style={{ width: `${Math.min(((data.kpis?.paid_count || 0) / Math.max(data.kpis?.page_views || 1, 1)) * 100, 100)}%` }}></div>
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-2 gap-3 mt-4 pt-3 border-t border-gray-100">
-                        <div className="bg-green-50 rounded-lg p-2.5">
-                          <p className="text-[0.6rem] text-gray-500 uppercase">Overall Conversion</p>
-                          <p className="text-lg font-bold text-green-700">{data.kpis?.conversion_rate || 0}%</p>
-                          <p className="text-[0.6rem] text-gray-400">{data.kpis?.paid_count || 0} orders / {data.kpis?.page_views || 0} views</p>
-                        </div>
-                        <div className="bg-purple-50 rounded-lg p-2.5">
-                          <p className="text-[0.6rem] text-gray-500 uppercase">Product Conversion</p>
-                          <p className="text-lg font-bold text-purple-700">{data.kpis?.product_conversion_rate || 0}%</p>
-                          <p className="text-[0.6rem] text-gray-400">{data.kpis?.paid_count || 0} orders / {data.kpis?.product_views || 0} views</p>
-                        </div>
-                      </div>
-                    </div>
+                      );
+                    })()}
                   </div>
                 )}
               </div>
             )}
 
-            {/* === KPI CARDS === */}
+            {/* KPI Cards */}
             <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
               {isAdmin && canSee('dashboard_revenue') && (
                 <div className="bg-gradient-to-br from-eglux-primary to-gray-800 rounded-xl p-4 text-white relative overflow-hidden">
@@ -389,7 +497,7 @@ const DashboardAdminPage = () => {
               )}
             </div>
 
-            {/* === REVENUE CHART === */}
+            {/* Revenue Chart */}
             {isAdmin && canSee('dashboard_revenue') && data.revenue_chart && data.revenue_chart.length > 0 && (
               <div className="bg-white border border-gray-200 rounded-xl p-5">
                 <div className="flex items-center justify-between mb-4">
@@ -421,7 +529,7 @@ const DashboardAdminPage = () => {
               </div>
             )}
 
-            {/* === ALERTS + ORDER PIPELINE - FIX: defensive null checks === */}
+            {/* Alerts + Order Pipeline */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               <div className="bg-white border border-gray-200 rounded-xl p-5">
                 <h3 className="text-sm font-bold text-gray-700 mb-3 flex items-center gap-2">
@@ -473,14 +581,14 @@ const DashboardAdminPage = () => {
                         <p className="text-lg font-bold">{stage.count}</p>
                         <p className="text-[0.6rem] uppercase tracking-wide">{stage.label}</p>
                       </div>
-                      {i < arr.length - 1 && <span className="text-gray-300">-></span>}
+                      {i < arr.length - 1 && <span className="text-gray-300">→</span>}
                     </div>
                   ))}
                 </div>
               </div>
             </div>
 
-            {/* === TOP PRODUCTS + RECENT ACTIVITY - FIX: || [] for .map === */}
+            {/* Top Products + Recent Activity */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               <div className="bg-white border border-gray-200 rounded-xl p-5">
                 <h3 className="text-sm font-bold text-gray-700 mb-3">🏆 Produk Terlaris</h3>
@@ -523,12 +631,12 @@ const DashboardAdminPage = () => {
               </div>
             </div>
 
-            {/* * Phase 2.1: Marketing Center */}
+                        {/* Marketing Center */}
             {isAdmin && canSee('dashboard_marketing') && data.marketing && (
               <div className="bg-white border border-gray-200 rounded-xl p-5">
                 <div className="flex items-center justify-between mb-3">
                   <h3 className="text-sm font-bold text-gray-700">📣 Marketing Center</h3>
-                  <Link to="/discount-admin" className="text-xs text-eglux-secondary font-semibold hover:underline no-underline">Kelola Semua -></Link>
+                  <Link to="/discount-admin" className="text-xs text-eglux-secondary font-semibold hover:underline no-underline">Kelola Semua →</Link>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
@@ -568,7 +676,7 @@ const DashboardAdminPage = () => {
               </div>
             )}
 
-            {/* === CUSTOMER INSIGHTS + SHIPPING PERFORMANCE - FIX: defensive ?. === */}
+            {/* Customer Insights + Shipping Performance */}
             {isAdmin && (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 <div className="bg-white border border-gray-200 rounded-xl p-5">
@@ -617,7 +725,7 @@ const DashboardAdminPage = () => {
               </div>
             )}
 
-            {/* === * Phase 2.3: Finance Summary === */}
+            {/* Finance Summary */}
             {isAdmin && canSee('dashboard_finance') && data.finance && (
               <div className="bg-white border border-gray-200 rounded-xl p-5">
                 <div className="flex items-center justify-between mb-3">
@@ -668,7 +776,7 @@ const DashboardAdminPage = () => {
               </div>
             )}
 
-            {/* === Phase 2.4 + 2.5: Sales by Category + Traffic Sources === */}
+            {/* Sales by Category + Traffic Sources */}
             {isAdmin && (canSee('dashboard_category') || canSee('dashboard_traffic')) && (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 {canSee('dashboard_category') && (
@@ -726,7 +834,7 @@ const DashboardAdminPage = () => {
               </div>
             )}
 
-            {/* === * Visitor Analytics === */}
+            {/* Visitor Analytics */}
             {isAdmin && canSee('dashboard_visitor') && (
               <>
                 {data.visitor_stats && (
@@ -747,7 +855,6 @@ const DashboardAdminPage = () => {
                       <div className="text-[0.65rem] text-gray-400 mt-1">halaman per visitor</div>
                     </div>
                     <div className="bg-white border border-gray-200 rounded-xl p-4">
-                      {/* * FIX: Rename "Bounce Rate" -> "No Purchase Rate" (label sesuai logic) */}
                       <div className="text-[0.65rem] uppercase tracking-wider text-gray-400 mb-1">🔄 No Purchase Rate</div>
                       <div className="text-xl font-bold text-eglux-primary">{(data.visitor_stats.unique_visitors || 0) > 0 ? Math.max(0, Math.min(100, Math.round(((data.visitor_stats.unique_visitors - (data.kpis?.paid_count || 0)) / data.visitor_stats.unique_visitors) * 100))) : 0}%</div>
                       <div className="text-[0.65rem] text-gray-400 mt-1">visitor tanpa order</div>
@@ -813,7 +920,7 @@ const DashboardAdminPage = () => {
               </>
             )}
 
-            {/* === * Phase 4: Team Activity + Online Admins === */}
+            {/* Team Activity + Online Admins */}
             {isAdmin && canSee('dashboard_team') && (
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
                 <div className="bg-white border border-gray-200 rounded-xl p-5">
@@ -858,7 +965,7 @@ const DashboardAdminPage = () => {
                           <div key={act.id} className="flex items-start gap-2 text-xs py-1.5 border-b border-gray-50 last:border-0">
                             {act.avatar_url ? <img src={act.avatar_url} alt="" className="w-6 h-6 rounded-full object-cover flex-shrink-0" /> : <div className="w-6 h-6 rounded-full bg-eglux-accent text-eglux-primary font-bold flex items-center justify-center text-[0.6rem] flex-shrink-0">{initial}</div>}
                             <div className="min-w-0 flex-1">
-                              <p className="text-gray-700"><span className="font-semibold">{displayName}</span>{' - '}<span className="text-gray-600">{act.description || act.action}</span></p>
+                              <p className="text-gray-700"><span className="font-semibold">{displayName}</span>{' — '}<span className="text-gray-600">{act.description || act.action}</span></p>
                               <p className="text-gray-400 text-[0.65rem]">{formatTimeAgo(act.time_ago)} · {act.page || '/'}</p>
                             </div>
                             <span className="text-[0.55rem] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 capitalize flex-shrink-0">{act.action?.replace(/_/g, ' ')}</span>
@@ -871,7 +978,7 @@ const DashboardAdminPage = () => {
               </div>
             )}
 
-            {/* === * Customer Activity === */}
+            {/* Customer Activity */}
             {isAdmin && canSee('dashboard_customer') && (
               <>
                 {data.customer_stats && (
@@ -936,13 +1043,13 @@ const DashboardAdminPage = () => {
                         {(data.customer_activity || []).slice(0, 20).map((act) => {
                           const displayName = act.full_name || act.user_email?.split('@')[0] || 'Customer';
                           const initial = displayName.charAt(0).toUpperCase();
-                          const actionIcons = { page_view: '📄', product_view: '🔍', search: '🔎', add_to_cart: '🛒', remove_from_cart: '🗑️', cart_view: '🛒', checkout_view: '💳', checkout: '💳', orders_view: '📦', track_view: '🚚', profile_view: '👤', rewards_view: '⭐', membership_view: '👑', blog_view: '📝', review_submit: '⭐', voucher_claim: '🎫', wishlist_add: '❤️' };
+                          const actionIcons = { page_view: '📄', product_view: '🔍', search: '🔎', add_to_cart: '🛒', remove_from_cart: '🗑️', cart_view: '🛒', checkout_view: '💳', checkout: '💳', orders_view: '📦', track_view: '🚚', profile_view: '👤', rewards_view: '⭐', membership_view: '👑', blog_view: '📝', review_submit: '⭐', voucher_claim: '🎟️', wishlist_add: '❤️' };
                           const icon = actionIcons[act.action] || '📋';
                           return (
                             <div key={act.id} className="flex items-start gap-2 text-xs py-1.5 border-b border-gray-50 last:border-0">
                               {act.avatar_url ? <img src={act.avatar_url} alt="" className="w-6 h-6 rounded-full object-cover flex-shrink-0" /> : <div className="w-6 h-6 rounded-full bg-blue-100 text-blue-600 font-bold flex items-center justify-center text-[0.6rem] flex-shrink-0">{initial}</div>}
                               <div className="min-w-0 flex-1">
-                                <p className="text-gray-700"><span className="font-semibold">{displayName}</span>{' - '}<span className="text-gray-600">{act.description || act.action}</span></p>
+                                <p className="text-gray-700"><span className="font-semibold">{displayName}</span>{' — '}<span className="text-gray-600">{act.description || act.action}</span></p>
                                 <p className="text-gray-400 text-[0.65rem]">{formatTimeAgo(act.time_ago)} · {act.page || '/'}</p>
                               </div>
                               <span className="text-base flex-shrink-0">{icon}</span>

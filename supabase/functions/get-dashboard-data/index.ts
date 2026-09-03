@@ -352,7 +352,7 @@ serve(async (req: Request) => {
       code: v.code,
       discount_type: v.discount_type,
       discount_value: v.discount_value,
-      valid_until: v.end_at,
+      valid_until: v.valid_until,
     }));
     const activeRewards = (activeRewardsRes.data || []).map((r: any) => ({
       id: r.id,
@@ -478,6 +478,22 @@ serve(async (req: Request) => {
       console.warn("[get-dashboard-data] RPC customer activity error:", e?.message);
     }
 
+    // ── 18. ⭐ 5-Stage Conversion Funnel ──
+    let conversionFunnel: any = null;
+    let salesReport: any = null;
+    try {
+      const [funnelResult, salesResult] = await Promise.all([
+        supabase.rpc("get_conversion_funnel", { p_from: from, p_to: to }),
+        supabase.rpc("get_sales_report", { p_from: from, p_to: to }),
+      ]);
+      conversionFunnel = funnelResult.data;
+      salesReport = salesResult.data;
+      if (funnelResult.error) console.warn("[get-dashboard-data] funnel RPC error:", funnelResult.error.message);
+      if (salesResult.error) console.warn("[get-dashboard-data] sales report RPC error:", salesResult.error.message);
+    } catch (e) {
+      console.warn("[get-dashboard-data] funnel/sales RPC failed:", e?.message);
+    }
+
     // ── Assemble response ──
     console.log("[get-dashboard-data] total:", `${Date.now() - t0}ms`);
     return json({
@@ -537,6 +553,10 @@ serve(async (req: Request) => {
       customer_activity: customerActivity,
       online_customers: onlineCustomers,
       customer_stats: customerStats,
+      // ⭐ 5-Stage Conversion Funnel
+      conversion_funnel: conversionFunnel,
+      // ⭐ Sales Report (Shopee-style)
+      sales_report: salesReport,
       alerts: {
         pending_orders: pendingOrders || [],
         pending_orders_count: pendingOrders?.length || 0,
