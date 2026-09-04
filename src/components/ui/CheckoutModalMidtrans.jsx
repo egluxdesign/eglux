@@ -45,6 +45,7 @@ import { ensureSnapLoaded } from '../../hooks/useMidtransSnap';
 import VoucherClaimModal from './VoucherClaimModal';
 import CourierLogo from './CourierLogo';
 import useAppSettings from '../../hooks/useAppSettings';
+import { trackAddToCart } from '../../hooks/useConversionTracking';
 
 // Key untuk sessionStorage — sinyal agar parent page auto-buka checkout modal
 // setelah user berhasil login dari halaman /admin.
@@ -213,6 +214,39 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
   const [shippingOptions, setShippingOptions] = useState([]);
   const [shippingLoading, setShippingLoading] = useState(false);
   const [selectedShipping, setSelectedShipping] = useState(null);
+
+const checkoutTrackedRef = useRef(false);
+
+useEffect(() => {
+  if (!isOpen) {
+    checkoutTrackedRef.current = false;  // reset saat modal tutup
+    return;
+  }
+  if (checkoutTrackedRef.current) return;  // skip kalau sudah track
+  checkoutTrackedRef.current = true;
+
+  // ⭐ Stage 4: Track checkout view
+  try {
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      let sid = sessionStorage.getItem('eglux_session_id');
+      if (!sid) {
+        sid = 's_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
+        sessionStorage.setItem('eglux_session_id', sid);
+      }
+      supabase.from('page_views').insert({
+        user_id: user?.id || null,
+        session_id: sid,
+        page_path: '/checkout',
+        page_type: 'checkout',
+        product_id: null,
+        referrer: document.referrer || null,
+        user_agent: navigator.userAgent,
+      }).then(() => console.log('[funnel] checkout tracked'));
+    });
+  } catch (e) {
+    console.debug('[funnel] checkout failed:', e?.message);
+  }
+}, [isOpen]);
 
   // ============================================================================
   // AUTH: Pre-fill form dari profile + user_metadata saat user login

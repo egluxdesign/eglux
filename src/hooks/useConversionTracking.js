@@ -78,36 +78,20 @@ const trackedImpressions = new Set(); // dedupe within session
 
 export function useProductImpression(ref, productId) {
   useEffect(() => {
-    if (!ref?.current || !productId) return;
+    if (!productId) return;
 
     // Dedupe: skip kalau sudah tracked produk ini di session ini
     const dedupeKey = `${productId}`;
     if (trackedImpressions.has(dedupeKey)) return;
+    trackedImpressions.add(dedupeKey);
 
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting && entry.intersectionRatio >= 0.5) {
-            // Product card terlihat >50% — tunggu 1 detik supaya gak false positive
-            setTimeout(() => {
-              // Cek lagi apakah masih visible
-              if (entry.isIntersecting) {
-                trackedImpressions.add(dedupeKey);
-                trackFunnelEvent('product_impression', productId);
-              }
-            }, 1000);
-          }
-        });
-      },
-      { threshold: [0.5] }
-    );
+    // ⭐ Simple version: track setelah 2 detik (kasih waktu render)
+    const timer = setTimeout(() => {
+      trackFunnelEvent('product_impression', productId);
+    }, 2000);
 
-    observer.observe(ref.current);
-
-    return () => {
-      observer.disconnect();
-    };
-  }, [ref, productId]);
+    return () => clearTimeout(timer);
+  }, [productId]);
 }
 
 // ============================================================================

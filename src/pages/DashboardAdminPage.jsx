@@ -53,6 +53,192 @@ function formatTimeAgo(seconds) {
   return `${Math.floor(seconds / 86400)} hari lalu`;
 }
 
+// ⭐ Dashboard Chart Card — wrapper dengan header + date range
+const DashboardChartCard = ({ title, value, dateRange, setDateRange, DATE_RANGES, children }) => (
+  <div className="bg-white border border-gray-200 rounded-xl p-5">
+    <div className="flex items-center justify-between mb-4">
+      <div>
+        <p className="text-[0.65rem] font-semibold text-gray-400 uppercase tracking-wider">{title}</p>
+        <p className="text-xl font-bold text-gray-900 mt-1">{value}</p>
+      </div>
+      <select
+        value={dateRange}
+        onChange={(e) => setDateRange(e.target.value)}
+        className="px-2 py-1 text-[0.65rem] border border-gray-200 rounded-lg bg-white cursor-pointer outline-none focus:border-eglux-secondary"
+      >
+        {DATE_RANGES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+      </select>
+    </div>
+    {children}
+  </div>
+);
+
+// ⭐ Revenue Line Chart (minimalist)
+const RevenueChart = ({ chart }) => {
+  const [hoverIdx, setHoverIdx] = useState(null);
+  const chartRef = useRef(null);
+
+  if (!chart || chart.length < 2) return <p className="text-xs text-gray-400 py-8 text-center">Belum ada data.</p>;
+
+  const values = chart.map(d => d.revenue || 0);
+  const maxRev = Math.max(...values, 1);
+  const hasData = values.some(v => v > 0);
+  const lastIndex = chart.length - 1;
+
+  const buildPath = () => {
+    let path = '';
+    chart.forEach((d, i) => {
+      const x = (i / lastIndex) * 100;
+      const y = 92 - ((d.revenue || 0) / maxRev) * 82;
+      if (i === 0) { path += `M ${x} ${y}`; }
+      else {
+        const prevX = ((i - 1) / lastIndex) * 100;
+        const prevY = 92 - ((chart[i - 1].revenue || 0) / maxRev) * 82;
+        const cpX1 = prevX + (x - prevX) * 0.4;
+        const cpX2 = x - (x - prevX) * 0.4;
+        path += ` C ${cpX1} ${prevY} ${cpX2} ${y} ${x} ${y}`;
+      }
+    });
+    return path;
+  };
+
+  const linePath = buildPath();
+  const areaPath = `${linePath} L 100 95 L 0 95 Z`;
+  const lastY = 92 - ((chart[lastIndex]?.revenue || 0) / maxRev) * 82;
+
+  const handleMouseMove = (e) => {
+    if (!chartRef.current) return;
+    const rect = chartRef.current.getBoundingClientRect();
+    const xPct = ((e.clientX - rect.left) / rect.width) * 100;
+    const idx = Math.round((xPct / 100) * lastIndex);
+    if (idx >= 0 && idx <= lastIndex) setHoverIdx(idx);
+  };
+
+  return (
+    <div>
+      <div ref={chartRef} className="relative h-32 w-full" onMouseMove={handleMouseMove} onMouseLeave={() => setHoverIdx(null)}>
+        <svg className="w-full h-full" viewBox="0 0 100 95" preserveAspectRatio="none">
+          <defs>
+            <linearGradient id="revArea" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#4F6EF7" stopOpacity="0.1" />
+              <stop offset="100%" stopColor="#4F6EF7" stopOpacity="0" />
+            </linearGradient>
+          </defs>
+          {hasData && <path d={areaPath} fill="url(#revArea)" />}
+          {hasData && <path d={linePath} fill="none" stroke="#4F6EF7" strokeWidth="0.6" strokeLinecap="round" strokeLinejoin="round" />}
+          {hoverIdx !== null && hasData && (
+            <>
+              <line x1={(hoverIdx / lastIndex) * 100} y1="0" x2={(hoverIdx / lastIndex) * 100} y2="95" stroke="#4F6EF7" strokeWidth="0.2" strokeDasharray="1.5,1.5" opacity="0.4" />
+              <circle cx={(hoverIdx / lastIndex) * 100} cy={92 - ((chart[hoverIdx].revenue || 0) / maxRev) * 82} r="1" fill="#4F6EF7" />
+            </>
+          )}
+          {hasData && <circle cx={100} cy={lastY} r="1.2" fill="#4F6EF7" />}
+        </svg>
+        {hoverIdx !== null && hasData && (() => {
+          const d = chart[hoverIdx];
+          const hx = (hoverIdx / lastIndex) * 100;
+          const isLeft = hx < 25;
+          const isRight = hx > 75;
+          return (
+            <div className="absolute z-20 pointer-events-none" style={{ left: `${hx}%`, top: 0, transform: `translateX(${isLeft ? '10px' : isRight ? 'calc(-100% - 10px)' : '-50%'})` }}>
+              <div className="bg-gray-800 text-white text-[0.55rem] px-2 py-1 rounded shadow whitespace-nowrap">
+                {d.label}: Rp {(d.revenue || 0).toLocaleString('id-ID')}
+              </div>
+            </div>
+          );
+        })()}
+      </div>
+      <div className="flex justify-between text-[0.5rem] text-gray-300">
+        <span>{chart[0]?.label || ''}</span>
+        <span>{chart[lastIndex]?.label || ''}</span>
+      </div>
+    </div>
+  );
+};
+
+// ⭐ Visits Chart (minimalist)
+const VisitsChart = ({ chart }) => {
+  const [hoverIdx, setHoverIdx] = useState(null);
+  const chartRef = useRef(null);
+
+  if (!chart || chart.length < 2) return <p className="text-xs text-gray-400 py-8 text-center">Belum ada data.</p>;
+
+  const values = chart.map(d => d.visits || 0);
+  const maxVisits = Math.max(...values, 1);
+  const hasData = values.some(v => v > 0);
+  const lastIndex = chart.length - 1;
+
+  const buildPath = () => {
+    let path = '';
+    chart.forEach((d, i) => {
+      const x = (i / lastIndex) * 100;
+      const y = 92 - ((d.visits || 0) / maxVisits) * 82;
+      if (i === 0) { path += `M ${x} ${y}`; }
+      else {
+        const prevX = ((i - 1) / lastIndex) * 100;
+        const prevY = 92 - ((chart[i - 1].visits || 0) / maxVisits) * 82;
+        const cpX1 = prevX + (x - prevX) * 0.4;
+        const cpX2 = x - (x - prevX) * 0.4;
+        path += ` C ${cpX1} ${prevY} ${cpX2} ${y} ${x} ${y}`;
+      }
+    });
+    return path;
+  };
+
+  const linePath = buildPath();
+  const areaPath = `${linePath} L 100 95 L 0 95 Z`;
+  const lastY = 92 - ((chart[lastIndex]?.visits || 0) / maxVisits) * 82;
+
+  const handleMouseMove = (e) => {
+    if (!chartRef.current) return;
+    const rect = chartRef.current.getBoundingClientRect();
+    const xPct = ((e.clientX - rect.left) / rect.width) * 100;
+    const idx = Math.round((xPct / 100) * lastIndex);
+    if (idx >= 0 && idx <= lastIndex) setHoverIdx(idx);
+  };
+
+  return (
+    <div>
+      <div ref={chartRef} className="relative h-32 w-full" onMouseMove={handleMouseMove} onMouseLeave={() => setHoverIdx(null)}>
+        <svg className="w-full h-full" viewBox="0 0 100 95" preserveAspectRatio="none">
+          <defs>
+            <linearGradient id="visitsArea" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.1" />
+              <stop offset="100%" stopColor="#3b82f6" stopOpacity="0" />
+            </linearGradient>
+          </defs>
+          {hasData && <path d={areaPath} fill="url(#visitsArea)" />}
+          {hasData && <path d={linePath} fill="none" stroke="#3b82f6" strokeWidth="0.6" strokeLinecap="round" strokeLinejoin="round" />}
+          {hoverIdx !== null && hasData && (
+            <>
+              <line x1={(hoverIdx / lastIndex) * 100} y1="0" x2={(hoverIdx / lastIndex) * 100} y2="95" stroke="#3b82f6" strokeWidth="0.2" strokeDasharray="1.5,1.5" opacity="0.4" />
+              <circle cx={(hoverIdx / lastIndex) * 100} cy={92 - ((chart[hoverIdx].visits || 0) / maxVisits) * 82} r="1" fill="#3b82f6" />
+            </>
+          )}
+          {hasData && <circle cx={100} cy={lastY} r="1.2" fill="#3b82f6" />}
+        </svg>
+        {hoverIdx !== null && hasData && (() => {
+          const d = chart[hoverIdx];
+          const hx = (hoverIdx / lastIndex) * 100;
+          const isLeft = hx < 25;
+          const isRight = hx > 75;
+          return (
+            <div className="absolute z-20 pointer-events-none" style={{ left: `${hx}%`, top: 0, transform: `translateX(${isLeft ? '10px' : isRight ? 'calc(-100% - 10px)' : '-50%'})` }}>
+              <div className="bg-gray-800 text-white text-[0.55rem] px-2 py-1 rounded shadow whitespace-nowrap">
+                {d.label}: {d.visits || 0} visits
+              </div>
+            </div>
+          );
+        })()}
+      </div>
+      <div className="flex justify-between text-[0.5rem] text-gray-300">
+        <span>{chart[0]?.label || ''}</span>
+        <span>{chart[lastIndex]?.label || ''}</span>
+      </div>
+    </div>
+  );
+};
+
 const DashboardAdminPage = () => {
   const { user, profile } = useAuth();
   const isAdmin = profile?.role === 'team_dev' || profile?.role === 'master' || profile?.role === 'admin';
@@ -273,41 +459,14 @@ const DashboardAdminPage = () => {
                   </div>
                 </div>
 
-                {/* Grafik Trend Pendapatan Kotor per Hari */}
-                {(data.sales_report.daily_chart || []).length > 0 && (
-                  <div className="mb-4">
-                    <div className="flex items-center justify-between mb-2">
-                      <p className="text-[0.65rem] font-semibold text-gray-500 uppercase">📈 Trend Pendapatan Kotor per Hari</p>
-                      <div className="flex items-center gap-3 text-[0.6rem] text-gray-400">
-                        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-green-500"></span> Revenue</span>
-                        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-red-400"></span> Cancelled</span>
-                        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-orange-400"></span> Refund</span>
-                      </div>
-                    </div>
-                    <div className="flex items-end gap-[2px] h-40 overflow-x-auto pb-2">
-                      {(data.sales_report.daily_chart || []).map((d, i) => {
-                        const maxRev = Math.max(...(data.sales_report.daily_chart || []).map(x => x.revenue || 0), 1);
-                        const revHeight = d.revenue > 0 ? Math.max((d.revenue / maxRev) * 100, 3) : 0;
-                        return (
-                          <div key={i} className="flex-shrink-0 group relative" style={{ width: '20px' }}>
-                            <div className="absolute bottom-full mb-1 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10 whitespace-nowrap bg-gray-900 text-white text-[0.6rem] px-2 py-1 rounded">
-                              {d.label}: Rp {(d.revenue || 0).toLocaleString('id-ID')} ({d.orders || 0} orders)
-                              {(d.cancelled > 0 || d.refund > 0) && (
-                                <span className="block text-[0.55rem] text-red-300">Cancel: {d.cancelled} Refund: {d.refund}</span>
-                              )}
-                            </div>
-                            <div className={`rounded-t-sm transition-all ${d.revenue > 0 ? 'bg-green-500 hover:bg-green-400' : 'bg-gray-100'}`} style={{ height: `${revHeight}%`, minHeight: d.revenue > 0 ? '3px' : '2px' }}></div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                    <div className="flex justify-between mt-2 text-[0.6rem] text-gray-400">
-                      <span>{(data.sales_report.daily_chart || [])[0]?.label || ''}</span>
-                      {(data.sales_report.daily_chart || []).length > 2 && <span>{(data.sales_report.daily_chart || [])[Math.floor((data.sales_report.daily_chart || []).length / 2)]?.label || ''}</span>}
-                      <span>{(data.sales_report.daily_chart || [])[(data.sales_report.daily_chart || []).length - 1]?.label || ''}</span>
-                    </div>
-                  </div>
-                )}
+                {/* Line Chart */}
+                <RevenueChart
+                  chart={data.sales_report?.daily_chart || []}
+                  dateRange={dateRange}
+                  setDateRange={setDateRange}
+                  DATE_RANGES={DATE_RANGES}
+                  rupiah={rupiah}
+                />
 
                 {/* Pendapatan Kotor highlight */}
                 <div className="bg-gradient-to-r from-eglux-primary to-gray-800 rounded-lg p-4 text-white mb-4">
@@ -498,36 +657,15 @@ const DashboardAdminPage = () => {
             </div>
 
             {/* Revenue Chart */}
-            {isAdmin && canSee('dashboard_revenue') && data.revenue_chart && data.revenue_chart.length > 0 && (
-              <div className="bg-white border border-gray-200 rounded-xl p-5">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-sm font-bold text-gray-700">💰 Revenue Trend</h3>
-                  <div className="flex items-center gap-3 text-[0.65rem] text-gray-400">
-                    <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-eglux-secondary"></span> Revenue</span>
-                    <span>Total: {rupiah(data.kpis?.revenue)}</span>
-                  </div>
-                </div>
-                <div className="flex items-end gap-[2px] h-40 overflow-x-auto pb-2">
-                  {data.revenue_chart.map((d, i) => {
-                    const maxRev = Math.max(...(data.revenue_chart || []).map((x) => x.revenue), 1);
-                    const heightPct = d.revenue > 0 ? Math.max((d.revenue / maxRev) * 100, 3) : 0;
-                    return (
-                      <div key={i} className="flex-shrink-0 group relative" style={{ width: '20px' }}>
-                        <div className="absolute bottom-full mb-1 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10 whitespace-nowrap bg-gray-900 text-white text-[0.6rem] px-2 py-1 rounded">
-                          {d.label}: {rupiah(d.revenue)} ({d.orders} orders)
-                        </div>
-                        <div className={`rounded-t-sm transition-all ${d.revenue > 0 ? 'bg-eglux-secondary hover:bg-eglux-secondary/80' : 'bg-gray-100'}`} style={{ height: `${heightPct}%`, minHeight: d.revenue > 0 ? '3px' : '0' }}></div>
-                      </div>
-                    );
-                  })}
-                </div>
-                <div className="flex justify-between mt-2 text-[0.6rem] text-gray-400">
-                  <span>{data.revenue_chart[0]?.label || ''}</span>
-                  {data.revenue_chart.length > 2 && <span>{data.revenue_chart[Math.floor(data.revenue_chart.length / 2)]?.label || ''}</span>}
-                  <span>{data.revenue_chart[data.revenue_chart.length - 1]?.label || ''}</span>
-                </div>
-              </div>
-            )}
+            <DashboardChartCard
+              title="💰 Revenue Trend"
+              value={rupiah(data.kpis?.revenue)}
+              dateRange={dateRange}
+              setDateRange={setDateRange}
+              DATE_RANGES={DATE_RANGES}
+            >
+              <RevenueChart chart={data.revenue_chart || []} />
+            </DashboardChartCard>
 
             {/* Alerts + Order Pipeline */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -834,91 +972,16 @@ const DashboardAdminPage = () => {
               </div>
             )}
 
-            {/* Visitor Analytics */}
-            {isAdmin && canSee('dashboard_visitor') && (
-              <>
-                {data.visitor_stats && (
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                    <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl p-4 text-white">
-                      <div className="text-[0.65rem] uppercase tracking-wider text-white/70 mb-1">👁️ Total Views</div>
-                      <div className="text-xl font-bold">{(data.visitor_stats.total_views || 0).toLocaleString('id-ID')}</div>
-                      <div className="text-[0.65rem] text-white/60 mt-1">page views di periode ini</div>
-                    </div>
-                    <div className="bg-white border border-gray-200 rounded-xl p-4">
-                      <div className="text-[0.65rem] uppercase tracking-wider text-gray-400 mb-1">👥 Unique Visitors</div>
-                      <div className="text-xl font-bold text-eglux-primary">{(data.visitor_stats.unique_visitors || 0).toLocaleString('id-ID')}</div>
-                      <div className="text-[0.65rem] text-gray-400 mt-1">{data.visitor_stats.logged_in_visitors || 0} login · {data.visitor_stats.anonymous_visitors || 0} anon</div>
-                    </div>
-                    <div className="bg-white border border-gray-200 rounded-xl p-4">
-                      <div className="text-[0.65rem] uppercase tracking-wider text-gray-400 mb-1">📄 Avg Views/Visitor</div>
-                      <div className="text-xl font-bold text-eglux-primary">{(data.visitor_stats.unique_visitors || 0) > 0 ? (data.visitor_stats.total_views / data.visitor_stats.unique_visitors).toFixed(1) : '0'}</div>
-                      <div className="text-[0.65rem] text-gray-400 mt-1">halaman per visitor</div>
-                    </div>
-                    <div className="bg-white border border-gray-200 rounded-xl p-4">
-                      <div className="text-[0.65rem] uppercase tracking-wider text-gray-400 mb-1">🔄 No Purchase Rate</div>
-                      <div className="text-xl font-bold text-eglux-primary">{(data.visitor_stats.unique_visitors || 0) > 0 ? Math.max(0, Math.min(100, Math.round(((data.visitor_stats.unique_visitors - (data.kpis?.paid_count || 0)) / data.visitor_stats.unique_visitors) * 100))) : 0}%</div>
-                      <div className="text-[0.65rem] text-gray-400 mt-1">visitor tanpa order</div>
-                    </div>
-                  </div>
-                )}
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                  {data.visits_chart && data.visits_chart.length > 0 && (
-                    <div className="bg-white border border-gray-200 rounded-xl p-5">
-                      <div className="flex items-center justify-between mb-4">
-                        <h3 className="text-sm font-bold text-gray-700">📈 Kunjungan per Hari</h3>
-                        <span className="text-[0.65rem] text-gray-400">Total: {(data.visits_chart || []).reduce((s, d) => s + (d.visits || 0), 0).toLocaleString('id-ID')} visits</span>
-                      </div>
-                      <div className="flex items-end gap-[2px] h-32 overflow-x-auto pb-2">
-                        {data.visits_chart.map((d, i) => {
-                          const maxVisits = Math.max(...(data.visits_chart || []).map(x => x.visits || 0), 1);
-                          const heightPct = d.visits > 0 ? Math.max((d.visits / maxVisits) * 100, 3) : 0;
-                          return (
-                            <div key={i} className="flex-shrink-0 group relative" style={{ width: '20px' }}>
-                              <div className="absolute bottom-full mb-1 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10 whitespace-nowrap bg-gray-900 text-white text-[0.6rem] px-2 py-1 rounded">{d.label}: {d.visits} visits</div>
-                              <div className={`rounded-t-sm transition-all ${d.visits > 0 ? 'bg-blue-500 hover:bg-blue-400' : 'bg-gray-100'}`} style={{ height: `${heightPct}%`, minHeight: d.visits > 0 ? '3px' : '0' }}></div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                      <div className="flex justify-between mt-2 text-[0.6rem] text-gray-400">
-                        <span>{data.visits_chart[0]?.label || ''}</span>
-                        {data.visits_chart.length > 2 && <span>{data.visits_chart[Math.floor(data.visits_chart.length / 2)]?.label || ''}</span>}
-                        <span>{data.visits_chart[data.visits_chart.length - 1]?.label || ''}</span>
-                      </div>
-                    </div>
-                  )}
-                  <div className="bg-white border border-gray-200 rounded-xl p-5">
-                    <h3 className="text-sm font-bold text-gray-700 mb-3">📄 Halaman Terpopuler</h3>
-                    {(data.top_pages || []).length === 0 ? (
-                      <EmptyState icon="📄" title="Belum ada data kunjungan" description="Integrate trackPageView di frontend." size="sm" />
-                    ) : (
-                      <div className="space-y-2">
-                        {(data.top_pages || []).slice(0, 8).map((page, i) => {
-                          const maxVisits = Math.max(...(data.top_pages || []).map(p => p.visits), 1);
-                          const widthPct = Math.max((page.visits / maxVisits) * 100, 5);
-                          const pageTypeIcons = { home: '🏠', product: '🏷️', category: '📂', checkout: '💳', other: '📄' };
-                          const icon = pageTypeIcons[page.type] || '📄';
-                          return (
-                            <div key={i} className="space-y-1">
-                              <div className="flex items-center justify-between text-xs">
-                                <span className="text-gray-700 font-medium truncate flex-1 flex items-center gap-1.5">
-                                  <span>{icon}</span>
-                                  <span className="truncate">{page.path}</span>
-                                </span>
-                                <span className="text-eglux-secondary font-semibold flex-shrink-0 ml-2">{page.visits}x</span>
-                              </div>
-                              <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                                <div className="h-full bg-blue-400 rounded-full transition-all" style={{ width: `${widthPct}%` }}></div>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </>
-            )}
+                    {/* Visits per Day Chart */}
+                    <DashboardChartCard
+                      title="📈 Kunjungan per Hari"
+                      value={`${(data.visits_chart || []).reduce((s, d) => s + (d.visits || 0), 0).toLocaleString('id-ID')} visits`}
+                      dateRange={dateRange}
+                      setDateRange={setDateRange}
+                      DATE_RANGES={DATE_RANGES}
+                    >
+                      <VisitsChart chart={data.visits_chart || []} />
+                    </DashboardChartCard>
 
             {/* Team Activity + Online Admins */}
             {isAdmin && canSee('dashboard_team') && (

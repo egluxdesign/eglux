@@ -273,63 +273,80 @@ export const CartProvider = ({ children }) => {
   // Existing functions (addItem, updateQty, removeItem, clearCart)
   // ============================================================================
 
-  const addItem = useCallback((product, variant, qty) => {
-    setCart((prev) => {
-      const variantId   = variant?.id ?? null;
-      const variantName = variant?.name ?? null;
-
-      // ⚠️ PRICE: always from variant, NO fallback to product.price
-      // (variant = source of truth per Boss's redesign)
-      // ⭐ v3: variant.price SEKARANG adalah harga SETELAH discount (dari ProductModal)
-      // Simpan originalPrice juga untuk strike-through display di cart
-      const unitPrice = Number(variant?.price) || 0;
-      const originalPrice = Number(variant?.originalPrice) || unitPrice;
-      const isDiscounted = Boolean(variant?.isDiscounted) && originalPrice > unitPrice;
-      const discountPercent = Number(variant?.discountPercent) || 0;
-
-      // ⚠️ WEIGHT: from variant, fallback to product.weight_in_gram (defense in depth)
-      const weightInGram =
-        Number(variant?.weight_in_gram) ||
-        Number(product?.weight_in_gram) ||
-        0;
-
-      // ⚠️ DIMENSIONS: from variant (optional, for Biteship volumetric calc)
-      const lengthCm = Number(variant?.length_cm) || null;
-      const widthCm  = Number(variant?.width_cm)  || null;
-      const heightCm = Number(variant?.height_cm) || null;
-
-      const existing = prev.find(
-        (i) => i.productId === product.id && i.variantId === variantId
-      );
-      if (existing) {
-        return prev.map((i) =>
-          i === existing ? { ...i, qty: i.qty + qty } : i
-        );
-      }
-      return [
-        ...prev,
-        {
-          id: Date.now(),
-          productId: product.id,
-          img: product.image,
-          name: product.name,
-          variantId,
-          variantName,
-          price: unitPrice,              // ⭐ v3: harga SETELAH discount (untuk total calc)
-          originalPrice,                 // ⭐ v3: harga asli (untuk strike display)
-          isDiscounted,                  // ⭐ v3: flag diskon aktif
-          discountPercent,               // ⭐ v3: persen off (untuk badge)
-          stock: Number(variant?.stock) ?? null,  // ⭐ stock dari variant (untuk checkout oversell check)
-          qty,
-          // ⚠️ NEW fields for shipping calc
-          weight_in_gram: weightInGram,
-          length_cm: lengthCm,
-          width_cm: widthCm,
-          height_cm: heightCm,
-        },
-      ];
+  const addItem = useCallback(async (product, variant, qty) => {
+  // ⭐ Stage 3: Track add to cart (inline, no external dependency)
+  console.log('[CartContext] addItem called:', product?.name, 'qty:', qty);
+  
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    let sid = sessionStorage.getItem('eglux_session_id');
+    if (!sid) {
+      sid = 's_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
+      sessionStorage.setItem('eglux_session_id', sid);
+    }
+    
+    const { error: trackErr } = await supabase.from('page_views').insert({
+      user_id: user?.id || null,
+      session_id: sid,
+      page_path: window.location.pathname,
+      page_type: 'add_to_cart',
+      product_id: null,
+      referrer: document.referrer || null,
+      user_agent: navigator.userAgent,
     });
-  }, []);
+    
+    if (trackErr) {
+      console.error('[funnel] add_to_cart insert error:', trackErr.message);
+    } else {
+      console.log('[funnel] add_to_cart tracked OK');
+    }
+  } catch (e) {
+    console.error('[funnel] add_to_cart exception:', e?.message);
+  }
+
+  setCart((prev) => {
+    const variantId   = variant?.id ?? null;
+    const variantName = variant?.name ?? null;
+    const unitPrice = Number(variant?.price) || 0;
+    const originalPrice = Number(variant?.originalPrice) || unitPrice;
+    const isDiscounted = Boolean(variant?.isDiscounted) && originalPrice > unitPrice;
+    const discountPercent = Number(variant?.discountPercent) || 0;
+    const weightInGram = Number(variant?.weight_in_gram) || Number(product?.weight_in_gram) || 0;
+    const lengthCm = Number(variant?.length_cm) || null;
+    const widthCm  = Number(variant?.width_cm)  || null;
+    const heightCm = Number(variant?.height_cm) || null;
+
+    const existing = prev.find(
+      (i) => i.productId === product.id && i.variantId === variantId
+    );
+    if (existing) {
+      return prev.map((i) =>
+        i === existing ? { ...i, qty: i.qty + qty } : i
+      );
+    }
+    return [
+      ...prev,
+      {
+        id: Date.now(),
+        productId: product.id,
+        img: product.image,
+        name: product.name,
+        variantId,
+        variantName,
+        price: unitPrice,
+        originalPrice,
+        isDiscounted,
+        discountPercent,
+        stock: Number(variant?.stock) ?? null,
+        qty,
+        weight_in_gram: weightInGram,
+        length_cm: lengthCm,
+        width_cm: widthCm,
+        height_cm: heightCm,
+      },
+    ];
+  });
+}, []);
 
   const updateQty = useCallback((id, delta) => {
     setCart((prev) =>

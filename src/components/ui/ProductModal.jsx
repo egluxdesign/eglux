@@ -12,6 +12,9 @@ import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Swiper, SwiperSlide } from 'swiper/react';
 import 'swiper/css';
 import { rupiah } from '../../context/CartContext';
+import { supabase } from '../../lib/supabaseClient';
+
+const trackedImpressions = new Set();
 
 const ProductModal = ({ product, onClose, onAddToCart }) => {
   const [selectedVariant, setSelectedVariant] = useState(null);
@@ -56,6 +59,47 @@ const ProductModal = ({ product, onClose, onAddToCart }) => {
       });
     return map;
   }, [product]);
+
+  // Ganti useEffect tracking dengan:
+useEffect(() => {
+  if (!product?.id) return;
+  
+  // Dedupe: skip kalau sudah tracked produk ini
+  if (trackedImpressions.has(product.id)) return;
+  trackedImpressions.add(product.id);
+
+  const trackImpression = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      let sid = sessionStorage.getItem('eglux_session_id');
+      if (!sid) {
+        sid = 's_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
+        sessionStorage.setItem('eglux_session_id', sid);
+      }
+
+      const { error } = await supabase.from('page_views').insert({
+        user_id: user?.id || null,
+        session_id: sid,
+        page_path: window.location.pathname,
+        page_type: 'product_impression',
+        product_id: null,
+        referrer: document.referrer || null,
+        user_agent: navigator.userAgent,
+      });
+
+      if (error) {
+        console.error('[funnel] impression error:', error.message);
+      } else {
+        console.log('[funnel] impression tracked:', product.name);
+      }
+    } catch (e) {
+      console.error('[funnel] impression exception:', e?.message);
+    }
+  };
+
+  trackImpression();
+}, [product?.id]);
+  
 
   const allThumbnails = useMemo(() => {
     const covers = generalImages.map((img) => ({ ...img, type: 'cover' }));
