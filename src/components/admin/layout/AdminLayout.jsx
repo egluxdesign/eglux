@@ -1,23 +1,32 @@
 // src/components/admin/layout/AdminLayout.jsx
 // ============================================================================
-// AdminLayout v2 — Shopee-inspired layout
+// AdminLayout v3 — Editorial Minimalist (EGLUX Design System)
 // ============================================================================
-// Struktur:
+// Design philosophy:
+//   - Editorial aesthetic: Playfair Display headings + Inter body
+//   - Brand palette: #1a1a1a (primary), #9a7d4a (gold), #f7f3ed (cream),
+//                    #3a3944 (text), #8a8a8a (muted), #e8e4df (border)
+//   - Sharp corners everywhere (no rounded-xl)
+//   - Borderless cards, no shadows
+//   - Generous whitespace
+//   - Single accent color (gold) for all highlights
+//
+// Structure:
 //   Desktop (md+):
-//     [Sidebar 240px persistent] [Main: Header + Title Bar + Content]
+//     [Sidebar 240px persistent dark-brown] [Main: Header + Title Bar + Content]
 //   Mobile:
 //     [Header with hamburger] [Sidebar slide-in overlay]
 //
 // Header berisi:
 //   - Hamburger (mobile only, buka sidebar)
-//   - Global Search input (cari order, produk, user)
-//   - Notification Bell (badge + dropdown)
+//   - Global Search input (underline-style, minimal)
+//   - Notification Bell (badge + dropdown) — original gray theme
 //   - UserMenu (avatar)
 //
-// Pemakaian:
-//   <AdminLayout title="Products Admin" subtitle="..." actions={<>...</>}>
-//     {children}
-//   </AdminLayout>
+// Sidebar:
+//   - Dark brown bg (#554521) + gold accents (#cba65a)
+//   - White logo (filtered via CSS)
+//   - SVG nav icons tinted gold via CSS mask-image
 // ============================================================================
 
 import { useState, useEffect, useRef, useCallback } from 'react';
@@ -28,6 +37,58 @@ import UserMenu from '../../ui/UserMenu';
 import logoImg from '../../../assets/img/Logo1.png';
 import { ADMIN_PAGES, canAccess } from '../../../lib/permissions';
 import { useAdminPresence } from '../../../hooks/useAdminPresence';
+
+// ============================================================================
+// NavIcon — renders SVG image from Supabase storage, falls back to emoji
+// ============================================================================
+// Implementation:
+//   Pakai CSS mask-image untuk tinting SVG ke warna gold #cba65a
+//   (lebih clean dari CSS filter hack, hasil exact match brand color)
+//   Hidden <img> dipakai untuk detect load error → fallback ke emoji
+// ============================================================================
+const NavIcon = ({ item, active, className = '' }) => {
+  const [svgError, setSvgError] = useState(false);
+  const iconClasses = `flex-shrink-0 ${className}`;
+
+  // Prefer SVG if available and not failed
+  if (item.iconSvg && !svgError) {
+    return (
+      <div
+        className={`${iconClasses} w-[18px] h-[18px] relative`}
+        style={{
+          backgroundColor: '#cba65a',
+          maskImage: `url(${item.iconSvg})`,
+          WebkitMaskImage: `url(${item.iconSvg})`,
+          maskSize: 'contain',
+          WebkitMaskSize: 'contain',
+          maskRepeat: 'no-repeat',
+          WebkitMaskRepeat: 'no-repeat',
+          maskPosition: 'center',
+          WebkitMaskPosition: 'center',
+          // Active = full gold, inactive = 70% opacity gold (softer)
+          opacity: active ? 1 : 0.7,
+        }}
+      >
+        {/* Hidden img untuk detect load error — triggers fallback ke emoji */}
+        <img
+          src={item.iconSvg}
+          alt=""
+          onError={() => setSvgError(true)}
+          className="hidden"
+          aria-hidden="true"
+          loading="lazy"
+        />
+      </div>
+    );
+  }
+
+  // Fallback to emoji
+  return (
+    <span className={`${iconClasses} text-base w-[18px] text-center`}>
+      {item.icon}
+    </span>
+  );
+};
 
 // ============================================================================
 // AdminLayout
@@ -221,74 +282,83 @@ const AdminLayout = ({ children, title = 'Admin', subtitle, actions }) => {
   const shortId = (uuid) => (uuid || '').replace(/-/g, '').slice(0, 8).toUpperCase();
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-white">
       {/* === Sidebar (persistent desktop, slide-in mobile) === */}
       <aside
-        className={`fixed top-0 left-0 h-full w-60 bg-white border-r border-gray-200 z-[1500] flex flex-col
+        className={`fixed top-0 left-0 h-full w-64 bg-[#554521] border-r border-white z-[1500] flex flex-col
                     transition-transform duration-300
                     ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
                     md:translate-x-0 md:z-auto`}
       >
-        {/* Sidebar Header: logo */}
-        <div className="px-5 py-4 border-b border-gray-200 flex items-center justify-between h-[60px] md:h-[72px]">
+        {/* Sidebar Header: logo (filtered to white via CSS) */}
+        <div className="px-6 py-5 border-b border-[#cba65a] flex items-center justify-between h-[64px] md:h-[72px]">
           <Link to="/" onClick={() => setSidebarOpen(false)} className="flex items-center">
-            <img src={logoImg} alt="Eglux Logo" className="h-7 w-auto" />
+            <img
+              src={logoImg}
+              alt="Eglux Logo"
+              className="h-7 w-auto"
+              style={{ filter: 'brightness(0) invert(1)' }}
+              draggable={false}
+            />
           </Link>
           <button
             onClick={() => setSidebarOpen(false)}
-            className="md:hidden w-8 h-8 rounded-full hover:bg-gray-100 flex items-center justify-center text-gray-500 cursor-pointer border-none"
+            className="md:hidden w-8 h-8 hover:bg-[#cba65a]/5 flex items-center justify-center text-white cursor-pointer border-none bg-transparent"
           >
             ✕
           </button>
         </div>
 
         {/* Admin Panel label */}
-        <div className="px-5 py-3 border-b border-gray-100">
-          <span className="text-xs font-bold text-eglux-primary uppercase tracking-wider">Admin Panel</span>
+        <div className="px-6 pt-6 pb-3">
+          <span className="text-[0.65rem] font-medium text-[#cba65a] uppercase tracking-[0.2em]">Admin Panel</span>
         </div>
 
-        {/* Nav items */}
-        <nav className="flex-1 py-3 px-3 space-y-0.5 overflow-y-auto">
-          {visibleNavItems.map((item) => (
-            <Link
-              key={item.href}
-              to={item.href}
-              onClick={() => setSidebarOpen(false)}
-              className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                currentPath === item.href
-                  ? 'bg-eglux-primary text-white'
-                  : 'text-gray-700 hover:bg-gray-100'
-              }`}
-            >
-              <span className="text-base">{item.icon}</span>
-              <span className="truncate">{item.label}</span>
-            </Link>
-          ))}
-          <div className="border-t border-gray-100 my-3" />
+        {/* Nav items — editorial list style, SVG icons tinted gold via CSS mask-image */}
+        <nav className="flex-1 py-2 px-3 space-y-0 overflow-y-auto">
+          {visibleNavItems.map((item) => {
+            const isActive = currentPath === item.href;
+            return (
+              <Link
+                key={item.href}
+                to={item.href}
+                onClick={() => setSidebarOpen(false)}
+                className={`flex items-center gap-3 px-3 py-2.5 text-sm transition-all no-underline border-l-2 -ml-3 ${
+                  isActive
+                    ? 'border-[#9a7d4a] text-[#1a1a1a] font-semibold bg-white/60'
+                    : 'border-transparent text-white hover:border-[#9a7d4a]/40 hover:text-[#1a1a1a] hover:bg-white/40 font-normal'
+                }`}
+              >
+                <NavIcon item={item} active={isActive} />
+                <span className="truncate tracking-wide">{item.label}</span>
+              </Link>
+            );
+          })}
+          <div className="border-t border-[#cba65a] my-4 mx-3" />
           <Link
             to="/"
             onClick={() => setSidebarOpen(false)}
-            className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium text-gray-500 hover:bg-gray-100 transition-colors"
+            className="flex items-center gap-3 px-3 py-2.5 text-sm text-white/60 hover:text-[#1a1a1a] hover:bg-white/40 transition-colors no-underline font-normal"
           >
-            <span className="text-base">←</span>
-            <span>Kembali ke Storefront</span>
+            <span className="text-base flex-shrink-0 w-[18px] text-center">←</span>
+            <span className="tracking-wide">Kembali ke Storefront</span>
           </Link>
         </nav>
 
         {/* Footer: role + email + logout */}
-        <div className="px-4 py-3 border-t border-gray-200">
-          <p className="text-xs font-bold text-eglux-primary uppercase tracking-wider">{profile?.role || 'user'}</p>
-          <p className="text-xs text-gray-500 truncate mb-2">{user?.email}</p>
+        <div className="px-6 py-4 border-t border-[#cba65a]">
+          <p className="text-[0.65rem] font-medium text-[#cba65a] uppercase tracking-[0.2em] mb-1">{profile?.role || 'user'}</p>
+          <p className="text-xs text-white/60 truncate mb-3">{user?.email}</p>
           <button
             onClick={handleLogout}
-            className="w-full flex items-center gap-2 px-3 py-2 text-sm font-medium text-red-500 hover:bg-red-50 rounded-lg transition-colors cursor-pointer border-none bg-transparent text-left"
+            className="w-full flex items-center gap-2 px-0 py-1.5 text-sm font-medium text-[#cba65a] hover:text-[#cba65a] transition-colors cursor-pointer border-none bg-transparent text-left border-b border-transparent hover:border-[#cba65a]"
           >
-            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="#cba65a" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
               <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
               <polyline points="16 17 21 12 16 7" />
               <line x1="21" y1="12" x2="9" y2="12" />
             </svg>
-            Keluar
+            <span className="tracking-wide text-[#cba65a] hover:text-white">Keluar</span>
           </button>
         </div>
       </aside>
@@ -296,200 +366,206 @@ const AdminLayout = ({ children, title = 'Admin', subtitle, actions }) => {
       {/* Overlay (mobile only, saat sidebar open) */}
       {sidebarOpen && (
         <div
-          className="fixed inset-0 bg-black/40 z-[1400] md:hidden"
+          className="fixed inset-0 bg-black/30 z-[1400] md:hidden"
           onClick={() => setSidebarOpen(false)}
         />
       )}
 
       {/* === Main Area (offset by sidebar width on desktop) === */}
-      <div className="md:ml-60">
-        {/* === Header (sticky) === */}
-        <header className="sticky top-0 z-[1000] bg-white border-b border-gray-200 h-[60px] md:h-[72px] flex items-center px-4 md:px-6 gap-3">
-          {/* Hamburger (mobile only) */}
-          <button
-            onClick={() => setSidebarOpen(true)}
-            aria-label="Buka menu"
-            className="md:hidden bg-transparent border-none cursor-pointer p-2 flex flex-col gap-1.5 items-center justify-center"
-          >
-            {[0, 1, 2].map((i) => (
-              <span key={i} className="block w-[20px] h-[1.5px] rounded-sm bg-eglux-primary" />
-            ))}
-          </button>
-
-          {/* Global Search */}
-          <div ref={searchRef} className="relative flex-1 max-w-md">
-            <div className="relative">
-              <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="11" cy="11" r="8" />
-                <path d="m21 21-4.35-4.35" />
-              </svg>
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={handleSearchChange}
-                onFocus={() => setShowSearchDropdown(true)}
-                onKeyDown={handleSearchSubmit}
-                placeholder="Cari order, produk, user..."
-                className="w-full pl-9 pr-3 py-2 text-sm bg-gray-50 border border-gray-200 rounded-lg outline-none focus:bg-white focus:border-eglux-secondary transition-colors"
-              />
-              {searchLoading && (
-                <div className="absolute right-3 top-1/2 -translate-y-1/2">
-                  <div className="w-4 h-4 border-2 border-eglux-secondary border-t-transparent rounded-full animate-spin" />
-                </div>
-              )}
-            </div>
-
-            {/* Search Dropdown */}
-            {showSearchDropdown && searchQuery.trim().length >= 2 && (
-              <div className="absolute top-full mt-1 left-0 right-0 bg-white border border-gray-200 rounded-lg shadow-xl max-h-[400px] overflow-y-auto z-[2000]">
-                {searchResults && (searchResults.orders.length > 0 || searchResults.products.length > 0 || searchResults.users.length > 0) ? (
-                  <div className="py-2">
-                    {/* Orders results */}
-                    {searchResults.orders.length > 0 && (
-                      <div>
-                        <p className="px-3 py-1.5 text-[0.65rem] font-bold text-gray-400 uppercase tracking-wider">📦 Orders</p>
-                        {searchResults.orders.map((o) => (
-                          <Link
-                            key={o.id}
-                            to="/orders-admin"
-                            onClick={() => { setShowSearchDropdown(false); setSearchQuery(''); }}
-                            className="flex items-center justify-between px-3 py-2 hover:bg-gray-50 no-underline"
-                          >
-                            <div className="min-w-0 flex-1">
-                              <p className="text-xs font-semibold text-gray-900 truncate">
-                                #{shortId(o.id)} · {o.customer?.name || 'Customer'}
-                              </p>
-                              <p className="text-[0.65rem] text-gray-400">
-                                {o.status} · {o.payment_status}
-                              </p>
-                            </div>
-                            <span className="text-xs font-semibold text-eglux-secondary flex-shrink-0 ml-2">
-                              Rp {(o.total_amount || 0).toLocaleString('id-ID')}
-                            </span>
-                          </Link>
-                        ))}
-                      </div>
-                    )}
-                    {/* Products results */}
-                    {searchResults.products.length > 0 && (
-                      <div>
-                        <p className="px-3 py-1.5 text-[0.65rem] font-bold text-gray-400 uppercase tracking-wider border-t border-gray-100">🏷️ Produk</p>
-                        {searchResults.products.map((p) => (
-                          <Link
-                            key={p.id}
-                            to="/products-admin"
-                            onClick={() => { setShowSearchDropdown(false); setSearchQuery(''); }}
-                            className="flex items-center justify-between px-3 py-2 hover:bg-gray-50 no-underline"
-                          >
-                            <span className="text-xs text-gray-900 truncate flex-1">{p.name}</span>
-                            <span className={`text-[0.6rem] px-1.5 py-0.5 rounded-full flex-shrink-0 ml-2 ${p.is_active ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
-                              {p.is_active ? 'Aktif' : 'Nonaktif'}
-                            </span>
-                          </Link>
-                        ))}
-                      </div>
-                    )}
-                    {/* Users results (admin only) */}
-                    {isAdmin && searchResults.users.length > 0 && (
-                      <div>
-                        <p className="px-3 py-1.5 text-[0.65rem] font-bold text-gray-400 uppercase tracking-wider border-t border-gray-100">👥 User</p>
-                        {searchResults.users.map((u) => (
-                          <Link
-                            key={u.id}
-                            to="/users-admin"
-                            onClick={() => { setShowSearchDropdown(false); setSearchQuery(''); }}
-                            className="flex items-center justify-between px-3 py-2 hover:bg-gray-50 no-underline"
-                          >
-                            <div className="min-w-0 flex-1">
-                              <p className="text-xs font-semibold text-gray-900 truncate">{u.full_name || u.email}</p>
-                              <p className="text-[0.65rem] text-gray-400 truncate">{u.email}</p>
-                            </div>
-                            <span className="text-[0.6rem] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-600 flex-shrink-0 ml-2 capitalize">{u.role}</span>
-                          </Link>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ) : !searchLoading ? (
-                  <div className="py-6 text-center">
-                    <p className="text-xs text-gray-400">Tidak ada hasil untuk "{searchQuery}"</p>
-                  </div>
-                ) : null}
-              </div>
-            )}
-          </div>
-
-          {/* Notification Bell */}
-          <div ref={notifRef} className="relative">
+      <div className="md:ml-64">
+        {/* === Header (sticky) — minimal, underline-style search === */}
+        <header className="sticky top-0 z-[1000] bg-white border-b border-[#e8e4df] h-[64px] md:h-[72px]">
+          {/* Inner container — same pattern as /homepage (max-w-container mx-auto) */}
+          <div className="max-w-container mx-auto px-4 md:px-8 h-full flex items-center gap-4">
+            {/* Hamburger (mobile only) */}
             <button
-              onClick={() => setShowNotifDropdown(!showNotifDropdown)}
-              className="relative p-2 rounded-lg hover:bg-gray-100 cursor-pointer border-none bg-transparent"
-              aria-label="Notifikasi"
+              onClick={() => setSidebarOpen(true)}
+              aria-label="Buka menu"
+              className="md:hidden bg-transparent border-none cursor-pointer p-2 flex flex-col gap-1.5 items-center justify-center"
             >
-              <svg className="w-5 h-5 text-gray-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-                <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
-                <path d="M13.73 21a2 2 0 0 1-3.46 0" />
-              </svg>
-              {notifCount > 0 && (
-                <span className="absolute top-0 right-0 w-4 h-4 bg-red-500 text-white text-[0.6rem] font-bold rounded-full flex items-center justify-center">
-                  {notifCount > 9 ? '9+' : notifCount}
-                </span>
-              )}
+              {[0, 1, 2].map((i) => (
+                <span key={i} className="block w-[22px] h-[1.5px] rounded-sm bg-[#1a1a1a]" />
+              ))}
             </button>
 
-            {/* Notification Dropdown */}
-            {showNotifDropdown && (
-              <div className="absolute top-full mt-1 right-0 w-80 bg-white border border-gray-200 rounded-lg shadow-xl max-h-[400px] overflow-y-auto z-[2000]">
-                <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
-                  <h3 className="text-sm font-bold text-gray-900">Notifikasi</h3>
-                  {notifCount > 0 && (
-                    <span className="text-[0.65rem] text-gray-400">{notifCount} alert aktif</span>
-                  )}
-                </div>
-                <div className="py-2">
-                  {notifications.length === 0 ? (
-                    <div className="py-8 text-center">
-                      <p className="text-3xl mb-2">✅</p>
-                      <p className="text-xs text-gray-400">Semua aman, tidak ada alert.</p>
-                    </div>
-                  ) : (
-                    notifications.map((n) => (
-                      <Link
-                        key={n.id}
-                        to={n.href}
-                        onClick={() => setShowNotifDropdown(false)}
-                        className="flex items-start gap-3 px-4 py-2.5 hover:bg-gray-50 no-underline border-b border-gray-50 last:border-0"
-                      >
-                        <span className="text-base flex-shrink-0 mt-0.5">{n.icon}</span>
-                        <div className="min-w-0 flex-1">
-                          <p className="text-xs font-semibold text-gray-900">{n.title}</p>
-                          <p className="text-[0.65rem] text-gray-400">{n.description}</p>
-                        </div>
-                      </Link>
-                    ))
-                  )}
-                </div>
+            {/* Global Search — minimal underline style */}
+            <div ref={searchRef} className="relative flex-1 max-w-md">
+              <div className="relative">
+                <svg className="absolute left-0 top-1/2 -translate-y-1/2 w-4 h-4 text-[#8a8a8a]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <circle cx="11" cy="11" r="8" />
+                  <path d="m21 21-4.35-4.35" />
+                </svg>
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={handleSearchChange}
+                  onFocus={() => setShowSearchDropdown(true)}
+                  onKeyDown={handleSearchSubmit}
+                  placeholder="Cari order, produk, user..."
+                  className="w-full pl-6 pr-3 py-2 text-sm bg-transparent border-b border-transparent focus:border-[#9a7d4a] outline-none transition-colors placeholder:text-[#8a8a8a]/70 text-[#1a1a1a]"
+                />
+                {searchLoading && (
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                    <div className="w-3 h-3 border border-[#9a7d4a] border-t-transparent rounded-full animate-spin" />
+                  </div>
+                )}
               </div>
-            )}
-          </div>
 
-          {/* UserMenu */}
-          <UserMenu variant="admin" />
+              {/* Search Dropdown */}
+              {showSearchDropdown && searchQuery.trim().length >= 2 && (
+                <div className="absolute top-full mt-2 left-0 right-0 bg-white border border-[#e8e4df] shadow-lg max-h-[400px] overflow-y-auto z-[2000]">
+                  {searchResults && (searchResults.orders.length > 0 || searchResults.products.length > 0 || searchResults.users.length > 0) ? (
+                    <div className="py-2">
+                      {/* Orders results */}
+                      {searchResults.orders.length > 0 && (
+                        <div>
+                          <p className="px-4 py-1.5 text-[0.6rem] font-medium text-[#9a7d4a] uppercase tracking-[0.15em]">Orders</p>
+                          {searchResults.orders.map((o) => (
+                            <Link
+                              key={o.id}
+                              to="/orders-admin"
+                              onClick={() => { setShowSearchDropdown(false); setSearchQuery(''); }}
+                              className="flex items-center justify-between px-4 py-2 hover:bg-[#f7f3ed] no-underline transition-colors"
+                            >
+                              <div className="min-w-0 flex-1">
+                                <p className="text-xs font-medium text-[#1a1a1a] truncate">
+                                  #{shortId(o.id)} · {o.customer?.name || 'Customer'}
+                                </p>
+                                <p className="text-[0.65rem] text-[#8a8a8a] mt-0.5">
+                                  {o.status} · {o.payment_status}
+                                </p>
+                              </div>
+                              <span className="text-xs font-semibold text-[#9a7d4a] flex-shrink-0 ml-2">
+                                Rp {(o.total_amount || 0).toLocaleString('id-ID')}
+                              </span>
+                            </Link>
+                          ))}
+                        </div>
+                      )}
+                      {/* Products results */}
+                      {searchResults.products.length > 0 && (
+                        <div>
+                          <p className="px-4 py-1.5 text-[0.6rem] font-medium text-[#9a7d4a] uppercase tracking-[0.15em] border-t border-[#e8e4df]">Produk</p>
+                          {searchResults.products.map((p) => (
+                            <Link
+                              key={p.id}
+                              to="/products-admin"
+                              onClick={() => { setShowSearchDropdown(false); setSearchQuery(''); }}
+                              className="flex items-center justify-between px-4 py-2 hover:bg-[#f7f3ed] no-underline transition-colors"
+                            >
+                              <span className="text-xs text-[#1a1a1a] truncate flex-1">{p.name}</span>
+                              <span className={`text-[0.6rem] px-2 py-0.5 flex-shrink-0 ml-2 ${p.is_active ? 'bg-[#9a7d4a]/10 text-[#9a7d4a]' : 'bg-[#f7f3ed] text-[#8a8a8a]'}`}>
+                                {p.is_active ? 'Aktif' : 'Nonaktif'}
+                              </span>
+                            </Link>
+                          ))}
+                        </div>
+                      )}
+                      {/* Users results (admin only) */}
+                      {isAdmin && searchResults.users.length > 0 && (
+                        <div>
+                          <p className="px-4 py-1.5 text-[0.6rem] font-medium text-[#9a7d4a] uppercase tracking-[0.15em] border-t border-[#e8e4df]">User</p>
+                          {searchResults.users.map((u) => (
+                            <Link
+                              key={u.id}
+                              to="/users-admin"
+                              onClick={() => { setShowSearchDropdown(false); setSearchQuery(''); }}
+                              className="flex items-center justify-between px-4 py-2 hover:bg-[#f7f3ed] no-underline transition-colors"
+                            >
+                              <div className="min-w-0 flex-1">
+                                <p className="text-xs font-medium text-[#1a1a1a] truncate">{u.full_name || u.email}</p>
+                                <p className="text-[0.65rem] text-[#8a8a8a] truncate">{u.email}</p>
+                              </div>
+                              <span className="text-[0.6rem] px-2 py-0.5 bg-[#f7f3ed] text-[#3a3944] flex-shrink-0 ml-2 capitalize">{u.role}</span>
+                            </Link>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ) : !searchLoading ? (
+                    <div className="py-8 text-center">
+                      <p className="text-xs text-[#8a8a8a]">Tidak ada hasil untuk "{searchQuery}"</p>
+                    </div>
+                  ) : null}
+                </div>
+              )}
+            </div>
+
+            {/* === Right-side group: Notif + UserMenu (dipush ke kanan, align dengan container) === */}
+            <div className="ml-auto flex items-center gap-2">
+              {/* Notification Bell — original theme (gray + red badge) */}
+              <div ref={notifRef} className="relative">
+                <button
+                  onClick={() => setShowNotifDropdown(!showNotifDropdown)}
+                  className="relative p-2 rounded-lg hover:bg-gray-100 cursor-pointer border-none bg-transparent transition-colors"
+                  aria-label="Notifikasi"
+                >
+                  <svg className="w-5 h-5 text-gray-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                    <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+                    <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+                  </svg>
+                  {notifCount > 0 && (
+                    <span className="absolute top-0 right-0 w-4 h-4 bg-red-500 text-white text-[0.6rem] font-bold rounded-full flex items-center justify-center">
+                      {notifCount > 9 ? '9+' : notifCount}
+                    </span>
+                  )}
+                </button>
+
+                {/* Notification Dropdown — original theme */}
+                {showNotifDropdown && (
+                  <div className="absolute top-full mt-1 right-0 w-80 bg-white border border-gray-200 rounded-lg shadow-xl max-h-[400px] overflow-y-auto z-[2000]">
+                    <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+                      <h3 className="text-sm font-bold text-gray-900">Notifikasi</h3>
+                      {notifCount > 0 && (
+                        <span className="text-[0.65rem] text-gray-400">{notifCount} alert aktif</span>
+                      )}
+                    </div>
+                    <div className="py-2">
+                      {notifications.length === 0 ? (
+                        <div className="py-8 text-center">
+                          <p className="text-3xl mb-2">✅</p>
+                          <p className="text-xs text-gray-400">Semua aman, tidak ada alert.</p>
+                        </div>
+                      ) : (
+                        notifications.map((n) => (
+                          <Link
+                            key={n.id}
+                            to={n.href}
+                            onClick={() => setShowNotifDropdown(false)}
+                            className="flex items-start gap-3 px-4 py-2.5 hover:bg-gray-50 no-underline border-b border-gray-50 last:border-0 transition-colors"
+                          >
+                            <span className="text-base flex-shrink-0 mt-0.5">{n.icon}</span>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-xs font-semibold text-gray-900">{n.title}</p>
+                              <p className="text-[0.65rem] text-gray-400">{n.description}</p>
+                            </div>
+                          </Link>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* UserMenu */}
+              <UserMenu variant="admin" />
+            </div>
+          </div>
         </header>
 
-        {/* === Title Bar === */}
-        <div className="bg-white border-b border-gray-200">
-          <div className="px-4 md:px-6 py-3 flex items-center justify-between gap-4">
+        {/* === Title Bar — cream accent background, editorial typography === */}
+        <div className="bg-[#f7f3ed] border-b border-[#e8e4df]">
+          <div className="px-6 md:px-10 py-6 flex items-center justify-between gap-4">
             <div className="min-w-0">
-              <h1 className="text-base md:text-xl font-bold text-eglux-primary truncate">{title}</h1>
-              {subtitle && <p className="text-xs text-gray-500 hidden md:block">{subtitle}</p>}
+              <h1 className="text-xl md:text-2xl font-medium text-[#1a1a1a] truncate tracking-tight" style={{ fontFamily: "'Playfair Display', Georgia, serif" }}>{title}</h1>
+              {subtitle && <p className="text-[0.7rem] text-[#8a8a8a] mt-1 uppercase tracking-[0.15em] hidden md:block">{subtitle}</p>}
             </div>
-            {actions && <div className="flex gap-2 flex-shrink-0">{actions}</div>}
+            {actions && <div className="flex gap-3 flex-shrink-0">{actions}</div>}
           </div>
         </div>
 
-        {/* === Content === */}
-        <div className="px-4 md:px-6 py-6">
+        {/* === Content — generous whitespace === */}
+        <div className="px-6 md:px-10 py-8">
           {children}
         </div>
       </div>

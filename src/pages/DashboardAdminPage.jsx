@@ -469,7 +469,7 @@ const DashboardAdminPage = () => {
                 />
 
                 {/* Pendapatan Kotor highlight */}
-                <div className="bg-gradient-to-r from-eglux-primary to-gray-800 rounded-lg p-4 text-white mb-4">
+                <div className="bg-gradient-to-r from-eglux-primary to-eglux-secondary rounded-lg p-4 text-white mb-4">
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="text-[0.65rem] uppercase tracking-wider text-white/60">Pendapatan Kotor</p>
@@ -591,10 +591,10 @@ const DashboardAdminPage = () => {
                             );
                           })}
                           <div className="mt-4 pt-3 border-t border-gray-100">
-                            <div className="bg-gradient-to-r from-green-50 to-blue-50 rounded-lg p-2.5 text-center">
-                              <p className="text-[0.6rem] text-gray-500 uppercase">Overall Conversion Rate</p>
-                              <p className="text-lg font-bold text-green-700">{rates.overall || 0}%</p>
-                              <p className="text-[0.6rem] text-gray-400">dari {stages[0]?.count || 0} impressions → {stages[4]?.count || 0} paid orders</p>
+                            <div className="bg-gradient-to-r from-eglux-primary to-eglux-secondary rounded-lg p-2.5 text-center">
+                              <p className="text-[0.6rem] text-white/60 uppercase">Overall Conversion Rate</p>
+                              <p className="text-lg font-bold text-white">{rates.overall || 0}%</p>
+                              <p className="text-[0.6rem] text-white/60">dari {stages[0]?.count || 0} impressions → {stages[4]?.count || 0} paid orders</p>
                             </div>
                           </div>
                         </div>
@@ -608,7 +608,7 @@ const DashboardAdminPage = () => {
             {/* KPI Cards */}
             <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
               {isAdmin && canSee('dashboard_revenue') && (
-                <div className="bg-gradient-to-br from-eglux-primary to-gray-800 rounded-xl p-4 text-white relative overflow-hidden">
+                <div className="bg-gradient-to-br from-eglux-primary to-eglux-secondary rounded-xl p-4 text-white relative overflow-hidden">
                   <div className="flex items-start justify-between mb-1">
                     <div className="text-[0.65rem] uppercase tracking-wider text-white/60">💰 Revenue</div>
                     {data.kpis?.trends?.revenue !== null && data.kpis?.trends?.revenue !== undefined && (
@@ -871,21 +871,21 @@ const DashboardAdminPage = () => {
                   <span className="text-[0.6rem] text-gray-400">Estimasi fee Midtrans (MDR {data.finance.mdr_rate || 0.7}%)</span>
                 </div>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                  <div className="bg-gradient-to-br from-green-50 to-green-100/50 rounded-lg p-3">
-                    <p className="text-[0.6rem] text-gray-500 uppercase">Gross Revenue</p>
-                    <p className="text-base font-bold text-green-700">{rupiah(data.finance.gross_revenue)}</p>
-                    <p className="text-[0.6rem] text-gray-400 mt-0.5">{data.kpis?.paid_count || 0} transaksi</p>
+                  <div className="bg-gradient-to-br from-eglux-primary to-eglux-secondary rounded-lg p-3">
+                    <p className="text-[0.6rem] text-white uppercase">Gross Revenue</p>
+                    <p className="text-base font-bold text-white">{rupiah(data.finance.gross_revenue)}</p>
+                    <p className="text-[0.6rem] text-gray-300 mt-0.5">{data.kpis?.paid_count || 0} transaksi</p>
                   </div>
                   <div className="bg-blue-50 rounded-lg p-3">
-                    <p className="text-[0.6rem] text-gray-500 uppercase">Pajak Diterima</p>
+                    <p className="text-[0.6rem] text-eglux-white uppercase">Pajak Diterima</p>
                     <p className="text-base font-bold text-blue-700">{rupiah(data.finance.tax_collected)}</p>
                   </div>
                   <div className="bg-purple-50 rounded-lg p-3">
-                    <p className="text-[0.6rem] text-gray-500 uppercase">Ongkir Diterima</p>
+                    <p className="text-[0.6rem] text-eglux-white uppercase">Ongkir Diterima</p>
                     <p className="text-base font-bold text-purple-700">{rupiah(data.finance.shipping_collected)}</p>
                   </div>
                   <div className="bg-red-50 rounded-lg p-3">
-                    <p className="text-[0.6rem] text-gray-500 uppercase">Refund</p>
+                    <p className="text-[0.6rem] text-eglux-white uppercase">Refund</p>
                     <p className="text-base font-bold text-red-700">{rupiah(data.finance.refund_amount)}</p>
                     <p className="text-[0.6rem] text-gray-400 mt-0.5">{data.finance.refund_count || 0} order</p>
                   </div>
@@ -898,7 +898,7 @@ const DashboardAdminPage = () => {
                     <div className="flex justify-between"><span className="text-gray-500">Refund</span><span className="font-semibold text-red-600">-{rupiah(data.finance.refund_amount)}</span></div>
                   </div>
                 </div>
-                <div className="mt-4 bg-gradient-to-r from-eglux-primary to-gray-800 rounded-lg p-4 text-white">
+                <div className="mt-4 bg-gradient-to-r from-eglux-primary to-eglux-secondary rounded-lg p-4 text-white">
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="text-[0.65rem] uppercase tracking-wider text-white/60">Estimasi Net Income</p>
