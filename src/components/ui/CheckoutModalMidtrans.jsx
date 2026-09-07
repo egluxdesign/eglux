@@ -45,7 +45,6 @@ import { ensureSnapLoaded } from '../../hooks/useMidtransSnap';
 import VoucherClaimModal from './VoucherClaimModal';
 import CourierLogo from './CourierLogo';
 import useAppSettings from '../../hooks/useAppSettings';
-import { trackAddToCart } from '../../hooks/useConversionTracking';
 
 // Key untuk sessionStorage — sinyal agar parent page auto-buka checkout modal
 // setelah user berhasil login dari halaman /admin.
@@ -214,39 +213,6 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
   const [shippingOptions, setShippingOptions] = useState([]);
   const [shippingLoading, setShippingLoading] = useState(false);
   const [selectedShipping, setSelectedShipping] = useState(null);
-
-const checkoutTrackedRef = useRef(false);
-
-useEffect(() => {
-  if (!isOpen) {
-    checkoutTrackedRef.current = false;  // reset saat modal tutup
-    return;
-  }
-  if (checkoutTrackedRef.current) return;  // skip kalau sudah track
-  checkoutTrackedRef.current = true;
-
-  // ⭐ Stage 4: Track checkout view
-  try {
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      let sid = sessionStorage.getItem('eglux_session_id');
-      if (!sid) {
-        sid = 's_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
-        sessionStorage.setItem('eglux_session_id', sid);
-      }
-      supabase.from('page_views').insert({
-        user_id: user?.id || null,
-        session_id: sid,
-        page_path: '/checkout',
-        page_type: 'checkout',
-        product_id: null,
-        referrer: document.referrer || null,
-        user_agent: navigator.userAgent,
-      }).then(() => console.log('[funnel] checkout tracked'));
-    });
-  } catch (e) {
-    console.debug('[funnel] checkout failed:', e?.message);
-  }
-}, [isOpen]);
 
   // ============================================================================
   // AUTH: Pre-fill form dari profile + user_metadata saat user login
@@ -579,6 +545,15 @@ useEffect(() => {
   };
 
   // ===== Voucher validation =====
+  // ⭐ Pass cart_items ke validate-voucher supaya voucher tipe 'free_product'
+  //   bisa cek apakah SKU produk ada di cart (via variant_id lookup di edge function)
+  // Format: [{ variant_id: 'uuid', qty: 1 }, ...]
+  const buildCartItemsPayload = () =>
+    cart.map((item) => ({
+      variant_id: item.variantId,
+      qty: item.qty,
+    })).filter((item) => item.variant_id); // skip items tanpa variantId
+
   const handleApplyVoucher = async () => {
     if (!voucherCode.trim()) return;
     setVoucherLoading(true);
@@ -594,7 +569,11 @@ useEffect(() => {
       const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/validate-voucher`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code: voucherCode.trim(), subtotal: totalPrice }),
+        body: JSON.stringify({
+          code: voucherCode.trim(),
+          subtotal: totalPrice,
+          cart_items: buildCartItemsPayload(), // ⭐ NEW: pass cart items for free_product validation
+        }),
       });
       const result = await resp.json();
 
@@ -633,7 +612,11 @@ useEffect(() => {
       const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/validate-voucher`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code: voucher.code, subtotal: totalPrice }),
+        body: JSON.stringify({
+          code: voucher.code,
+          subtotal: totalPrice,
+          cart_items: buildCartItemsPayload(), // ⭐ NEW: pass cart items for free_product validation
+        }),
       });
       const result = await resp.json();
 

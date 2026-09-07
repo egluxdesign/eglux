@@ -1,12 +1,20 @@
 // src/pages/RewardsPage.jsx
 // ============================================================================
-// RewardsPage — Customer tukar poin dengan voucher belanja
+// RewardsPage — Customer tukar poin dengan voucher belanja / produk gratis
 // ============================================================================
 // Flow:
 //   1. User login (wajib)
-//   2. Lihat balance poin + katalog rewards
+//   2. Lihat balance poin + katalog rewards (voucher + produk gratis)
 //   3. Klik "Tukar" → call redeem-points edge function
-//   4. Dapat voucher code → bisa dipakai di checkout (expire 90 hari)
+//   4. Untuk voucher (fixed/percentage/free_shipping): dapat voucher code → pakai di checkout
+//      Untuk free_product: dapat voucher code → tambah SKU ke cart + apply voucher di checkout
+// ============================================================================
+//
+// Reward types:
+//   - 'fixed'         → Potongan Rp X (voucher code)
+//   - 'percentage'     → Potongan X% (voucher code)
+//   - 'free_shipping' → Gratis ongkir (voucher code)
+//   - 'free_product'  → Produk gratis (voucher code, but requires SKU in cart)
 // ============================================================================
 
 import { useState, useEffect, useCallback } from 'react';
@@ -41,7 +49,7 @@ const RewardsPage = () => {
         supabase.from('point_rewards').select('*').eq('is_active', true).order('points_cost', { ascending: true }),
         supabase.from('point_redemptions').select(`
           id, voucher_code, status, points_spent, created_at, expires_at,
-          reward:point_rewards(name)
+          reward:point_rewards(name, discount_type, product_sku)
         `).eq('user_id', user.id).order('created_at', { ascending: false }).limit(10),
       ]);
 
@@ -64,7 +72,12 @@ const RewardsPage = () => {
       return;
     }
 
-    if (!confirm(`Tukar ${reward.points_cost} poin untuk "${reward.name}"?\n\nVoucher berlaku 90 hari.`)) return;
+    const isFreeProduct = reward.discount_type === 'free_product';
+    const confirmMsg = isFreeProduct
+      ? `Tukar ${reward.points_cost} poin untuk voucher produk gratis "${reward.name}"?\n\nCara pakai:\n1. Setelah redeem, Anda dapat voucher code\n2. Tambahkan produk (SKU: ${reward.product_sku}) ke cart\n3. Apply voucher di checkout — harga produk jadi Rp 0 (cukup bayar ongkir)\n\nVoucher berlaku 1 tahun.`
+      : `Tukar ${reward.points_cost} poin untuk "${reward.name}"?\n\nVoucher berlaku 90 hari.`;
+
+    if (!confirm(confirmMsg)) return;
 
     setRedeeming(reward.id);
     try {
@@ -84,7 +97,11 @@ const RewardsPage = () => {
       const result = await resp.json();
 
       if (result.success) {
-        showToast(`✅ Berhasil! Voucher: ${result.voucher_code}`, 'success');
+        if (isFreeProduct) {
+          showToast(`✅ Berhasil! Voucher: ${result.voucher_code}. Tambahkan produk ${reward.product_sku} ke cart lalu apply voucher.`, 'success');
+        } else {
+          showToast(`✅ Berhasil! Voucher: ${result.voucher_code}`, 'success');
+        }
         fetchData(); // refresh balance + redemptions
       } else {
         showToast(result.error || 'Gagal redeem poin', 'error');
@@ -113,11 +130,29 @@ const RewardsPage = () => {
     );
   }
 
+  // Format discount display berdasarkan tipe reward
   const formatDiscount = (reward) => {
     if (reward.discount_type === 'fixed') return `Rp ${reward.discount_value.toLocaleString('id-ID')}`;
     if (reward.discount_type === 'percentage') return `${reward.discount_value}%`;
     if (reward.discount_type === 'free_shipping') return 'Free Shipping';
+    if (reward.discount_type === 'free_product') return 'Produk Gratis';
     return '-';
+  };
+
+  // Subtitle di bawah discount value
+  const formatDiscountSubtitle = (reward) => {
+    if (reward.discount_type === 'fixed') return 'Potongan langsung';
+    if (reward.discount_type === 'percentage') return 'Dari total belanja';
+    if (reward.discount_type === 'free_shipping') return 'Gratis ongkir 1x';
+    if (reward.discount_type === 'free_product') return reward.product_sku ? `SKU: ${reward.product_sku}` : 'Produk pilihan';
+    return '';
+  };
+
+  // Format min purchase — hide untuk free_product (no min) atau 0
+  const formatMinPurchase = (reward) => {
+    if (reward.discount_type === 'free_product') return null;
+    if (!reward.min_purchase || reward.min_purchase === 0) return null;
+    return `Min. belanja: Rp ${reward.min_purchase.toLocaleString('id-ID')}`;
   };
 
   return (
@@ -143,7 +178,7 @@ const RewardsPage = () => {
         </div>
 
         {/* Rewards Catalog */}
-        <h2 className="text-base font-bold text-eglux-primary mb-4">Tukar Poin dengan Voucher</h2>
+        <h2 className="text-base font-bold text-eglux-primary mb-4">Tukar Poin dengan Voucher / Produk</h2>
 
         {loading ? (
           <div className="flex justify-center py-12">
@@ -158,27 +193,39 @@ const RewardsPage = () => {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
             {rewards.map((reward) => {
               const canAfford = balance >= reward.points_cost;
+              const isFreeProduct = reward.discount_type === 'free_product';
+              const minPurchaseLabel = formatMinPurchase(reward);
+
               return (
                 <div
                   key={reward.id}
                   className={`bg-white border rounded-xl p-5 transition-all ${
-                    canAfford ? 'border-eglux-secondary/30 hover:shadow-lg hover:border-eglux-secondary' : 'border-gray-200 opacity-70'
+                    canAfford
+                      ? isFreeProduct
+                        ? 'border-amber-300 hover:shadow-lg hover:border-amber-400'  // product reward — amber accent
+                        : 'border-eglux-secondary/30 hover:shadow-lg hover:border-eglux-secondary'
+                      : 'border-gray-200 opacity-70'
                   }`}
                 >
-                  {/* Discount Value */}
+                  {/* Discount Value — free_product pakai badge khusus */}
                   <div className="text-center mb-3">
-                    <p className="text-2xl font-bold text-eglux-secondary">
-                      {formatDiscount(reward)}
+                    {isFreeProduct ? (
+                      <>
+                        <div className="inline-block bg-amber-100 text-amber-700 text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider mb-2">
+                          🎁 Produk Gratis
+                        </div>
+                        <p className="text-lg font-bold text-amber-700">
+                          {reward.product_sku || 'Produk Pilihan'}
+                        </p>
+                      </>
+                    ) : (
+                      <p className="text-2xl font-bold text-eglux-secondary">
+                        {formatDiscount(reward)}
+                      </p>
+                    )}
+                    <p className="text-xs text-gray-400 mt-1">
+                      {formatDiscountSubtitle(reward)}
                     </p>
-                    {reward.discount_type === 'fixed' && (
-                      <p className="text-xs text-gray-400">Potongan langsung</p>
-                    )}
-                    {reward.discount_type === 'percentage' && (
-                      <p className="text-xs text-gray-400">Dari total belanja</p>
-                    )}
-                    {reward.discount_type === 'free_shipping' && (
-                      <p className="text-xs text-gray-400">Gratis ongkir 1x</p>
-                    )}
                   </div>
 
                   {/* Name + Description */}
@@ -194,14 +241,21 @@ const RewardsPage = () => {
                       <path d="M15.477 12.89 17 22l-5-3-5 3 1.523-9.11" />
                     </svg>
                     <span className={`text-sm font-bold ${canAfford ? 'text-amber-600' : 'text-gray-400'}`}>
-                      {reward.points_cost} poin
+                      {reward.points_cost.toLocaleString('id-ID')} poin
                     </span>
                   </div>
 
                   {/* Min Purchase Info */}
-                  <p className="text-[0.65rem] text-gray-400 text-center mb-3">
-                    Min. belanja: Rp {reward.min_purchase.toLocaleString('id-ID')}
-                  </p>
+                  {minPurchaseLabel && (
+                    <p className="text-[0.65rem] text-gray-400 text-center mb-3">
+                      {minPurchaseLabel}
+                    </p>
+                  )}
+                  {!minPurchaseLabel && isFreeProduct && (
+                    <p className="text-[0.65rem] text-amber-500 text-center mb-3 italic">
+                      Tanpa minimum belanja (cukup bayar ongkir)
+                    </p>
+                  )}
 
                   {/* Redeem Button */}
                   <button
@@ -209,7 +263,9 @@ const RewardsPage = () => {
                     disabled={!canAfford || redeeming === reward.id}
                     className={`w-full py-2.5 rounded-lg text-xs font-bold transition-all cursor-pointer border-none ${
                       canAfford
-                        ? 'bg-eglux-secondary text-white hover:opacity-90 disabled:opacity-60'
+                        ? isFreeProduct
+                          ? 'bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-60'  // product — amber button
+                          : 'bg-eglux-secondary text-white hover:opacity-90 disabled:opacity-60'  // voucher — gold button
                         : 'bg-gray-100 text-gray-400 cursor-not-allowed'
                     }`}
                   >
@@ -221,33 +277,42 @@ const RewardsPage = () => {
           </div>
         )}
 
-        {/* Voucher History */}
+        {/* Redemption History */}
         {redemptions.length > 0 && (
           <div>
-            <h2 className="text-base font-bold text-eglux-primary mb-3">Voucher Saya</h2>
+            <h2 className="text-base font-bold text-eglux-primary mb-3">Riwayat Penukaran</h2>
             <div className="space-y-3">
-              {redemptions.map((r) => (
-                <div key={r.id} className="bg-white border border-gray-200 rounded-lg p-4 flex items-center justify-between gap-3">
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium text-eglux-primary">
-                      {r.reward?.name || 'Voucher'}
-                    </p>
-                    <p className="text-xs text-gray-500">
-                      Code: <span className="font-mono font-semibold text-eglux-secondary">{r.voucher_code}</span>
-                    </p>
-                    <p className="text-[0.7rem] text-gray-400">
-                      {r.points_spent} poin · Expire: {new Date(r.expires_at).toLocaleDateString('id-ID')}
-                    </p>
+              {redemptions.map((r) => {
+                const isFreeProduct = r.reward?.discount_type === 'free_product';
+                const productSku = r.reward?.product_sku;
+                return (
+                  <div key={r.id} className="bg-white border border-gray-200 rounded-lg p-4 flex items-center justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-eglux-primary">
+                        {r.reward?.name || 'Reward'}
+                      </p>
+                      <p className="text-xs text-gray-500">
+                        Voucher: <span className={`font-mono font-semibold ${isFreeProduct ? 'text-amber-600' : 'text-eglux-secondary'}`}>{r.voucher_code}</span>
+                      </p>
+                      <p className="text-[0.7rem] text-gray-400">
+                        {r.points_spent.toLocaleString('id-ID')} poin · Expire: {new Date(r.expires_at).toLocaleDateString('id-ID')}
+                      </p>
+                      {isFreeProduct && productSku && (
+                        <p className="text-[0.7rem] text-amber-600 italic mt-1">
+                          💡 Cara pakai: tambahkan produk (SKU: {productSku}) ke cart → apply voucher
+                        </p>
+                      )}
+                    </div>
+                    <span className={`inline-block px-2 py-0.5 rounded-full text-[0.65rem] font-semibold border whitespace-nowrap ${
+                      r.status === 'active' ? 'bg-green-50 text-green-700 border-green-200'
+                      : r.status === 'used' ? 'bg-gray-100 text-gray-500 border-gray-200'
+                      : 'bg-red-50 text-red-700 border-red-200'
+                    }`}>
+                      {r.status === 'active' ? 'Aktif' : r.status === 'used' ? 'Sudah Dipakai' : 'Expired'}
+                    </span>
                   </div>
-                  <span className={`inline-block px-2 py-0.5 rounded-full text-[0.65rem] font-semibold border whitespace-nowrap ${
-                    r.status === 'active' ? 'bg-green-50 text-green-700 border-green-200'
-                    : r.status === 'used' ? 'bg-gray-100 text-gray-500 border-gray-200'
-                    : 'bg-red-50 text-red-700 border-red-200'
-                  }`}>
-                    {r.status === 'active' ? 'Aktif' : r.status === 'used' ? 'Sudah Dipakai' : 'Expired'}
-                  </span>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}
