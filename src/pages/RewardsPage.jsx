@@ -38,6 +38,7 @@ const RewardsPage = () => {
   const [redemptions, setRedemptions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [redeeming, setRedeeming] = useState(null);
+  const [filterStatus, setFilterStatus] = useState('active'); // 'active' | 'used' | 'all'
 
   // Fetch balance + rewards + redemptions
   const fetchData = useCallback(async () => {
@@ -113,6 +114,20 @@ const RewardsPage = () => {
     }
   };
 
+  // ⭐ "Pakai Sekarang" — set voucher preselection + open cart
+  // Voucher code disimpan di sessionStorage, lalu user dibawa ke cart/checkout.
+  // CheckoutModalMidtrans akan auto-apply voucher saat dibuka.
+  const handleUseVoucherNow = (voucherCode) => {
+    try {
+      sessionStorage.setItem('eglux_preselect_voucher', voucherCode);
+    } catch (e) {
+      console.warn('[Rewards] Failed to set preselect voucher in sessionStorage:', e);
+    }
+    // Open cart drawer — user bisa lanjut ke checkout dari sana
+    openCart();
+    showToast(`Voucher ${voucherCode} siap dipakai. Lanjut ke checkout.`, 'success');
+  };
+
   // Login required
   if (!user) {
     return (
@@ -169,7 +184,7 @@ const RewardsPage = () => {
         </div>
 
         {/* Balance Card */}
-        <div className="bg-gradient-to-r from-eglux-primary to-gray-800 rounded-2xl p-6 mb-8 text-white">
+        <div className="bg-gradient-to-r from-eglux-primary to-eglux-secondary rounded-2xl p-6 mb-8 text-white">
           <p className="text-[0.7rem] uppercase tracking-wider text-white/60 mb-1">Saldo Poin Anda</p>
           <p className="text-4xl font-bold mb-2">
             {loading ? '...' : balance.toLocaleString('id-ID')} <span className="text-lg font-normal text-white/60">poin</span>
@@ -277,43 +292,158 @@ const RewardsPage = () => {
           </div>
         )}
 
-        {/* Redemption History */}
+        {/* Redemption History — enhanced with filter + card style + Pakai Sekarang button */}
         {redemptions.length > 0 && (
           <div>
-            <h2 className="text-base font-bold text-eglux-primary mb-3">Riwayat Penukaran</h2>
-            <div className="space-y-3">
-              {redemptions.map((r) => {
-                const isFreeProduct = r.reward?.discount_type === 'free_product';
-                const productSku = r.reward?.product_sku;
+            <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
+              <h2 className="text-base font-bold text-eglux-primary">Riwayat Penukaran</h2>
+              {/* Filter buttons */}
+              <div className="flex gap-1.5 text-xs">
+                {[
+                  { value: 'active', label: 'Aktif' },
+                  { value: 'used', label: 'Sudah Dipakai' },
+                  { value: 'all', label: 'Semua' },
+                ].map((opt) => (
+                  <button
+                    key={opt.value}
+                    onClick={() => setFilterStatus(opt.value)}
+                    className={`px-3 py-1.5 rounded-md font-medium transition-all cursor-pointer border ${
+                      filterStatus === opt.value
+                        ? 'bg-eglux-primary text-white border-eglux-primary'
+                        : 'bg-white text-gray-600 border-gray-200 hover:border-eglux-secondary'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {(() => {
+              // Filter redemptions based on selected filterStatus
+              const filtered = redemptions.filter((r) => {
+                if (filterStatus === 'all') return true;
+                if (filterStatus === 'active') return r.status === 'active';
+                if (filterStatus === 'used') return r.status === 'used';
+                return true;
+              });
+
+              if (filtered.length === 0) {
                 return (
-                  <div key={r.id} className="bg-white border border-gray-200 rounded-lg p-4 flex items-center justify-between gap-3">
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium text-eglux-primary">
-                        {r.reward?.name || 'Reward'}
-                      </p>
-                      <p className="text-xs text-gray-500">
-                        Voucher: <span className={`font-mono font-semibold ${isFreeProduct ? 'text-amber-600' : 'text-eglux-secondary'}`}>{r.voucher_code}</span>
-                      </p>
-                      <p className="text-[0.7rem] text-gray-400">
-                        {r.points_spent.toLocaleString('id-ID')} poin · Expire: {new Date(r.expires_at).toLocaleDateString('id-ID')}
-                      </p>
-                      {isFreeProduct && productSku && (
-                        <p className="text-[0.7rem] text-amber-600 italic mt-1">
-                          💡 Cara pakai: tambahkan produk (SKU: {productSku}) ke cart → apply voucher
-                        </p>
-                      )}
-                    </div>
-                    <span className={`inline-block px-2 py-0.5 rounded-full text-[0.65rem] font-semibold border whitespace-nowrap ${
-                      r.status === 'active' ? 'bg-green-50 text-green-700 border-green-200'
-                      : r.status === 'used' ? 'bg-gray-100 text-gray-500 border-gray-200'
-                      : 'bg-red-50 text-red-700 border-red-200'
-                    }`}>
-                      {r.status === 'active' ? 'Aktif' : r.status === 'used' ? 'Sudah Dipakai' : 'Expired'}
-                    </span>
+                  <div className="bg-white border border-gray-200 rounded-lg p-8 text-center">
+                    <div className="text-3xl mb-2">📭</div>
+                    <p className="text-sm text-gray-500">
+                      {filterStatus === 'active' ? 'Tidak ada voucher aktif saat ini.' :
+                       filterStatus === 'used' ? 'Belum ada voucher yang sudah dipakai.' :
+                       'Belum ada riwayat penukaran.'}
+                    </p>
                   </div>
                 );
-              })}
-            </div>
+              }
+
+              return (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {filtered.map((r) => {
+                    const isFreeProduct = r.reward?.discount_type === 'free_product';
+                    const productSku = r.reward?.product_sku;
+                    const isActive = r.status === 'active';
+                    const isUsed = r.status === 'used';
+                    const expireDate = new Date(r.expires_at);
+                    const isExpired = expireDate < new Date();
+                    const daysLeft = Math.ceil((expireDate - new Date()) / (1000 * 60 * 60 * 24));
+
+                    return (
+                      <div
+                        key={r.id}
+                        className={`bg-white border-2 rounded-xl p-4 transition-all ${
+                          isActive
+                            ? isFreeProduct
+                              ? 'border-amber-300 hover:shadow-md'
+                              : 'border-eglux-secondary/30 hover:shadow-md'
+                            : isUsed
+                              ? 'border-gray-200 opacity-75'
+                              : 'border-gray-200 opacity-50'
+                        }`}
+                      >
+                        {/* Header: badge + status */}
+                        <div className="flex items-start justify-between gap-2 mb-2">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1.5 mb-1">
+                              <span className={`text-[0.6rem] font-bold px-1.5 py-0.5 rounded uppercase tracking-wide ${
+                                isFreeProduct ? 'bg-amber-100 text-amber-700' : 'bg-eglux-accent text-eglux-secondary'
+                              }`}>
+                                {isFreeProduct ? '🎁 Produk Gratis' : '🎟️ Voucher'}
+                              </span>
+                              {isActive && !isExpired && (
+                                <span className="text-[0.6rem] font-bold px-1.5 py-0.5 rounded bg-green-50 text-green-700 border border-green-200">
+                                  Aktif
+                                </span>
+                              )}
+                              {isUsed && (
+                                <span className="text-[0.6rem] font-bold px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 border border-gray-200">
+                                  Sudah Dipakai
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-sm font-semibold text-eglux-primary truncate">
+                              {r.reward?.name || 'Reward'}
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Voucher code — prominent display */}
+                        <div className="bg-eglux-accent/30 border border-dashed border-eglux-secondary/40 rounded-md px-3 py-2 mb-2">
+                          <p className="text-[0.6rem] text-gray-500 uppercase tracking-wide mb-0.5">Kode Voucher</p>
+                          <p className={`font-mono font-bold tracking-wide ${isFreeProduct ? 'text-amber-600' : 'text-eglux-secondary'}`}>
+                            {r.voucher_code}
+                          </p>
+                        </div>
+
+                        {/* Meta info */}
+                        <p className="text-[0.7rem] text-gray-500 mb-1">
+                          {r.points_spent.toLocaleString('id-ID')} poin ditukar
+                        </p>
+                        <p className="text-[0.7rem] text-gray-400 mb-2">
+                          Expire: {expireDate.toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })}
+                          {isActive && !isExpired && daysLeft <= 30 && daysLeft > 0 && (
+                            <span className="text-amber-600 font-medium ml-1">({daysLeft} hari lagi)</span>
+                          )}
+                        </p>
+
+                        {/* Free product usage hint */}
+                        {isFreeProduct && productSku && (
+                          <p className="text-[0.7rem] text-amber-600 italic mb-2">
+                            💡 Tambahkan produk (SKU: {productSku}) ke cart lalu apply voucher
+                          </p>
+                        )}
+
+                        {/* Action buttons */}
+                        {isActive && !isExpired && (
+                          <button
+                            onClick={() => handleUseVoucherNow(r.voucher_code)}
+                            className={`w-full py-2 rounded-md text-xs font-bold transition-all cursor-pointer border-none ${
+                              isFreeProduct
+                                ? 'bg-amber-500 text-white hover:bg-amber-600'
+                                : 'bg-eglux-primary text-white hover:opacity-90'
+                            }`}
+                          >
+                            Pakai Sekarang →
+                          </button>
+                        )}
+                        {isUsed && (
+                          <button
+                            disabled
+                            className="w-full py-2 rounded-md text-xs font-bold cursor-not-allowed border-none bg-gray-100 text-gray-400"
+                          >
+                            ✓ Sudah Dipakai
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
           </div>
         )}
       </div>

@@ -1,9 +1,9 @@
 // supabase/functions/submit-review/index.ts
 // ============================================================================
-// submit-review — Customer submit review untuk produk yang sudah dibeli
+// submit-review — Customer submit / edit review untuk produk yang sudah dibeli
 // ============================================================================
 //
-// Cara panggil:
+// Cara panggil (INSERT baru):
 //   POST /functions/v1/submit-review
 //   Headers: Authorization: Bearer <jwt>
 //   Body: {
@@ -15,18 +15,36 @@
 //     images?: string[]  // array of public URLs (max 5)
 //   }
 //
-// Flow:
-//   1. Verify JWT + ambil user.id
-//   2. Verify user benar-benar beli produk ini di order ini (cek order_items)
-//   3. Verify order status = 'delivered' atau 'completed' (harus sudah sampai)
-//   4. Cek apakah user sudah pernah review produk ini untuk order ini (1 review per product per order)
-//   5. Insert review (is_verified = true otomatis karena verified purchase)
-//   6. Return success
+// Cara panggil (EDIT existing review):
+//   POST /functions/v1/submit-review
+//   Headers: Authorization: Bearer <jwt>
+//   Body: {
+//     review_id: UUID,  // ⭐ ID review yang mau di-edit
+//     product_id: UUID,  // ⭐ tetap required (untuk verification)
+//     order_id: UUID,   // ⭐ tetap required (untuk verification)
+//     rating: number (1-5),
+//     title?: string,
+//     comment?: string,
+//     images?: string[]
+//   }
 //
-// Security:
-//   - User hanya bisa review produk yang dia beli
-//   - Order harus status delivered/completed
-//   - 1 review per (user, product, order)
+// Flow INSERT (review_id not provided):
+//   1. Verify JWT + ambil user.id
+//   2. Verify user beli produk ini di order ini (cek order_items)
+//   3. Verify order status = 'delivered' atau 'completed'
+//   4. Cek apakah user sudah pernah review (unique constraint)
+//   5. Insert review (is_verified=true, is_published=true)
+//   6. ⭐ Trigger DB auto-award +5 poin via SQL trigger (SQL 072)
+//      — edge function gak perlu handle poin award manual
+//   7. Return success
+//
+// Flow EDIT (review_id provided):
+//   1. Verify JWT + ambil user.id
+//   2. Fetch existing review, verify user_id matches (RLS check)
+//   3. Verify user beli produk ini di order ini (defensive)
+//   4. UPDATE review fields (rating, title, comment, images)
+//   5. ⭐ NO poin award (cuma INSERT baru yang dapet bonus)
+//   6. Return success
 // ============================================================================
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
@@ -50,9 +68,17 @@ serve(async (req: Request) => {
     const userId = authResult.user!.id;
 
     const body = await req.json().catch(() => ({}));
-    const { product_id, order_id, rating, title, comment, images } = body;
+    const {
+      review_id,           // ⭐ NEW: kalau provided → edit mode; kalau absent → insert baru
+      product_id,
+      order_id,
+      rating,
+      title,
+      comment,
+      images,
+    } = body;
 
-    // ── Validate inputs ──
+    // ── Validate inputs (shared by insert + edit) ──
     if (!product_id || !order_id) {
       return json({ error: "product_id dan order_id wajib diisi" }, 400);
     }
@@ -112,7 +138,68 @@ serve(async (req: Request) => {
       }, 400);
     }
 
-    // ── 4. Cek apakah sudah pernah review ──
+    // ─────────────────────────────────────────────────────────────────────
+    // ⭐ BRANCH: EDIT MODE (review_id provided)
+    // ─────────────────────────────────────────────────────────────────────
+    if (review_id) {
+      // Fetch existing review
+      const { data: existingReview, error: fetchErr } = await supabase
+        .from("product_reviews")
+        .select("id, user_id, product_id, order_id")
+        .eq("id", review_id)
+        .maybeSingle();
+
+      if (fetchErr || !existingReview) {
+        return json({ error: "Review tidak ditemukan" }, 404);
+      }
+
+      // Verify ownership: only review owner can edit
+      if (existingReview.user_id !== userId) {
+        return json({ error: "Anda tidak punya akses untuk edit review ini" }, 403);
+      }
+
+      // Verify review belongs to the claimed product + order (defensive)
+      if (existingReview.product_id !== product_id || existingReview.order_id !== order_id) {
+        return json({ error: "Review tidak match dengan product/order yang diberikan" }, 400);
+      }
+
+      // Build update payload (only update mutable fields)
+      const updateData: Record<string, unknown> = {
+        rating: Math.round(rating),
+        updated_at: new Date().toISOString(),
+      };
+      if (title !== undefined) updateData.title = typeof title === "string" ? title.trim() : null;
+      if (comment !== undefined) updateData.comment = typeof comment === "string" ? comment.trim() : null;
+      if (images !== undefined && Array.isArray(images)) {
+        updateData.images = images.slice(0, MAX_IMAGES);
+      }
+
+      const { data: updatedReview, error: updateErr } = await supabase
+        .from("product_reviews")
+        .update(updateData)
+        .eq("id", review_id)
+        .select("id, rating, title, comment, images, is_verified, is_published, created_at, updated_at")
+        .single();
+
+      if (updateErr) {
+        console.error("[submit-review] Edit update error:", updateErr);
+        return json({ error: "Gagal update review", details: updateErr.message }, 500);
+      }
+
+      console.log(`[submit-review] ✓ Review ${review_id} edited by user ${userId} (NO points awarded — edit mode)`);
+      return json({
+        success: true,
+        message: "Review berhasil diupdate",
+        review: updatedReview,
+        is_edit: true,
+        points_awarded: 0,  // ⭐ explicit: edit gak dapet poin
+      });
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // ⭐ BRANCH: INSERT MODE (review_id not provided) — original flow
+    // ─────────────────────────────────────────────────────────────────────
+    // 4. Cek apakah sudah pernah review ──
     const { data: existingReview } = await supabase
       .from("product_reviews")
       .select("id")
@@ -122,10 +209,13 @@ serve(async (req: Request) => {
       .maybeSingle();
 
     if (existingReview) {
-      return json({ error: "Anda sudah pernah review produk ini untuk order ini" }, 400);
+      return json({
+        error: "Anda sudah pernah review produk ini untuk order ini. Gunakan mode edit untuk update review.",
+        existing_review_id: existingReview.id,
+      }, 400);
     }
 
-    // ── 5. Insert review ──
+    // 5. Insert review ──
     const reviewData: any = {
       product_id,
       user_id: userId,
@@ -143,7 +233,7 @@ serve(async (req: Request) => {
     const { data: newReview, error: insertErr } = await supabase
       .from("product_reviews")
       .insert(reviewData)
-      .select("id, rating, title, comment, is_verified, is_published, created_at")
+      .select("id, rating, title, comment, images, is_verified, is_published, created_at")
       .single();
 
     if (insertErr) {
@@ -151,21 +241,29 @@ serve(async (req: Request) => {
       return json({ error: "Gagal menyimpan review", details: insertErr.message }, 500);
     }
 
-    // ── 6. Log activity (jika admin) ──
+    // ⭐ 6. Auto-award +5 poin via SQL trigger (SQL 072)
+    //    Trigger fires AFTER INSERT on product_reviews → call add_points RPC
+    //    Edge function gak perlu handle poin award manual (lebih robust:
+    //    trigger fires even kalau insert via SQL editor atau direct DB)
+    console.log(`[submit-review] ✓ Review inserted (id: ${newReview.id}) — SQL trigger will award +5 points to user ${userId}`);
+
+    // ── 7. Log activity (jika admin) ──
     try {
       await supabase.rpc("log_admin_activity", {
         p_action: "review_submit",
         p_page: `/products/${product_id}`,
         p_description: `Submit review ${rating}★ untuk produk ${product_id.slice(0, 8)}`,
-        p_metadata: { product_id, order_id, rating },
+        p_metadata: { product_id, order_id, rating, review_id: newReview.id },
       });
     } catch {}
 
     console.log(`[submit-review] ✓ Review submitted by user ${userId} for product ${product_id}`);
     return json({
       success: true,
-      message: "Review berhasil dikirim. Terima kasih!",
+      message: "Review berhasil dikirim. +5 poin bonus telah ditambahkan ke akun Anda!",
       review: newReview,
+      is_edit: false,
+      points_awarded: 5,  // ⭐ info for frontend (actual award via trigger)
     });
   } catch (e) {
     console.error("[submit-review] Error:", e);

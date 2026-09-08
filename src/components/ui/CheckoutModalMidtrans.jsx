@@ -198,6 +198,12 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
   const [appliedVoucher, setAppliedVoucher] = useState(null);
   const [showVoucherClaimModal, setShowVoucherClaimModal] = useState(false);
 
+  // ⭐ My Vouchers dropdown state (Shopee-style voucher picker)
+  const [myVouchers, setMyVouchers] = useState([]);
+  const [myVouchersOpen, setMyVouchersOpen] = useState(false);
+  const [myVouchersLoading, setMyVouchersLoading] = useState(false);
+  const myVouchersRef = useRef(null);
+
   // Phone country selector state
   const [selectedCountry, setSelectedCountry] = useState(DEFAULT_COUNTRY);
   const [countryDropdownOpen, setCountryDropdownOpen] = useState(false);
@@ -597,6 +603,100 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
     setVoucherDiscount(0);
     setVoucherError('');
     setAppliedVoucher(null);
+  };
+
+  // ⭐ Fetch user's vouchers (dari voucher_claims + point_redemptions) for dropdown picker
+  const fetchMyVouchers = useCallback(async () => {
+    setMyVouchersLoading(true);
+    try {
+      const token = (await supabase.auth.getSession()).data?.session?.access_token;
+      if (!token) { return; }
+
+      const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/get-user-vouchers`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const result = await resp.json();
+      if (result.success) {
+        setMyVouchers(result.vouchers || []);
+      }
+    } catch (e) {
+      console.warn('[Checkout] fetchMyVouchers error:', e?.message);
+    } finally {
+      setMyVouchersLoading(false);
+    }
+  }, []);
+
+  // Toggle dropdown + auto-fetch kalau belum ada data
+  const toggleMyVouchers = () => {
+    if (!myVouchersOpen && myVouchers.length === 0 && !myVouchersLoading) {
+      fetchMyVouchers();
+    }
+    setMyVouchersOpen((open) => !open);
+  };
+
+  // Click outside handler untuk close dropdown
+  useEffect(() => {
+    const handler = (e) => {
+      if (myVouchersRef.current && !myVouchersRef.current.contains(e.target)) {
+        setMyVouchersOpen(false);
+      }
+    };
+    document.addEventListener('click', handler);
+    return () => document.removeEventListener('click', handler);
+  }, []);
+
+  // Format voucher display untuk dropdown (label + value preview)
+  const formatVoucherPreview = (v) => {
+    if (v.discount_type === 'fixed') return `Diskon ${rupiah(v.discount_value)}`;
+    if (v.discount_type === 'percentage') return `Diskon ${v.discount_value}%`;
+    if (v.discount_type === 'free_shipping') return 'Gratis Ongkir';
+    if (v.discount_type === 'free_product') return `Produk Gratis: ${v.product_sku || ''}`;
+    return 'Voucher';
+  };
+
+  // Format min purchase untuk dropdown hint
+  const formatMinPurchaseHint = (v) => {
+    if (v.discount_type === 'free_product') return 'Tanpa min. belanja';
+    if (!v.min_purchase || v.min_purchase === 0) return 'Tanpa min. belanja';
+    return `Min. ${rupiah(v.min_purchase)}`;
+  };
+
+  // Apply voucher yang dipilih dari dropdown (auto-call validate-voucher)
+  const applyVoucherFromList = async (voucher) => {
+    setMyVouchersOpen(false);
+    setVoucherCode(voucher.code);
+    setVoucherError('');
+    setVoucherLoading(true);
+
+    try {
+      const token = (await supabase.auth.getSession()).data?.session?.access_token;
+      if (!token) { setVoucherError('Sesi login habis'); return; }
+
+      const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/validate-voucher`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          code: voucher.code,
+          subtotal: totalPrice,
+          cart_items: buildCartItemsPayload(),
+        }),
+      });
+      const result = await resp.json();
+
+      if (result.valid) {
+        setVoucherValid(true);
+        setVoucherDiscount(result.discount_amount);
+        setAppliedVoucher(result.voucher);
+      } else {
+        setVoucherError(result.error || 'Voucher tidak valid');
+      }
+    } catch (e) {
+      setVoucherError('Gagal validasi: ' + e.message);
+    } finally {
+      setVoucherLoading(false);
+    }
   };
 
   // ⭐ Auto-apply voucher dari VoucherClaimModal (langsung pilih, gak perlu input code)
@@ -1120,7 +1220,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
                 onClick={() => setShowVoucherClaimModal(true)}
                 className="text-[0.72rem] font-semibold text-eglux-secondary hover:underline cursor-pointer border-none bg-transparent"
               >
-                Lihat Voucher Saya →
+                Klaim Voucher Lainnya →
               </button>
             </div>
             {voucherValid ? (
@@ -1135,21 +1235,95 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
                 <button onClick={handleRemoveVoucher} className="text-xs text-red-500 hover:underline cursor-pointer border-none bg-transparent">Hapus</button>
               </div>
             ) : (
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={voucherCode}
-                  onChange={(e) => { setVoucherCode(e.target.value); setVoucherError(''); }}
-                  placeholder="Masukkan kode voucher"
-                  className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md uppercase"
-                />
-                <button
-                  onClick={handleApplyVoucher}
-                  disabled={voucherLoading || !voucherCode.trim()}
-                  className="px-4 py-2 text-sm font-semibold text-white bg-eglux-primary rounded-md hover:opacity-90 disabled:opacity-50 cursor-pointer border-none"
-                >
-                  {voucherLoading ? '⏳' : 'Terapkan'}
-                </button>
+              <div className="space-y-2">
+                {/* ⭐ Voucher Picker Dropdown (Shopee-style) — pilih dari voucher yang user punya */}
+                <div ref={myVouchersRef} className="relative">
+                  <button
+                    type="button"
+                    onClick={toggleMyVouchers}
+                    className="w-full flex items-center justify-between px-3 py-2 text-sm border border-eglux-secondary/40 bg-eglux-accent/30 rounded-md hover:border-eglux-secondary cursor-pointer border-solid"
+                  >
+                    <span className="flex items-center gap-1.5 text-eglux-primary">
+                      <svg className="w-4 h-4 text-eglux-secondary" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/><path d="M13 5v2"/><path d="M13 17v2"/><path d="M13 11v2"/></svg>
+                      <span className="font-medium">
+                        {myVouchersLoading ? 'Memuat voucher...' :
+                         myVouchers.length > 0 ? `Pilih dari ${myVouchers.length} voucher saya` :
+                         'Lihat voucher saya'}
+                      </span>
+                    </span>
+                    <svg className={`w-4 h-4 text-eglux-secondary transition-transform ${myVouchersOpen ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 12 15 18 9" /></svg>
+                  </button>
+
+                  {myVouchersOpen && (
+                    <div className="absolute z-30 top-full mt-1 left-0 right-0 bg-white border border-gray-200 rounded-md shadow-lg max-h-[280px] overflow-y-auto">
+                      {myVouchersLoading ? (
+                        <div className="py-6 text-center text-xs text-gray-500">⏳ Memuat voucher...</div>
+                      ) : myVouchers.length === 0 ? (
+                        <div className="py-6 px-3 text-center">
+                          <p className="text-xs text-gray-500 mb-2">Belum ada voucher aktif.</p>
+                          <button
+                            type="button"
+                            onClick={() => { setMyVouchersOpen(false); setShowVoucherClaimModal(true); }}
+                            className="text-xs text-eglux-secondary font-semibold hover:underline cursor-pointer border-none bg-transparent"
+                          >
+                            Klaim voucher sekarang →
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="py-1">
+                          {myVouchers.map((v) => {
+                            const meetsMinPurchase = !v.min_purchase || v.min_purchase === 0 || totalPrice >= v.min_purchase;
+                            return (
+                              <button
+                                key={v.id}
+                                type="button"
+                                onClick={() => meetsMinPurchase && applyVoucherFromList(v)}
+                                disabled={!meetsMinPurchase}
+                                className={`w-full text-left px-3 py-2 hover:bg-eglux-accent/30 cursor-pointer border-none bg-transparent transition-colors ${!meetsMinPurchase ? 'opacity-50 cursor-not-allowed' : ''}`}
+                              >
+                                <div className="flex items-start justify-between gap-2">
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-xs font-semibold text-eglux-primary truncate">
+                                      {formatVoucherPreview(v)}
+                                    </p>
+                                    <p className="text-[0.7rem] text-gray-500 truncate">{v.name}</p>
+                                    <p className="text-[0.65rem] text-gray-400 mt-0.5">
+                                      {formatMinPurchaseHint(v)} · Exp {new Date(v.expires_at).toLocaleDateString('id-ID', { day: '2-digit', month: 'short' })}
+                                    </p>
+                                    {!meetsMinPurchase && (
+                                      <p className="text-[0.65rem] text-amber-600 mt-0.5">⚠ Belum mencapai min. belanja</p>
+                                    )}
+                                  </div>
+                                  <span className="text-[0.6rem] font-bold text-white bg-eglux-secondary px-2 py-0.5 rounded flex-shrink-0 self-center uppercase tracking-wide">
+                                    {v.source === 'redeem' ? 'Poin' : 'Eglux'}
+                                  </span>
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Manual input (fallback) */}
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={voucherCode}
+                    onChange={(e) => { setVoucherCode(e.target.value); setVoucherError(''); }}
+                    placeholder="Atau masukkan kode voucher"
+                    className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md uppercase"
+                  />
+                  <button
+                    onClick={handleApplyVoucher}
+                    disabled={voucherLoading || !voucherCode.trim()}
+                    className="px-4 py-2 text-sm font-semibold text-white bg-eglux-primary rounded-md hover:opacity-90 disabled:opacity-50 cursor-pointer border-none"
+                  >
+                    {voucherLoading ? '⏳' : 'Terapkan'}
+                  </button>
+                </div>
               </div>
             )}
             {voucherError && (

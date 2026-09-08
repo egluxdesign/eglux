@@ -154,17 +154,60 @@ serve(async (req: Request) => {
     const deliveredOrders = allOrders.filter((o: any) => o.status === "delivered" || o.status === "completed");
     const shippingRate = deliveredOrders.length > 0 ? 100 : 0;
 
-    // Order Pipeline (computed from allOrders — no DB query needed)
-    // ⭐ Added 'return' & 'refund' buckets untuk Phase 1.4
-    const pipeline = {
-      pending: allOrders.filter((o: any) => o.status === "pending").length,
-      paid: allOrders.filter((o: any) => o.status === "processing" && o.payment_status === "paid" && !o.biteship_order_id).length,
-      processing: allOrders.filter((o: any) => o.status === "processing").length,
-      shipped: allOrders.filter((o: any) => o.status === "shipped").length,
+    // Order Pipeline — SPLIT jadi 2 sections (Opsi 1):
+    //   1. pipeline_active: orders yang masih aktif (perlu admin attention)
+    //      NO date filter — count all active orders regardless kapan dibuat
+    //      karena admin perlu lihat SEMUA order yang masih perlu di-action
+    //   2. pipeline_history: orders yang sudah final (context only)
+    //      WITH date_range filter — supaya gak akumulasi terus
+    //
+    // ⭐ Implementation:
+    //   - allOrders = orders in date_range (existing query result)
+    //   - Untuk pipeline_active, kita perlu query tambahan tanpa date filter
+    //     ATAU bisa pakai trick: count dari allOrders + orders yang created sebelum
+    //     date range tapi masih active (cross-window orders)
+    //
+    // ⭐ Approach yang dipakai: query tambahan untuk active orders
+    //    (cuma ambil id + status, lightweight)
+    const { data: activeOrders, error: activeErr } = await supabase
+      .from("orders")
+      .select("id, status, payment_status, biteship_order_id")
+      .in("status", ["pending", "processing", "shipped"])
+      .order("created_at", { ascending: false });
+
+    if (activeErr) console.warn("[get-dashboard-data] active orders query error:", activeErr.message);
+    const allActiveOrders = activeOrders || [];
+
+    const pipeline_active = {
+      pending: allActiveOrders.filter((o: any) => o.status === "pending").length,
+      processing: allActiveOrders.filter((o: any) => o.status === "processing").length,
+      shipped: allActiveOrders.filter((o: any) => o.status === "shipped").length,
+      // Sub-count untuk "paid tapi belum di-buatkan Biteship order" (perlu admin action)
+      paid_unfulfilled: allActiveOrders.filter(
+        (o: any) => o.status === "processing" && o.payment_status === "paid" && !o.biteship_order_id
+      ).length,
+    };
+
+    // Historical — pakai allOrders (yang udah filtered by date_range)
+    const pipeline_history = {
       delivered: deliveredOrders.length,
       return: allOrders.filter((o: any) => o.status === "return").length,
       refund: allOrders.filter((o: any) => o.status === "refund").length,
       cancelled: allOrders.filter((o: any) => o.status === "cancelled" || o.status === "expired").length,
+    };
+
+    // ⭐ BACKWARD COMPATIBILITY: tetap expose `pipeline` object dengan shape lama
+    //    supaya frontend lama yang gak di-update gak break (cumak hybrid: active count
+    //    ambil dari allActiveOrders, history dari allOrders)
+    const pipeline = {
+      pending: pipeline_active.pending,
+      paid: pipeline_active.paid_unfulfilled,
+      processing: pipeline_active.processing,
+      shipped: pipeline_active.shipped,
+      delivered: pipeline_history.delivered,
+      return: pipeline_history.return,
+      refund: pipeline_history.refund,
+      cancelled: pipeline_history.cancelled,
     };
 
     // Revenue chart data (computed from paidOrders — no DB query needed)
@@ -233,7 +276,7 @@ serve(async (req: Request) => {
       // ⭐ Phase 1.1: Product page views (lebih spesifik untuk conversion)
       supabase.from("page_views").select("*", { count: "exact", head: true }).eq("page_type", "product").gte("created_at", from).lte("created_at", to),
       // ⭐ Phase 2.1: Active vouchers (marketing center)
-      supabase.from("vouchers").select("id, code, discount_type, discount_value, is_active, end_at").eq("is_active", true).order("end_at", { ascending: true }).limit(5),
+      supabase.from("vouchers").select("id, code, discount_type, discount_value, is_active, valid_until").eq("is_active", true).order("valid_until", { ascending: true }).limit(5),
       // ⭐ Phase 2.1: Active point rewards (marketing center)
       supabase.from("point_rewards").select("id, name, points_cost, is_active").eq("is_active", true).order("points_cost", { ascending: true }).limit(5),
     ]);
@@ -565,7 +608,9 @@ serve(async (req: Request) => {
         shipping_delays: shippingDelays || [],
         shipping_delays_count: shippingDelays?.length || 0,
       },
-      order_pipeline: pipeline,
+      order_pipeline: pipeline,           // ⭐ backward compat (hybrid: active + history)
+      pipeline_active: pipeline_active,   // ⭐ NEW: active orders only (no date filter)
+      pipeline_history: pipeline_history, // ⭐ NEW: history orders only (with date_range)
       revenue_chart: revenueChart,
       top_products: topProducts,
       recent_activity: recentActivity,

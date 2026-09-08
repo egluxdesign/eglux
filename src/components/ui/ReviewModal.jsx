@@ -1,9 +1,9 @@
 // src/components/ui/ReviewModal.jsx
 // ============================================================================
-// ReviewModal — Customer submit review untuk produk yang sudah dibeli
+// ReviewModal — Customer submit / edit review untuk produk yang sudah dibeli
 // ============================================================================
 //
-// Cara pakai:
+// Cara pakai (INSERT baru):
 //   import ReviewModal from '../components/ui/ReviewModal';
 //
 //   <ReviewModal
@@ -14,9 +14,24 @@
 //     orderId={order.id}
 //     onSuccess={() => { /* refresh order list, etc */ }}
 //   />
+//
+// Cara pakai (EDIT existing review):
+//   <ReviewModal
+//     isOpen={showEditModal}
+//     onClose={() => setShowEditModal(false)}
+//     productId={product.id}
+//     productName={product.name}
+//     orderId={order.id}
+//     reviewId={existingReview.id}        // ⭐ ID review yang mau di-edit
+//     initialRating={existingReview.rating}
+//     initialTitle={existingReview.title}
+//     initialComment={existingReview.comment}
+//     initialImages={existingReview.images}
+//     onSuccess={() => { /* refresh */ }}
+//   />
 // ============================================================================
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../lib/supabaseClient';
 
@@ -47,15 +62,43 @@ const StarRating = ({ value, onChange, size = 'text-3xl' }) => {
   );
 };
 
-const ReviewModal = ({ isOpen, onClose, productId, productName, orderId, onSuccess }) => {
+const ReviewModal = ({
+  isOpen,
+  onClose,
+  productId,
+  productName,
+  orderId,
+  // ⭐ NEW: Edit mode props (optional)
+  reviewId,              // kalau provided → edit mode
+  initialRating = 0,
+  initialTitle = '',
+  initialComment = '',
+  initialImages = [],
+  onSuccess,
+}) => {
   const { user } = useAuth();
-  const [rating, setRating] = useState(0);
-  const [title, setTitle] = useState('');
-  const [comment, setComment] = useState('');
-  const [images, setImages] = useState([]);
+  const isEditMode = Boolean(reviewId);
+
+  const [rating, setRating] = useState(initialRating);
+  const [title, setTitle] = useState(initialTitle);
+  const [comment, setComment] = useState(initialComment);
+  const [images, setImages] = useState(initialImages);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
+
+  // ⭐ Sync state saat props change (kalau modal di-reuse untuk edit review berbeda)
+  useEffect(() => {
+    if (isOpen) {
+      setRating(initialRating);
+      setTitle(initialTitle);
+      setComment(initialComment);
+      setImages(initialImages);
+      setError('');
+      setSuccess(false);
+      setSubmitting(false);
+    }
+  }, [isOpen, reviewId, initialRating, initialTitle, initialComment, initialImages]);
 
   const handleSubmit = useCallback(async () => {
     setError('');
@@ -91,6 +134,8 @@ const ReviewModal = ({ isOpen, onClose, productId, productName, orderId, onSucce
         body: JSON.stringify({
           product_id: productId,
           order_id: orderId,
+          // ⭐ Include review_id kalau edit mode
+          ...(isEditMode ? { review_id: reviewId } : {}),
           rating,
           title: title.trim() || undefined,
           comment: comment.trim() || undefined,
@@ -104,7 +149,7 @@ const ReviewModal = ({ isOpen, onClose, productId, productName, orderId, onSucce
       }
 
       setSuccess(true);
-      if (onSuccess) onSuccess(result.review);
+      if (onSuccess) onSuccess(result.review, result.is_edit, result.points_awarded);
 
       // Auto close after 2s
       setTimeout(() => {
@@ -115,13 +160,13 @@ const ReviewModal = ({ isOpen, onClose, productId, productName, orderId, onSucce
     } finally {
       setSubmitting(false);
     }
-  }, [rating, title, comment, images, productId, orderId, onSuccess]);
+  }, [rating, title, comment, images, productId, orderId, reviewId, isEditMode, onSuccess]);
 
   const handleClose = () => {
-    setRating(0);
-    setTitle('');
-    setComment('');
-    setImages([]);
+    setRating(initialRating);
+    setTitle(initialTitle);
+    setComment(initialComment);
+    setImages(initialImages);
     setError('');
     setSuccess(false);
     setSubmitting(false);
@@ -139,7 +184,10 @@ const ReviewModal = ({ isOpen, onClose, productId, productName, orderId, onSucce
         {/* Header */}
         <div className="px-6 pt-6 pb-4 border-b border-gray-100 flex items-center justify-between">
           <h2 className="text-lg font-bold text-eglux-primary">
-            {success ? '✅ Review Terkirim' : '⭐ Tulis Review'}
+            {success
+              ? (isEditMode ? '✅ Review Diperbarui' : '✅ Review Terkirim')
+              : (isEditMode ? '✏️ Edit Review' : '⭐ Tulis Review')
+            }
           </h2>
           <button
             onClick={handleClose}
@@ -152,9 +200,16 @@ const ReviewModal = ({ isOpen, onClose, productId, productName, orderId, onSucce
         <div className="px-6 py-5 space-y-4">
           {success ? (
             <div className="text-center py-8">
-              <div className="text-5xl mb-3">🎉</div>
-              <p className="text-sm font-semibold text-gray-900 mb-1">Terima kasih atas review Anda!</p>
-              <p className="text-xs text-gray-500">Review Anda membantu customer lain membuat keputusan belanja.</p>
+              <div className="text-5xl mb-3">{isEditMode ? '👍' : '🎉'}</div>
+              <p className="text-sm font-semibold text-gray-900 mb-1">
+                {isEditMode ? 'Review Anda telah diperbarui!' : 'Terima kasih atas review Anda!'}
+              </p>
+              <p className="text-xs text-gray-500">
+                {isEditMode
+                  ? 'Perubahan Anda sudah tersimpan.'
+                  : '+5 poin bonus telah ditambahkan ke akun Anda. Review Anda membantu customer lain membuat keputusan belanja.'
+                }
+              </p>
             </div>
           ) : (
             <>
@@ -171,7 +226,7 @@ const ReviewModal = ({ isOpen, onClose, productId, productName, orderId, onSucce
                 </div>
               )}
 
-              {/* Star rating */}
+              {/* Rating */}
               <div>
                 <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">
                   Rating <span className="text-red-500">*</span>
@@ -226,6 +281,17 @@ const ReviewModal = ({ isOpen, onClose, productId, productName, orderId, onSucce
                   <strong>Verified Purchase</strong> — Review Anda akan ditandai sebagai pembelian terverifikasi.
                 </p>
               </div>
+
+              {/* Edit mode notice */}
+              {isEditMode && (
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-2.5 flex items-center gap-2">
+                  <span className="text-blue-600">ℹ️</span>
+                  <p className="text-xs text-blue-700">
+                    Anda sedang <strong>edit review</strong> yang sudah pernah dikirim.
+                    Poin bonus hanya diberikan saat submit review baru (sudah Anda dapatkan sebelumnya).
+                  </p>
+                </div>
+              )}
             </>
           )}
         </div>
@@ -247,13 +313,12 @@ const ReviewModal = ({ isOpen, onClose, productId, productName, orderId, onSucce
             >
               {submitting ? (
                 <>
-                  <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                  </svg>
+                  <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin inline-block" />
                   Mengirim...
                 </>
-              ) : 'Kirim Review'}
+              ) : (
+                isEditMode ? 'Update Review' : 'Kirim Review'
+              )}
             </button>
           </div>
         )}

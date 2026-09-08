@@ -124,9 +124,18 @@ serve(async (req: Request) => {
       // ⭐ Filter: hide voucher yang:
       //   1. Sudah dipakai user ini (ada di voucher_usages) — tidak bisa dipakai lagi
       //   2. Quota total sudah habis (remaining <= 0)
+      //   3. DUPLICATE rows di voucher_claims (defensive — kalau unique index blm ada/lewat)
       const filteredVouchers = [];
+      const seenVoucherIds = new Set(); // ⭐ dedupe by voucher_id
       for (const claim of activeVouchers) {
         const v = claim.voucher;
+
+        // ⭐ Dedupe: skip kalau voucher_id sudah pernah di-process (defensive
+        //    kalau voucher_claims punya multiple rows untuk voucher+user yang sama)
+        if (seenVoucherIds.has(v.id)) {
+          continue;
+        }
+        seenVoucherIds.add(v.id);
 
         // Skip kalau user sudah pakai voucher ini
         if (usedVoucherIds.has(v.id)) {

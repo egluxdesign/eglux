@@ -12,7 +12,7 @@
 //
 // Update orders table:
 //   - biteship_status       (camelCase: confirmed, allocated, pickingUp, picked, inTransit, dst.)
-//   - status                (EGLUX internal: processing, shipping, completed, cancelled)
+//   - status                (EGLUX internal: processing, shipped, completed, cancelled)
 //   - tracking_number       (nomor resi dari Biteship/kurir)
 //   - biteship_waybill_url  (URL PDF shipping label)
 //   - biteship_pickup_code  (kode pickup untuk verify courier)
@@ -73,10 +73,14 @@ function json(obj: unknown, status = 200) {
  *
  * Kita handle KEDUA format di sini supaya robust.
  *
- * EGLUX orders.status flow:
- *   pending → processing → shipping → completed
+ * EGLUX orders.status flow (per CHECK constraint orders_status_check):
+ *   pending → processing → shipped → delivered/completed
  *      ↓         ↓           ↓
  *   cancelled  cancelled  cancelled
+ *
+ * ⚠️ Valid status values (per SQL 057):
+ *   pending, processing, shipped, delivered, completed, cancelled, expired, return, refund
+ *   "shipping" BUKAN valid status — akan ditolak oleh CHECK constraint!
  */
 function mapBiteshipToEgluxStatus(biteshipStatus: string): string | null {
   // Normalize: convert snake_case ke camelCase sekali untuk matching
@@ -91,12 +95,12 @@ function mapBiteshipToEgluxStatus(biteshipStatus: string): string | null {
     case "allocated":
     case "pickingUp":
       return "processing";
-    // Pickup done, dalam perjalanan → shipping
+    // Pickup done, dalam perjalanan → shipped (BUKAN "shipping" — itu invalid status!)
     case "picked":
     case "inTransit":
     case "droppingOff":
     case "onHold":
-      return "shipping";
+      return "shipped";
     // Sampai tujuan → completed
     case "delivered":
       return "completed";

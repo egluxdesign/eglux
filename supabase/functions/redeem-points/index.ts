@@ -204,7 +204,7 @@ serve(async (req: Request) => {
       ? "fixed"  // free_shipping masih bisa pakai "fixed" di vouchers table, value=0
       : reward.discount_type;
 
-    const { error: voucherErr } = await supabase
+    const { data: voucherRecord, error: voucherErr } = await supabase
       .from("vouchers")
       .insert({
         code: code,
@@ -221,7 +221,9 @@ serve(async (req: Request) => {
         end_at: expiresAt,
         // ⭐ Set product_sku untuk free_product voucher (dipakai validate-voucher)
         ...(isFreeProduct ? { product_sku: reward.product_sku } : {}),
-      });
+      })
+      .select("id")
+      .single();
 
     if (voucherErr) {
       console.warn("[redeem-points] Insert to vouchers table failed (non-blocking):", voucherErr.message);
@@ -236,6 +238,23 @@ serve(async (req: Request) => {
           error: "Gagal membuat voucher produk. Poin Anda tidak terpotong. Coba lagi atau hubungi admin.",
           details: voucherErr.message,
         }, 500);
+      }
+    } else if (voucherRecord?.id) {
+      // ⭐ AUTO-INSERT ke voucher_claims supaya voucher langsung muncul di dropdown "My Vouchers"
+      // user di checkout (Shopee-style — gak perlu input code manual).
+      const { error: claimErr } = await supabase
+        .from("voucher_claims")
+        .insert({
+          voucher_id: voucherRecord.id,
+          user_id: userId,
+        });
+
+      if (claimErr) {
+        // Non-blocking — voucher tetap bisa dipakai via input code manual
+        // (unique constraint violation = sudah pernah di-claim, ignore aja)
+        console.warn("[redeem-points] Auto-insert to voucher_claims failed (non-blocking):", claimErr.message);
+      } else {
+        console.log(`[redeem-points] ✓ Voucher ${code} auto-claimed for user ${userId.slice(0, 8)} — appears in My Vouchers`);
       }
     }
 
@@ -255,9 +274,14 @@ serve(async (req: Request) => {
 
     if (rpcErr) {
       console.error("[redeem-points] Deduct points RPC error:", rpcErr.message);
-      // Rollback: delete redemption + voucher
+      // Rollback: delete redemption + voucher + claim
       await supabase.from("point_redemptions").delete().eq("id", redemption.id);
-      await supabase.from("vouchers").delete().eq("code", code);
+      if (voucherRecord?.id) {
+        await supabase.from("voucher_claims").delete().eq("voucher_id", voucherRecord.id).eq("user_id", userId);
+        await supabase.from("vouchers").delete().eq("id", voucherRecord.id);
+      } else {
+        await supabase.from("vouchers").delete().eq("code", code);
+      }
       return json({ error: "Gagal deduct poin", details: rpcErr.message }, 500);
     }
 
