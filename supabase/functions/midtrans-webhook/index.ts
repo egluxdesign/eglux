@@ -462,6 +462,7 @@ serve(async (req: Request) => {
   // Payment success → record voucher usage + trigger WABA notif + auto-create Biteship order
   if (isPaymentSuccess) {
     // ⭐ STEP 3.6: Record voucher usage (jika order pakai voucher)
+    // ⭐ + UPDATE point_redemptions.status='used' supaya gak muncul di "Aktif" di /rewards
     try {
       const { data: orderData } = await supabase
         .from("orders")
@@ -486,12 +487,46 @@ serve(async (req: Request) => {
             .maybeSingle();
 
           if (customer?.user_id) {
-            await supabase.from("voucher_usages").insert({
+            // ⭐ Idempotent insert: kalau voucher_usages untuk order_id sudah ada,
+            //    unique index (idx_voucher_usages_order) akan reject → gak duplicate.
+            //    Catch error, treat as success (already recorded).
+            const { error: usageErr } = await supabase.from("voucher_usages").insert({
               voucher_id: voucher.id,
               user_id: customer.user_id,
               order_id: order_id,
             });
-            console.log("[midtrans-webhook] ✓ Voucher usage recorded:", orderData.voucher_code);
+
+            if (usageErr) {
+              // 23505 = unique_violation — order_id already has usage record (idempotent)
+              if (usageErr.code === "23505") {
+                console.log("[midtrans-webhook] ℹ️ Voucher usage already recorded for order:", order_id, "(idempotent skip)");
+              } else {
+                console.warn("[midtrans-webhook] Voucher usage insert error:", usageErr.message);
+              }
+            } else {
+              console.log("[midtrans-webhook] ✓ Voucher usage recorded:", orderData.voucher_code);
+            }
+
+            // ⭐ NEW: Update point_redemptions status='used' kalau voucher_code match
+            //    (untuk voucher hasil redeem poin — supaya gak muncul "Aktif" di /rewards)
+            const { data: redemptionUpdate, error: redemptionErr } = await supabase
+              .from("point_redemptions")
+              .update({
+                status: "used",
+                used_in_order: order_id,
+              })
+              .eq("voucher_code", orderData.voucher_code)
+              .eq("status", "active")  // ⭐ only update yang masih active (idempotent)
+              .select("id, status, used_in_order");
+
+            if (redemptionErr) {
+              console.warn("[midtrans-webhook] Failed to update point_redemptions status:", redemptionErr.message);
+            } else if (redemptionUpdate && redemptionUpdate.length > 0) {
+              console.log(`[midtrans-webhook] ✓ Marked point_redemption as used: ${redemptionUpdate[0].id} (voucher ${orderData.voucher_code})`);
+            } else {
+              // Voucher bukan dari redeem poin (e.g., voucher umum dari admin) — no redemption to update
+              console.log("[midtrans-webhook] ℹ️ Voucher is not a point redemption — no point_redemptions update needed");
+            }
           }
         }
       }
