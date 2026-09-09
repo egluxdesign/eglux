@@ -955,6 +955,17 @@ const ProductCard = ({ product, onClick, formatPrice, compact, hideBadge }) => {
   const maxDiscountPercent = product?.maxDiscountPercent ?? 0;
   const hasDiscount = hasActiveDiscount && maxDiscountPercent > 0;
 
+  // ⭐ Rating + sold count
+  const avgRating = Number(product?.avgRating) || 0;
+  const reviewCount = Number(product?.reviewCount) || 0;
+  const soldCount = Number(product?.soldCount) || 0;
+
+  const formatSoldCount = (n) => {
+    if (n >= 1000000) return (n / 1000000).toFixed(1).replace('.0', '') + 'jt';
+    if (n >= 1000) return (n / 1000).toFixed(1).replace('.0', '') + 'rb';
+    return String(n);
+  };
+
   return (
     <article className="product-card group" onClick={onClick} role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && onClick()}>
       <div className={`product-card__image relative w-full overflow-hidden bg-[var(--eglux-accent)] rounded-xl md:rounded-2xl ${compact ? 'aspect-square' : 'aspect-[4/5]'}`}>
@@ -981,6 +992,28 @@ const ProductCard = ({ product, onClick, formatPrice, compact, hideBadge }) => {
               <span className="text-[0.7rem] md:text-[0.8rem] text-gray-400">Hubungi CS</span>
             )}
           </div>
+
+          {/* ⭐ Rating + Sold Count */}
+          {(reviewCount > 0 || soldCount > 0) && (
+            <div className="flex items-center gap-1.5 mt-1 text-[0.55rem] md:text-[0.65rem]">
+              {reviewCount > 0 && (
+                <div className="flex items-center gap-0.5">
+                  <span className="text-amber-500">
+                    {'★'.repeat(Math.round(avgRating))}
+                    <span className="text-gray-300">{'★'.repeat(5 - Math.round(avgRating))}</span>
+                  </span>
+                  <span className="font-semibold text-amber-600">{avgRating.toFixed(1)}</span>
+                  <span className="text-gray-400">({reviewCount})</span>
+                </div>
+              )}
+              {reviewCount > 0 && soldCount > 0 && (
+                <span className="text-gray-300">·</span>
+              )}
+              {soldCount > 0 && (
+                <span className="text-gray-500">{formatSoldCount(soldCount)} terjual</span>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </article>

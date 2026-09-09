@@ -1,32 +1,72 @@
 // src/components/ui/ProductCardFull.jsx
 // ============================================================================
-// [v3] Shopee/Tokopedia-style ProductCardFull — match ProductModal v4
+// [v3.1] Shopee/Tokopedia-style + defensive coding + debug logging
 // ============================================================================
-// Changes from v2:
-//   - Strike through base price (gray, small)
-//   - Show minVariantPrice (large, gold/bold)
-//   - Show discount % badge (red) if minVariantPrice < base
-//   - "Mulai dari" label kecil di atas
-//   - Remove "Buy Now" (replaced with price block)
-//   - "Hubungi CS" fallback if no active variant
+// Defensive: kalau minVariantPrice/hasActiveVariant undefined (props not passed),
+// compute di tempat dari product.variants. Fallback ke base price kalau no variants.
+//
+// Debug: console.log product data di dev mode untuk troubleshooting.
 // ============================================================================
 
 import CartIcon from './CartIcon';
 
-// Format rupiah — fallback kalau rupiah dari CartContext belum di-import
 const formatRupiah = (amount) => {
   if (!amount && amount !== 0) return '—';
   return 'Rp ' + Math.round(amount).toLocaleString('id-ID');
 };
 
 const ProductCardFull = ({ product, onOpenModal }) => {
-  const { name, category, badge, desc, image, price, minVariantPrice, hasActiveVariant } = product;
+  // Defensive: kalau useProducts v2 belum deploy, compute minVariantPrice di tempat
+  const variants = product?.variants || [];
+  const activeVariants = variants.filter((v) => v.is_active);
+  const variantPrices = activeVariants
+    .map((v) => Number(v.price))
+    .filter((p) => p > 0);
 
-  // Compute discount percentage
-  const hasDiscount = hasActiveVariant && minVariantPrice && price > minVariantPrice;
+  // Gunakan dari props (useProducts v2) ATAU compute di tempat (defensive)
+  const minVariantPrice = product?.minVariantPrice ??
+    (variantPrices.length > 0 ? Math.min(...variantPrices) : null);
+  const hasActiveVariant = product?.hasActiveVariant ?? activeVariants.length > 0;
+
+  const { name, category, badge, desc, image } = product;
+  const basePrice = Number(product?.price) || Number(product?.base_price) || 0;
+
+  // Compute discount
+  const hasDiscount = hasActiveVariant && minVariantPrice && basePrice > minVariantPrice;
   const discountPercent = hasDiscount
-    ? Math.round(((price - minVariantPrice) / price) * 100)
+    ? Math.round(((basePrice - minVariantPrice) / basePrice) * 100)
     : 0;
+
+  // ⭐ NEW: Review stats + sold count dari useProducts
+  const avgRating = Number(product?.avgRating) || 0;
+  const reviewCount = Number(product?.reviewCount) || 0;
+  const soldCount = Number(product?.soldCount) || 0;
+
+  // Format sold count untuk compact display (e.g., 1500 → "1.5rb", 1200000 → "1.2jt")
+  const formatSoldCount = (n) => {
+    if (n >= 1000000) return (n / 1000000).toFixed(1).replace('.0', '') + 'jt';
+    if (n >= 1000) return (n / 1000).toFixed(1).replace('.0', '') + 'rb';
+    return String(n);
+  };
+
+  // Format rating untuk display (e.g., 4.5, 4.0 → "4.5", "4.0")
+  const formatRating = (r) => r.toFixed(1);
+
+  // Debug logging (remove setelah production)
+  if (typeof window !== 'undefined' && import.meta.env?.DEV) {
+    console.log('[ProductCardFull]', name, {
+      basePrice,
+      minVariantPrice,
+      hasActiveVariant,
+      hasDiscount,
+      discountPercent,
+      variantCount: variants.length,
+      activeVariantCount: activeVariants.length,
+      avgRating,
+      reviewCount,
+      soldCount,
+    });
+  }
 
   return (
     <article
@@ -48,7 +88,6 @@ const ProductCardFull = ({ product, onOpenModal }) => {
           loading="lazy"
         />
 
-        {/* Badge (Best Seller / Baru) — top left */}
         {badge && (
           <span className="absolute top-4 left-4 bg-eglux-secondary text-white
                            text-[0.75rem] font-semibold py-1 px-3 rounded-full">
@@ -56,7 +95,6 @@ const ProductCardFull = ({ product, onOpenModal }) => {
           </span>
         )}
 
-        {/* Discount % badge — top right (only if ada diskon) */}
         {hasDiscount && (
           <span className="absolute top-4 right-4 bg-red-500 text-white
                            text-[0.72rem] font-bold py-1 px-2 rounded-full shadow-sm">
@@ -72,36 +110,65 @@ const ProductCardFull = ({ product, onOpenModal }) => {
         </h4>
         <p className="text-[0.85rem] text-[#666] mb-3 uppercase tracking-[0.5px]">{category}</p>
 
-        {/* === PRICE BLOCK (Shopee/Tokopedia pattern, match ProductModal v4) === */}
-        <div className="mb-3">
+        {/* === PRICE BLOCK === */}
+        <div className="mb-2">
           {hasActiveVariant && minVariantPrice ? (
             <>
-              {/* "Mulai dari" label */}
-              {/* <p className="text-[0.65rem] text-[#999] uppercase tracking-[0.5px] mb-1">
+              <p className="text-[0.65rem] text-[#999] uppercase tracking-[0.5px] mb-1">
                 Mulai dari
-              </p> */}
-
-              {/* Strike base + min variant price + discount inline */}
+              </p>
               <div className="flex items-baseline gap-2 flex-wrap">
-                {/* Strike through base price (gray, small) — only if variant < base */}
                 {hasDiscount && (
                   <span className="text-[0.78rem] text-[#999] line-through">
-                    {formatRupiah(price)}
+                    {formatRupiah(basePrice)}
                   </span>
                 )}
-                {/* Min variant price (large, gold/bold) */}
                 <span className="text-[1.15rem] font-bold text-eglux-secondary">
                   {formatRupiah(minVariantPrice)}
                 </span>
               </div>
             </>
+          ) : basePrice > 0 ? (
+            /* Defensive fallback: tampilkan base price kalau no active variant */
+            <span className="text-[1.1rem] font-bold text-eglux-secondary">
+              {formatRupiah(basePrice)}
+            </span>
           ) : (
-            /* Fallback: no active variant */
             <p className="text-[0.95rem] font-semibold text-[#999]">
               Hubungi CS
             </p>
           )}
         </div>
+
+        {/* ⭐ NEW: Rating + Sold Count (compact, inline) */}
+        {/* Hanya tampil kalau ada review ATAU sold > 0 */}
+        {(reviewCount > 0 || soldCount > 0) && (
+          <div className="flex items-center gap-2 mb-2 text-[0.72rem]">
+            {/* Rating stars + avg */}
+            {reviewCount > 0 && (
+              <div className="flex items-center gap-1">
+                <span className="text-amber-500" aria-label={`${formatRating(avgRating)} dari 5 bintang`}>
+                  {'★'.repeat(Math.round(avgRating))}
+                  <span className="text-gray-300">{'★'.repeat(5 - Math.round(avgRating))}</span>
+                </span>
+                <span className="font-semibold text-amber-600">{formatRating(avgRating)}</span>
+                <span className="text-[#999]">({reviewCount})</span>
+              </div>
+            )}
+
+            {/* Separator dot kalau both rating + sold ada */}
+            {reviewCount > 0 && soldCount > 0 && (
+              <span className="text-[#ccc]">·</span>
+            )}
+
+            {/* Sold count */}
+            {soldCount > 0 && (
+              <span className="text-[#666]">
+                {formatSoldCount(soldCount)} terjual
+              </span>
+            )}
+          </div>
+        )}
 
         {desc && (
           <p className="text-[0.9rem] text-[#666] leading-relaxed line-clamp-2">{desc}</p>

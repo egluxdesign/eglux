@@ -107,20 +107,37 @@ const useProducts = () => {
     if (isInitial) setLoading(true);
 
     try {
-      const { data, error: productsError } = await supabase
-        .from('products')
-        .select(`
-          id, name, slug, description, category, badge, is_active,
-          created_at, updated_at,
-          product_images ( id, url, position, is_primary, variant_id ),
-          product_variants (
-            id, name, attributes, price, stock, sku, is_active,
-            weight_in_gram, length_cm, width_cm, height_cm,
-            discount_type, discount_value, discount_start_at, discount_end_at
-          )
-        `)
-        .eq('is_active', true)
-        .order('updated_at', { ascending: false });
+      // ⭐ PARALLEL QUERY: products + review aggregates + sold counts
+      // (Single query dengan nested aggregate gak support di Supabase JS client,
+      //  jadi kita fetch 2 sources parallel + merge di frontend)
+      const [
+        { data, error: productsError },
+        { data: reviewAggData, error: reviewAggErr },
+        { data: soldData, error: soldErr },
+      ] = await Promise.all([
+        // Query 1: products + variants + images (existing)
+        supabase
+          .from('products')
+          .select(`
+            id, name, slug, description, category, badge, is_active,
+            created_at, updated_at,
+            product_images ( id, url, position, is_primary, variant_id ),
+            product_variants (
+              id, name, attributes, price, stock, sku, is_active,
+              weight_in_gram, length_cm, width_cm, height_cm,
+              discount_type, discount_value, discount_start_at, discount_end_at
+            )
+          `)
+          .eq('is_active', true)
+          .order('updated_at', { ascending: false }),
+
+        // Query 2: review aggregates per product (avg rating + count)
+        // Pakai RPC function untuk efisiensi (1 query, return all products)
+        supabase.rpc('get_product_review_stats'),
+
+        // Query 3: sold count per product (sum of order_items quantity for paid orders)
+        supabase.rpc('get_product_sold_counts'),
+      ]);
 
       if (productsError) {
         setError(productsError);
@@ -128,6 +145,24 @@ const useProducts = () => {
         isRefreshingRef.current = false;
         return;
       }
+
+      // Log non-blocking errors (data tetap di-shape, cuma review/sold info kosong)
+      if (reviewAggErr) console.warn('[useProducts] review stats fetch failed:', reviewAggErr.message);
+      if (soldErr) console.warn('[useProducts] sold counts fetch failed:', soldErr.message);
+
+      // Build maps untuk fast lookup
+      const reviewStatsMap = new Map();
+      (reviewAggData || []).forEach((r) => {
+        reviewStatsMap.set(r.product_id, {
+          avgRating: Number(r.avg_rating) || 0,
+          reviewCount: Number(r.review_count) || 0,
+        });
+      });
+
+      const soldCountMap = new Map();
+      (soldData || []).forEach((s) => {
+        soldCountMap.set(s.product_id, Number(s.total_sold) || 0);
+      });
 
       // Bentuk ulang data produk
       const shaped = data
@@ -163,6 +198,10 @@ const useProducts = () => {
             return priceA - priceB;
           });
 
+          // ⭐ Lookup review stats + sold count dari maps (fallback ke 0)
+          const reviewStats = reviewStatsMap.get(p.id) || { avgRating: 0, reviewCount: 0 };
+          const soldCount = soldCountMap.get(p.id) || 0;
+
           return {
             id:       p.id,
             name:     p.name,
@@ -181,6 +220,10 @@ const useProducts = () => {
             variantCount: allVariants.length,
             activeVariantCount: activeVariants.length,
             updated_at: p.updated_at,
+            // ⭐ NEW: review stats + sold count untuk ProductCard display
+            avgRating: reviewStats.avgRating,
+            reviewCount: reviewStats.reviewCount,
+            soldCount: soldCount,
           };
         })
         .filter((p) => p.hasActiveVariant);
@@ -200,7 +243,7 @@ const useProducts = () => {
       setFilterButtons(buttons);
       setLoading(false);
     } catch (e) {
-      console.error('[useProducts] refresh error:', e?.message);
+      console.error('[useProducts] refresh error:', e);
       if (isInitial) setLoading(false);
     } finally {
       isRefreshingRef.current = false;

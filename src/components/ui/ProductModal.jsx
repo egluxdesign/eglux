@@ -1,11 +1,6 @@
 // src/components/ui/ProductModal.jsx
 // ============================================================================
-// [v6.2] Fix arrow key navigation & cart scroll isolation
-// ============================================================================
-// Changes:
-//   - Removed Swiper Keyboard module (conflicted with window listener).
-//   - Window keydown now handles Left/Right with proper single-step logic.
-//   - Arrow Up/Down scrolls the modal content, not the background page.
+// [v7] ProductModal with Reviews — full rewrite
 // ============================================================================
 
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
@@ -21,9 +16,87 @@ const ProductModal = ({ product, onClose, onAddToCart }) => {
   const [qty, setQty] = useState(1);
   const [activeIndex, setActiveIndex] = useState(0);
   const [descOpen, setDescOpen] = useState(false);
+  const [reviewsOpen, setReviewsOpen] = useState(false);
   const swiperRef = useRef(null);
   const scrollContainerRef = useRef(null);
 
+  // ⭐ Review state
+  const [reviews, setReviews] = useState([]);
+  const [reviewsLoading, setReviewsLoading] = useState(false);
+
+  // ── Fetch published reviews untuk product ini ──
+  useEffect(() => {
+    if (!product?.id) {
+      setReviews([]);
+      return;
+    }
+    setReviewsLoading(true);
+
+    // Query 1: fetch reviews TANPA join profiles (avoid FK error)
+    supabase
+      .from('product_reviews')
+      .select('id, rating, title, comment, images, is_verified, created_at, user_id')
+      .eq('product_id', product.id)
+      .eq('is_published', true)
+      .order('created_at', { ascending: false })
+      .limit(50)
+      .then(async ({ data, error }) => {
+        if (error) {
+          console.warn('[ProductModal] fetch reviews error:', error.message);
+          setReviews([]);
+          setReviewsLoading(false);
+          return;
+        }
+
+        if (!data || data.length === 0) {
+          setReviews([]);
+          setReviewsLoading(false);
+          return;
+        }
+
+        // Query 2: fetch user names untuk reviews yang ada
+        const userIds = [...new Set(data.map((r) => r.user_id).filter(Boolean))];
+        if (userIds.length === 0) {
+          setReviews(data);
+          setReviewsLoading(false);
+          return;
+        }
+
+// Query 2: fetch user names + roles
+const { data: profilesData } = await supabase
+  .from('profiles')
+  .select('id, full_name, role')
+  .in('id', userIds);
+
+const profileMap = {};
+(profilesData || []).forEach((p) => {
+  profileMap[p.id] = { full_name: p.full_name, role: p.role };
+});
+
+const reviewsWithUser = data.map((r) => ({
+  ...r,
+  user: { full_name: profileMap[r.user_id]?.full_name || null },
+  user_role: profileMap[r.user_id]?.role || null,
+}));
+
+        setReviews(reviewsWithUser);
+        setReviewsLoading(false);
+      });
+  }, [product?.id]);
+
+  // ⭐ Compute average rating + distribution
+  const reviewStats = useMemo(() => {
+    if (reviews.length === 0) return { avg: 0, count: 0, distribution: [0, 0, 0, 0, 0] };
+    const total = reviews.reduce((sum, r) => sum + (r.rating || 0), 0);
+    const avg = total / reviews.length;
+    const distribution = [0, 0, 0, 0, 0];
+    reviews.forEach((r) => {
+      if (r.rating >= 1 && r.rating <= 5) distribution[r.rating - 1]++;
+    });
+    return { avg, count: reviews.length, distribution };
+  }, [reviews]);
+
+  // ── Variant computations ──
   const activeVariants = useMemo(() => {
     if (!product?.variants) return [];
     return product.variants.filter((v) => v.is_active);
@@ -60,46 +133,35 @@ const ProductModal = ({ product, onClose, onAddToCart }) => {
     return map;
   }, [product]);
 
-  // Ganti useEffect tracking dengan:
-useEffect(() => {
-  if (!product?.id) return;
-  
-  // Dedupe: skip kalau sudah tracked produk ini
-  if (trackedImpressions.has(product.id)) return;
-  trackedImpressions.add(product.id);
+  // ── Impression tracking ──
+  useEffect(() => {
+    if (!product?.id) return;
+    if (trackedImpressions.has(product.id)) return;
+    trackedImpressions.add(product.id);
 
-  const trackImpression = async () => {
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      let sid = sessionStorage.getItem('eglux_session_id');
-      if (!sid) {
-        sid = 's_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
-        sessionStorage.setItem('eglux_session_id', sid);
+    const trackImpression = async () => {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        let sid = sessionStorage.getItem('eglux_session_id');
+        if (!sid) {
+          sid = 's_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
+          sessionStorage.setItem('eglux_session_id', sid);
+        }
+        await supabase.from('page_views').insert({
+          user_id: user?.id || null,
+          session_id: sid,
+          page_path: window.location.pathname,
+          page_type: 'product_impression',
+          product_id: null,
+          referrer: document.referrer || null,
+          user_agent: navigator.userAgent,
+        });
+      } catch (e) {
+        console.error('[funnel] impression exception:', e?.message);
       }
-
-      const { error } = await supabase.from('page_views').insert({
-        user_id: user?.id || null,
-        session_id: sid,
-        page_path: window.location.pathname,
-        page_type: 'product_impression',
-        product_id: null,
-        referrer: document.referrer || null,
-        user_agent: navigator.userAgent,
-      });
-
-      if (error) {
-        console.error('[funnel] impression error:', error.message);
-      } else {
-        console.log('[funnel] impression tracked:', product.name);
-      }
-    } catch (e) {
-      console.error('[funnel] impression exception:', e?.message);
-    }
-  };
-
-  trackImpression();
-}, [product?.id]);
-  
+    };
+    trackImpression();
+  }, [product?.id]);
 
   const allThumbnails = useMemo(() => {
     const covers = generalImages.map((img) => ({ ...img, type: 'cover' }));
@@ -112,18 +174,20 @@ useEffect(() => {
     return [...covers, ...variants];
   }, [generalImages, sortedVariants, variantImagesMap]);
 
+  // ── Reset state saat product berubah ──
   useEffect(() => {
     if (!product) return;
     setSelectedVariant(null);
     setQty(1);
     setActiveIndex(0);
+    setDescOpen(false);
+    setReviewsOpen(false);
     if (swiperRef.current) {
       swiperRef.current.slideTo(0, 0);
     }
   }, [product]);
 
-  // FIX: Single source of truth for keyboard — window listener only.
-  // Swiper Keyboard module REMOVED to prevent double-firing.
+  // ── Keyboard navigation ──
   const handleKeyDown = useCallback((e) => {
     const tag = e.target.tagName.toLowerCase();
     const isTyping = tag === 'input' || tag === 'textarea' || tag === 'select' || e.target.isContentEditable;
@@ -135,24 +199,16 @@ useEffect(() => {
 
     if (e.key === 'ArrowLeft') {
       e.preventDefault();
-      if (swiper && activeIndex > 0) {
-        swiper.slideTo(activeIndex - 1);
-      }
+      if (swiper && activeIndex > 0) swiper.slideTo(activeIndex - 1);
     } else if (e.key === 'ArrowRight') {
       e.preventDefault();
-      if (swiper && activeIndex < maxIdx) {
-        swiper.slideTo(activeIndex + 1);
-      }
+      if (swiper && activeIndex < maxIdx) swiper.slideTo(activeIndex + 1);
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
-      if (scrollEl) {
-        scrollEl.scrollBy({ top: -60, behavior: 'smooth' });
-      }
+      if (scrollEl) scrollEl.scrollBy({ top: -60, behavior: 'smooth' });
     } else if (e.key === 'ArrowDown') {
       e.preventDefault();
-      if (scrollEl) {
-        scrollEl.scrollBy({ top: 60, behavior: 'smooth' });
-      }
+      if (scrollEl) scrollEl.scrollBy({ top: 60, behavior: 'smooth' });
     } else if (e.key === 'Escape') {
       e.preventDefault();
       onClose();
@@ -166,6 +222,7 @@ useEffect(() => {
 
   if (!product) return null;
 
+  // ── Price computation (discount-aware) ──
   const _originalVariantPrice = Number(selectedVariant?.price) || 0;
   const _discountInfo = (() => {
     if (!selectedVariant) return { currentPrice: 0, originalPrice: 0, discountPercent: 0, isActive: false };
@@ -199,12 +256,12 @@ useEffect(() => {
   const isOutOfStock = selectedVariant && selectedStock === 0 && selectedVariant.stock !== null && selectedVariant.stock !== undefined;
   const maxStock = selectedStock;
 
+  // ── Handlers ──
   const handleVariantClick = (variant) => {
     const stock = parseInt(variant.stock, 10) || 0;
     if (stock === 0 && variant.stock !== null && variant.stock !== undefined) return;
     setSelectedVariant(variant);
     setQty(1);
-
     const imgIdx = allThumbnails.findIndex((t) => t.type === 'variant' && t.variantId === variant.id);
     if (imgIdx !== -1 && swiperRef.current) {
       swiperRef.current.slideTo(imgIdx);
@@ -212,9 +269,7 @@ useEffect(() => {
   };
 
   const handleThumbnailClick = (idx) => {
-    if (swiperRef.current) {
-      swiperRef.current.slideTo(idx);
-    }
+    if (swiperRef.current) swiperRef.current.slideTo(idx);
   };
 
   const handleSlideChange = (swiper) => {
@@ -228,6 +283,14 @@ useEffect(() => {
         setQty(1);
       }
     }
+  };
+
+  // ⭐ Format helpers untuk reviews
+  const formatRating = (r) => r.toFixed(1);
+  const formatDate = (iso) => {
+    try {
+      return new Date(iso).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' });
+    } catch { return iso; }
   };
 
   return (
@@ -249,6 +312,7 @@ useEffect(() => {
         </button>
 
         <div ref={scrollContainerRef} className="flex-1 overflow-y-auto">
+          {/* === IMAGE GALLERY === */}
           <div className="relative w-full aspect-square overflow-hidden bg-[#f3f4f6]">
             {allThumbnails.length > 0 ? (
               <Swiper
@@ -299,6 +363,7 @@ useEffect(() => {
             )}
           </div>
 
+          {/* === THUMBNAILS === */}
           {allThumbnails.length > 1 && (
             <div className="flex gap-2 px-6 pt-3 pb-2 overflow-x-auto">
               {allThumbnails.map((img, idx) => (
@@ -322,6 +387,7 @@ useEffect(() => {
             </div>
           )}
 
+          {/* === PRODUCT INFO === */}
           <div className="p-6 pt-3">
             <h2
               className="text-[1.1rem] font-bold text-eglux-primary mb-1 leading-snug"
@@ -331,6 +397,7 @@ useEffect(() => {
             </h2>
             <p className="text-[0.8rem] text-[#999] mb-3 uppercase tracking-[0.5px]">{product.category}</p>
 
+            {/* === PRICE BLOCK === */}
             <div className="mb-4 pb-4 border-b border-[#eee]">
               {selectedVariant && effectivePrice > 0 ? (
                 <div className="flex items-baseline gap-2 flex-wrap">
@@ -355,6 +422,7 @@ useEffect(() => {
               )}
             </div>
 
+            {/* === VARIANTS === */}
             {sortedVariants.length > 0 && (
               <div className="mb-4">
                 <p className="text-[0.78rem] font-semibold uppercase tracking-[1px] text-eglux-primary mb-2">
@@ -393,14 +461,10 @@ useEffect(() => {
                           ) : 'Hubungi CS'}
                         </span>
                         {showStock && (
-                          <span className="block text-[0.65rem] text-[#bbb] mt-0.5">
-                            Sisa {vStock}
-                          </span>
+                          <span className="block text-[0.65rem] text-[#bbb] mt-0.5">Sisa {vStock}</span>
                         )}
                         {vOutOfStock && (
-                          <span className="block text-[0.65rem] text-red-400 mt-0.5">
-                            Habis
-                          </span>
+                          <span className="block text-[0.65rem] text-red-400 mt-0.5">Habis</span>
                         )}
                       </button>
                     );
@@ -409,6 +473,7 @@ useEffect(() => {
               </div>
             )}
 
+            {/* === QUANTITY === */}
             {selectedVariant && !isOutOfStock && effectivePrice > 0 && (
               <div className="mb-4">
                 <p className="text-[0.78rem] font-semibold uppercase tracking-[1px] text-eglux-primary mb-2">Jumlah</p>
@@ -418,25 +483,20 @@ useEffect(() => {
                     disabled={qty <= 1}
                     className="w-11 h-11 min-w-[44px] min-h-[44px] border-[1.5px] border-[#ddd] rounded-lg bg-white flex items-center justify-center text-xl font-semibold text-eglux-primary cursor-pointer hover:border-eglux-secondary hover:bg-eglux-accent transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                     aria-label="Kurangi jumlah"
-                  >
-                    −
-                  </button>
+                  >−</button>
                   <span className="text-[1.1rem] font-bold min-w-[28px] text-center text-eglux-primary">{qty}</span>
                   <button
                     onClick={() => setQty((q) => Math.min(maxStock, q + 1))}
                     disabled={qty >= maxStock}
                     className="w-11 h-11 min-w-[44px] min-h-[44px] border-[1.5px] border-[#ddd] rounded-lg bg-white flex items-center justify-center text-xl font-semibold text-eglux-primary cursor-pointer hover:border-eglux-secondary hover:bg-eglux-accent transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                     aria-label="Tambah jumlah"
-                  >
-                    +
-                  </button>
-                  <span className="text-[0.75rem] text-[#999] ml-2">
-                    {maxStock} tersedia
-                  </span>
+                  >+</button>
+                  <span className="text-[0.75rem] text-[#999] ml-2">{maxStock} tersedia</span>
                 </div>
               </div>
             )}
 
+            {/* === DESCRIPTION (collapsible) === */}
             {product.desc && (
               <div className="border-t border-[#eee] pt-4 mt-2">
                 <button
@@ -456,9 +516,137 @@ useEffect(() => {
                 </div>
               </div>
             )}
+
+            {/* === ⭐ REVIEWS SECTION (collapsible) === */}
+            <div className="border-t border-[#eee] pt-4 mt-2">
+              <button
+                onClick={() => setReviewsOpen(!reviewsOpen)}
+                className="w-full flex items-center justify-between text-[0.85rem] font-semibold text-eglux-primary cursor-pointer border-none bg-transparent"
+              >
+                <span className="flex items-center gap-2">
+                  <span>Ulasan</span>
+                  {reviewStats.count > 0 && (
+                    <span className="flex items-center gap-1 text-[0.75rem] font-normal text-amber-500">
+                      <span>{'★'.repeat(Math.round(reviewStats.avg))}<span className="text-gray-300">{'★'.repeat(5 - Math.round(reviewStats.avg))}</span></span>
+                      <span className="font-semibold">{formatRating(reviewStats.avg)}</span>
+                      <span className="text-[#999]">({reviewStats.count})</span>
+                    </span>
+                  )}
+                </span>
+                <svg
+                  className={`w-4 h-4 transition-transform duration-300 ${reviewsOpen ? 'rotate-180' : ''}`}
+                  viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                >
+                  <polyline points="6 9 12 15 18 9" />
+                </svg>
+              </button>
+              <div className={`overflow-hidden transition-all duration-300 ${reviewsOpen ? 'max-h-[700px] mt-3' : 'max-h-0'}`}>
+                {reviewsLoading ? (
+                  <div className="py-6 text-center">
+                    <div className="w-6 h-6 border-2 border-eglux-secondary border-t-transparent rounded-full animate-spin mx-auto" />
+                    <p className="text-[0.7rem] text-[#999] mt-2">Memuat ulasan...</p>
+                  </div>
+                ) : reviews.length === 0 ? (
+                  <div className="py-6 text-center">
+                    <p className="text-[0.8rem] text-[#999] mb-1">Belum ada ulasan</p>
+                    <p className="text-[0.7rem] text-[#bbb]">Jadilah yang pertama review produk ini setelah membeli!</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {/* Rating summary card */}
+                    <div className="bg-amber-50 rounded-lg p-3 flex items-center gap-3">
+                      <div className="text-center">
+                        <p className="text-2xl font-bold text-amber-600">{formatRating(reviewStats.avg)}</p>
+                        <p className="text-amber-500 text-[0.7rem]">
+                          {'★'.repeat(Math.round(reviewStats.avg))}{'☆'.repeat(5 - Math.round(reviewStats.avg))}
+                        </p>
+                      </div>
+                      <div className="flex-1">
+                        <p className="text-[0.75rem] text-gray-600">{reviewStats.count} ulasan</p>
+                        <div className="space-y-0.5 mt-1">
+                          {[5, 4, 3, 2, 1].map((star) => {
+                            const cnt = reviewStats.distribution[star - 1];
+                            const pct = reviewStats.count > 0 ? (cnt / reviewStats.count) * 100 : 0;
+                            return (
+                              <div key={star} className="flex items-center gap-1.5 text-[0.6rem]">
+                                <span className="text-gray-500 w-3">{star}★</span>
+                                <div className="flex-1 h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                                  <div className="h-full bg-amber-400 rounded-full" style={{ width: `${pct}%` }} />
+                                </div>
+                                <span className="text-gray-500 w-5 text-right">{cnt}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Reviews list */}
+                    <div className="space-y-3 max-h-[400px] overflow-y-auto">
+                      {reviews.map((r) => (
+                        <div key={r.id} className="border border-gray-100 rounded-lg p-3">
+                          <div className="flex items-start justify-between gap-2 mb-1">
+                            <div className="min-w-0 flex-1">
+                              <p className="text-[0.8rem] font-medium text-gray-900 truncate">
+                                {r.user?.full_name || 'Customer'}
+                              </p>
+                              <div className="flex items-center gap-1 mt-0.5">
+  <span className="text-amber-500 text-[0.7rem]">
+    {'★'.repeat(r.rating)}<span className="text-gray-300">{'★'.repeat(5 - r.rating)}</span>
+  </span>
+  {r.is_verified && (
+    <span className="text-[0.6rem] text-green-600 bg-green-50 px-1.5 py-0.5 rounded">
+      ✓ Verified
+    </span>
+  )}
+  {r.user_role && ['team_dev', 'master', 'admin'].includes(r.user_role) && (
+    <span className="text-[0.6rem] text-eglux-secondary bg-eglux-accent px-1.5 py-0.5 rounded font-medium">
+      {r.user_role === 'team_dev' ? 'Developer' : r.user_role === 'master' ? 'Owner' : 'Admin'}
+    </span>
+  )}
+</div>
+                            </div>
+                            <span className="text-[0.6rem] text-gray-400 whitespace-nowrap">
+                              {formatDate(r.created_at)}
+                            </span>
+                          </div>
+                          {r.title && (
+                            <p className="text-[0.8rem] font-semibold text-gray-800 mt-1">{r.title}</p>
+                          )}
+                          {r.comment && (
+                            <p className="text-[0.78rem] text-gray-600 mt-1 leading-relaxed">{r.comment}</p>
+                          )}
+                          {r.images && Array.isArray(r.images) && r.images.length > 0 && (
+  <                         div className="flex gap-1.5 mt-2">
+    {r.images.slice(0, 5).map((img, i) => (
+      <a
+        key={i}
+        href={img}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="block w-12 h-12 overflow-hidden rounded border border-gray-100 cursor-pointer hover:opacity-80 transition-opacity"
+      >
+        <img
+          src={img}
+          alt={`Review foto ${i + 1}`}
+          className="w-full h-full object-cover"
+          loading="lazy"
+        />
+      </a>
+    ))}
+  </div>
+)}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         </div>
 
+        {/* === FOOTER (Add to cart) === */}
         <div className="border-t border-[#eee] bg-white px-6 py-4 flex-shrink-0">
           {selectedVariant && !isOutOfStock && effectivePrice > 0 && (
             <div className="flex items-center justify-between mb-3">

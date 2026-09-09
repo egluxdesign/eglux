@@ -39,6 +39,7 @@ const filterProducts = (products, filterValue) => {
 };
 
 // ── Product Card (Shopee/Tokopedia pattern) ───────────────────
+// ── Product Card (Shopee/Tokopedia pattern) ───────────────────
 const ProductCardFull = ({ product, onOpenModal }) => {
   // ⭐ v3: Pakai pre-computed fields dari useProducts (discount-aware)
   const minVariantPrice = product?.minVariantPrice ?? null;
@@ -49,6 +50,20 @@ const ProductCardFull = ({ product, onOpenModal }) => {
 
   // Discount aktif kalau ada variant dengan discount > 0%
   const hasDiscount = hasActiveDiscount && maxDiscountPercent > 0;
+
+  // ⭐ NEW: Review stats + sold count dari useProducts (task #42)
+  const avgRating = Number(product?.avgRating) || 0;
+  const reviewCount = Number(product?.reviewCount) || 0;
+  const soldCount = Number(product?.soldCount) || 0;
+
+  // Format sold count untuk compact display (e.g., 1500 → "1.5rb", 1200000 → "1.2jt")
+  const formatSoldCount = (n) => {
+    if (n >= 1000000) return (n / 1000000).toFixed(1).replace('.0', '') + 'jt';
+    if (n >= 1000) return (n / 1000).toFixed(1).replace('.0', '') + 'rb';
+    return String(n);
+  };
+
+  const formatRating = (r) => r.toFixed(1);
 
   return (
     <article
@@ -98,9 +113,9 @@ const ProductCardFull = ({ product, onOpenModal }) => {
           {hasActiveVariant && minVariantPrice ? (
             <>
               {/* "Mulai dari" label */}
-              {/* <p className="text-[0.65rem] text-[#999] uppercase tracking-[0.5px] mb-1">
+              <p className="text-[0.65rem] text-[#999] uppercase tracking-[0.5px] mb-1">
                 Mulai dari
-              </p> */}
+              </p>
 
               {/* Strike original price + discounted price inline */}
               <div className="flex items-baseline gap-2 flex-wrap">
@@ -120,6 +135,35 @@ const ProductCardFull = ({ product, onOpenModal }) => {
             </p>
           )}
         </div>
+
+        {/* ⭐ Rating + Sold Count */}
+{((Number(product?.reviewCount) || 0) > 0 || (Number(product?.soldCount) || 0) > 0) && (
+  <div className="flex items-center gap-2 mb-2 text-[0.72rem]">
+    {(Number(product?.reviewCount) || 0) > 0 && (
+      <div className="flex items-center gap-1">
+        <span className="text-amber-500">
+          {'★'.repeat(Math.round(Number(product?.avgRating) || 0))}
+          <span className="text-gray-300">{'★'.repeat(5 - Math.round(Number(product?.avgRating) || 0))}</span>
+        </span>
+        <span className="font-semibold text-amber-600">{(Number(product?.avgRating) || 0).toFixed(1)}</span>
+        <span className="text-[#999]">({Number(product?.reviewCount) || 0})</span>
+      </div>
+    )}
+    {(Number(product?.reviewCount) || 0) > 0 && (Number(product?.soldCount) || 0) > 0 && (
+      <span className="text-[#ccc]">·</span>
+    )}
+    {(Number(product?.soldCount) || 0) > 0 && (
+      <span className="text-[#666]">
+        {(Number(product?.soldCount) || 0) >= 1000000
+          ? ((Number(product?.soldCount) || 0) / 1000000).toFixed(1).replace('.0', '') + 'jt'
+          : (Number(product?.soldCount) || 0) >= 1000
+            ? ((Number(product?.soldCount) || 0) / 1000).toFixed(1).replace('.0', '') + 'rb'
+            : String(Number(product?.soldCount) || 0)
+        } terjual
+      </span>
+    )}
+  </div>
+)}
 
         {product.desc && (
           <p className="text-[0.9rem] text-[#666] leading-relaxed line-clamp-2">{product.desc}</p>

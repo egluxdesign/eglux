@@ -4,26 +4,21 @@
 // ============================================================================
 // Differentiation dengan OrdersPage (/orders):
 //   - /orders (Pesanan Saya)     = active orders (pending/processing/shipping)
-//   - /order-history (Riwayat)   = archive (delivered + cancelled)
+//   - /order-history (Riwayat)   = archive (completed + cancelled)
 //
 // Card content (per user spec):
 //   - Foto + nama produk (1-2 item preview)
 //   - Status badge (Selesai / Dibatalkan)
 //   - Tanggal selesai (updated_at = last status change)
-//   - "Tiket Bantuan" button → buka modal Tiket Bantuan langsung
+//   - "Ajukan Pengembalian" button (untuk completed — refund flow)
 //   - "Lihat Rincian" button → buka detail panel
 //
-// Tab filter:
-//   - Semua Riwayat (default) = delivered + cancelled
-//   - Selesai                 = delivered only
+// Tab filter (2 tabs only):
+//   - Semua Riwayat (default) = completed + cancelled
+//   - Selesai                 = completed only
 //   - Dibatalkan              = cancelled only
 //
-// ⭐ v2 UPDATE:
-//   1. Rincian Pembayaran LENGKAP — match OrdersList & TrackOrderPage v3:
-//      Harga Asli → Diskon Variant → Subtotal Setelah Diskon → Ongkir →
-//      Biaya Admin & Tax → Voucher → Total Pembayaran + Hint hemat
-//   2. Button "Ajukan Pengembalian" → "Tiket Bantuan" (untuk semua status)
-//      Saat di-klik → langsung buka modal Tiket Bantuan (gak navigate ke /tickets lagi)
+// (3 tabs actually — "Semua Riwayat" + 2 status tabs)
 // ============================================================================
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
@@ -34,22 +29,17 @@ import { useCartActions } from './CartPage';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabaseClient';
 import { rupiah } from '../context/CartContext';
-import { friendlyErrorMessage } from '../lib/errorMessage';
-
-import '/src/assets/styles/orderpage.css'
+import ReviewModal from '../components/ui/ReviewModal';
 
 // ── Tab filter ──
-// ⭐ Tab key pakai 'delivered' (sesuai DB constraint), label tetap "Selesai"
 const STATUS_TABS = [
   { key: 'all', label: 'Semua Riwayat' },
-  { key: 'delivered', label: 'Selesai' },
+  { key: 'completed', label: 'Selesai' },
   { key: 'cancelled', label: 'Dibatalkan' },
 ];
 
-// ⭐ STATUS_BADGE: key utama 'delivered', plus 'completed' untuk backward compat
 const STATUS_BADGE = {
-  delivered: { text: 'Selesai', cls: 'bg-green-50 text-green-600', banner: 'bg-green-500' },
-  completed: { text: 'Selesai', cls: 'bg-green-50 text-green-600', banner: 'bg-green-500' }, // legacy fallback
+  completed: { text: 'Selesai', cls: 'bg-green-50 text-green-600', banner: 'bg-green-500' },
   cancelled: { text: 'Dibatalkan', cls: 'bg-red-50 text-red-600', banner: 'bg-red-500' },
 };
 
@@ -89,9 +79,13 @@ function shortId(uuid) {
 }
 
 // ⭐ Helper: get "tanggal selesai" untuk order
+// Priority:
+//   1. completed → midtrans_settlement_time (kalau ada) atau created_at
+//   2. cancelled → created_at (waktu order dibuat, karna kita gak track cancel_at)
+//   (orders table gak punya updated_at column)
 function getSelesaiDate(order) {
   if (!order) return null;
-  if (order.status === 'delivered' || order.status === 'completed') {
+  if (order.status === 'completed') {
     return order.midtrans_settlement_time || order.created_at;
   }
   return order.created_at;
@@ -114,16 +108,16 @@ function getProductImage(item) {
 // ============================================================================
 // HistoryCard — card dengan foto + nama + badge + tanggal selesai + 2 tombol
 // ============================================================================
-const HistoryCard = ({ order, onOpen, onTicket }) => {
+const HistoryCard = ({ order, onOpen, onRefund }) => {
   const items = order.order_items || [];
   const previewItems = items.slice(0, 2);
   const remainingCount = items.length - previewItems.length;
   const totalQty = items.reduce((sum, it) => sum + Number(it.quantity || 0), 0);
   const cfg = STATUS_BADGE[order.status] || { cls: 'bg-gray-100 text-gray-600' };
 
-  // Tanggal selesai = midtrans_settlement_time (untuk delivered) atau created_at (fallback)
+  // Tanggal selesai = midtrans_settlement_time (untuk completed) atau created_at (fallback)
   const selesaiDate = getSelesaiDate(order);
-  const selesaiLabel = (order.status === 'delivered' || order.status === 'completed') ? 'Selesai pada' : 'Dibatalkan pada';
+  const selesaiLabel = order.status === 'completed' ? 'Selesai pada' : 'Dibatalkan pada';
 
   return (
     <div className="bg-white rounded-xl border border-gray-100 overflow-hidden hover:shadow-md hover:border-eglux-secondary/30 transition-all">
@@ -193,17 +187,31 @@ const HistoryCard = ({ order, onOpen, onTicket }) => {
           </div>
         </div>
         <div className="flex gap-2">
-          {/* ⭐ v2: Tiket Bantuan — untuk SEMUA status (delivered + cancelled) */}
-          {/* Saat di-klik → buka modal Tiket Bantuan langsung (gak navigate) */}
-          <button
-            onClick={() => onTicket(order)}
-            className="flex-1 px-3 py-2 bg-white border border-eglux-secondary/30 text-eglux-secondary rounded-lg text-xs font-semibold hover:bg-eglux-secondary hover:text-white transition-colors cursor-pointer flex items-center justify-center gap-1.5"
-          >
-            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z" />
-            </svg>
-            Tiket Bantuan
-          </button>
+          {/* Ajukan Pengembalian — only for completed orders (cancelled gak perlu refund) */}
+          {order.status === 'completed' && (
+            <button
+              onClick={() => onRefund(order)}
+              className="flex-1 px-3 py-2 bg-white border border-eglux-secondary/30 text-eglux-secondary rounded-lg text-xs font-semibold hover:bg-eglux-secondary hover:text-white transition-colors cursor-pointer flex items-center justify-center gap-1.5"
+            >
+              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="1 4 1 10 7 10" />
+                <path d="M3.51 15a9 9 0 102.13-9.36L1 10" />
+              </svg>
+              Ajukan Pengembalian
+            </button>
+          )}
+          {/* Tiket Bantuan — for cancelled orders (atau sebagai alternatif) */}
+          {order.status === 'cancelled' && (
+            <button
+              onClick={() => onRefund(order)}
+              className="flex-1 px-3 py-2 bg-white border border-gray-300 text-gray-600 rounded-lg text-xs font-semibold hover:bg-gray-100 transition-colors cursor-pointer flex items-center justify-center gap-1.5"
+            >
+              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z" />
+              </svg>
+              Tiket Bantuan
+            </button>
+          )}
           <button
             onClick={() => onOpen(order)}
             className="flex-1 px-3 py-2 bg-eglux-primary text-white rounded-lg text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer border-none flex items-center justify-center gap-1.5"
@@ -221,20 +229,67 @@ const HistoryCard = ({ order, onOpen, onTicket }) => {
 };
 
 // ============================================================================
-// HistoryDetailPanel — slide-in panel (mirip OrdersList tapi dengan ticket action)
+// HistoryDetailPanel — slide-in panel (mirip OrdersList tapi dengan refund action)
 // ============================================================================
-const HistoryDetailPanel = ({ order, onClose, onTicket }) => {
+const HistoryDetailPanel = ({ order, onClose, onRefund }) => {
   const navigate = useNavigate();
   const items = order.order_items || [];
   const statusCfg = STATUS_BADGE[order.status] || { banner: 'bg-gray-500' };
-  // ⭐ canTrack: tombol "Lacak Pesanan" HANYA muncul kalau biteship_waybill_url ADA di DB.
-  const canTrack = Boolean(order.biteship_waybill_url);
+  const canTrack = order.biteship_order_id || order.tracking_number || order.biteship_status;
+
+  // ⭐ Review state — track reviews user udah pernah submit per item
+  const [existingReviews, setExistingReviews] = useState({});
+  const [reviewModal, setReviewModal] = useState(null);
+  const isOrderCompleted = order.status === 'completed';
+
+  // ⭐ Fetch existing reviews untuk items di order ini (cuma kalau order completed)
+  useEffect(() => {
+    if (!isOrderCompleted || items.length === 0) {
+      setExistingReviews({});
+      return;
+    }
+
+    const fetchReviews = async () => {
+      try {
+        const { data: session } = await supabase.auth.getSession();
+        const userId = session?.session?.user?.id;
+        if (!userId) return;
+
+        const productIds = items.map((it) => it.product_id).filter(Boolean);
+        if (productIds.length === 0) return;
+
+        const { data: reviews, error } = await supabase
+          .from("product_reviews")
+          .select("id, product_id, order_id, rating, title, comment, images")
+          .eq("user_id", userId)
+          .eq("order_id", order.id)
+          .in("product_id", productIds);
+
+        if (error) {
+          console.warn("[OrderHistory] fetch reviews error:", error.message);
+          return;
+        }
+
+        const reviewMap = {};
+        (reviews || []).forEach((r) => {
+          reviewMap[`${r.product_id}_${r.order_id}`] = r;
+        });
+        setExistingReviews(reviewMap);
+      } catch (e) {
+        console.warn("[OrderHistory] fetch reviews exception:", e?.message);
+      }
+    };
+
+    fetchReviews();
+  }, [order.id, order.status, items.length, isOrderCompleted]);
 
   // ⭐ Lacak Pesanan: direct ke biteship_waybill_url (kalau ada), fallback ke /track page
   const handleTrackOrder = () => {
     if (order.biteship_waybill_url) {
+      // Direct ke Biteship tracking page (gratis, no API call)
       window.open(order.biteship_waybill_url, '_blank', 'noopener,noreferrer');
     } else {
+      // Fallback: buka track order page (untuk lihat status dari DB)
       onClose();
       navigate(`/track?order=${order.id}`);
     }
@@ -245,29 +300,6 @@ const HistoryDetailPanel = ({ order, onClose, onTicket }) => {
     onClose();
     navigate(`/products?open=${productId}`);
   };
-
-  // ⭐ v2: Compute breakdown values untuk rincian pembayaran lengkap
-  const originalSubtotal = items.reduce((s, item) => {
-    const orig = Number(item.original_unit_price) || Number(item.unit_price_snapshot) || 0;
-    return s + (orig * (Number(item.quantity) || 1));
-  }, 0);
-  const discountedSubtotal = items.reduce((s, item) => {
-    const unit = Number(item.unit_price_snapshot) || 0;
-    return s + (unit * (Number(item.quantity) || 1));
-  }, 0);
-  const variantDiscount = originalSubtotal - discountedSubtotal;
-  const hasVariantDiscount = variantDiscount > 0;
-
-  // Tax: pakai nilai persisten dari DB, fallback recalc kalau order lama
-  let taxAmount = Number(order.tax_amount) || 0;
-  let taxPercent = Number(order.tax_percent) || 3;
-  if (!taxAmount && originalSubtotal > 0) {
-    taxAmount = Math.round(originalSubtotal * taxPercent / 100);
-  }
-
-  const voucherDiscount = Number(order.voucher_discount) || 0;
-  const shippingCost = Number(order.shipping_cost) || 0;
-  const totalSavings = variantDiscount + voucherDiscount;
 
   return (
     <>
@@ -305,7 +337,7 @@ const HistoryDetailPanel = ({ order, onClose, onTicket }) => {
           <div className={`${statusCfg.banner} rounded-xl px-4 py-3 text-white`}>
             <p className="text-sm font-bold">{(STATUS_BADGE[order.status] || {}).text || order.status}</p>
             <p className="text-[0.7rem] opacity-90 mt-0.5">
-              {(order.status === 'delivered' || order.status === 'completed') ? 'Selesai pada' : 'Dibatalkan pada'} {formatDateTime(getSelesaiDate(order))}
+              {order.status === 'completed' ? 'Selesai pada' : 'Dibatalkan pada'} {formatDateTime(getSelesaiDate(order))}
             </p>
           </div>
 
@@ -330,17 +362,15 @@ const HistoryDetailPanel = ({ order, onClose, onTicket }) => {
                 )}
                 {order.biteship_status && (
                   <div className="flex justify-between">
-                    <span className="text-gray-500">Status</span>
+                    <span className="text-gray-500">Status Biteship</span>
                     <span className="font-medium text-gray-900 capitalize">{order.biteship_status}</span>
                   </div>
                 )}
               </div>
               {canTrack && (
-                <a
-                  href={order.biteship_waybill_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="mt-3 w-full px-4 py-2.5 bg-eglux-primary text-white rounded-lg text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer border-none flex items-center justify-center gap-2 no-underline"
+                <button
+                  onClick={handleTrackOrder}
+                  className="mt-3 w-full px-4 py-2.5 bg-eglux-primary text-white rounded-lg text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer border-none flex items-center justify-center gap-2"
                 >
                   <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <rect x="1" y="3" width="15" height="13" />
@@ -349,7 +379,7 @@ const HistoryDetailPanel = ({ order, onClose, onTicket }) => {
                     <circle cx="18.5" cy="18.5" r="2.5" />
                   </svg>
                   Lacak Pesanan
-                </a>
+                </button>
               )}
             </div>
           )}
@@ -372,17 +402,19 @@ const HistoryDetailPanel = ({ order, onClose, onTicket }) => {
             <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-3">Produk Dibeli</p>
             <div className="space-y-3">
               {items.map((item, idx) => {
-                const img = getProductImage(item);
-                const itemUnitPrice = Number(item.unit_price_snapshot) || 0;
-                const itemOriginalPrice = Number(item.original_unit_price) || itemUnitPrice;
-                const itemQty = Number(item.quantity) || 1;
-                const itemHasDiscount = itemOriginalPrice > itemUnitPrice;
+                // ⭐ Review check — lookup by `${product_id}_${order_id}`
+                const reviewKey = `${item.product_id}_${order.id}`;
+                const existingReview = existingReviews[reviewKey];
+
                 return (
                   <div key={idx} className="flex items-start gap-3">
                     <div className="w-14 h-14 rounded-lg bg-eglux-accent flex items-center justify-center flex-shrink-0 overflow-hidden">
-                      {img
-                        ? <img src={img} alt={item.product_name_snapshot} className="w-full h-full object-cover" loading="lazy" />
-                        : <span className="text-lg font-bold text-eglux-secondary uppercase">{(item.product_name_snapshot || '?').charAt(0)}</span>}
+                      {(() => {
+                        const img = getProductImage(item);
+                        return img
+                          ? <img src={img} alt={item.product_name_snapshot} className="w-full h-full object-cover" loading="lazy" />
+                          : <span className="text-lg font-bold text-eglux-secondary uppercase">{(item.product_name_snapshot || '?').charAt(0)}</span>;
+                      })()}
                     </div>
                     <div className="min-w-0 flex-1">
                       <a
@@ -396,17 +428,53 @@ const HistoryDetailPanel = ({ order, onClose, onTicket }) => {
                         <p className="text-[0.75rem] text-gray-400 mt-0.5">{item.variant_name_snapshot}</p>
                       )}
                       <p className="text-[0.75rem] text-gray-500 mt-0.5">
-                        {itemQty}x · {rupiah(itemUnitPrice)}
+                        {item.quantity}x · {rupiah(item.unit_price_snapshot)}
                       </p>
-                      {/* ⭐ v2: Tampilkan harga asli strike-through kalau ada diskon */}
-                      {itemHasDiscount && (
-                        <p className="text-[0.65rem] text-gray-400 line-through mt-0.5">
-                          Harga asli: {rupiah(itemOriginalPrice)}
-                        </p>
+
+                      {/* ⭐ Review button — cuma muncul kalau order completed */}
+                      {isOrderCompleted && (
+                        <div className="mt-2">
+                          {existingReview ? (
+                            // User udah pernah review → tombol Edit + display rating
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-[0.7rem] text-amber-600 flex items-center gap-0.5">
+                                {'★'.repeat(existingReview.rating)}<span className="text-gray-300">{'★'.repeat(5 - existingReview.rating)}</span>
+                                <span className="ml-1 text-gray-500">({existingReview.rating}.0)</span>
+                              </span>
+                              <button
+                                onClick={() => setReviewModal({
+                                  productId: item.product_id,
+                                  productName: item.product_name_snapshot,
+                                  orderId: order.id,
+                                  reviewId: existingReview.id,
+                                  initialRating: existingReview.rating || 0,
+                                  initialTitle: existingReview.title || '',
+                                  initialComment: existingReview.comment || '',
+                                  initialImages: existingReview.images || [],
+                                })}
+                                className="text-[0.7rem] font-medium text-eglux-secondary hover:underline cursor-pointer border-none bg-transparent"
+                              >
+                                ✏️ Edit Review
+                              </button>
+                            </div>
+                          ) : (
+                            // Belum pernah review → tombol Tulis Review + bonus poin hint
+                            <button
+                              onClick={() => setReviewModal({
+                                productId: item.product_id,
+                                productName: item.product_name_snapshot,
+                                orderId: order.id,
+                              })}
+                              className="text-[0.7rem] font-semibold text-white bg-eglux-secondary hover:opacity-90 px-3 py-1.5 rounded-md cursor-pointer border-none flex items-center gap-1"
+                            >
+                              ⭐ Tulis Review (+5 poin)
+                            </button>
+                          )}
+                        </div>
                       )}
                     </div>
                     <p className="text-sm font-semibold text-eglux-primary whitespace-nowrap self-center">
-                      {rupiah(Number(item.subtotal) || (itemUnitPrice * itemQty))}
+                      {rupiah(item.subtotal)}
                     </p>
                   </div>
                 );
@@ -414,34 +482,41 @@ const HistoryDetailPanel = ({ order, onClose, onTicket }) => {
             </div>
           </div>
 
-          {/* ⭐ v2: Rincian Pembayaran LENGKAP — match OrdersList & TrackOrderPage v3 */}
+          {/* Rincian Pembayaran (v3: transparent breakdown) */}
           <div className="bg-white border border-gray-200 rounded-xl p-4">
             <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-3">Rincian Pembayaran</p>
             <div className="space-y-2 text-sm">
-              {/* 1. Subtotal harga asli (sebelum diskon variant) */}
+              {/* Item list dengan harga per item (transparan) */}
+              {items.length > 0 && (
+                <div className="space-y-1.5 pb-2 mb-1 border-b border-gray-100">
+                  {items.map((item, idx) => {
+                    const itemUnitPrice = Number(item.unit_price_snapshot) || 0;
+                    const itemQty = Number(item.quantity) || 1;
+                    const itemSubtotal = Number(item.subtotal) || (itemUnitPrice * itemQty);
+                    return (
+                      <div key={idx} className="flex justify-between text-xs">
+                        <span className="text-gray-600 flex-1 mr-2 truncate">
+                          {item.product_name_snapshot}
+                          {item.variant_name_snapshot && (
+                            <span className="text-gray-400"> · {item.variant_name_snapshot}</span>
+                          )}
+                          <span className="text-gray-400"> × {itemQty}</span>
+                        </span>
+                        <span className="text-gray-700 whitespace-nowrap">{rupiah(itemSubtotal)}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Subtotal item */}
               <div className="flex justify-between">
                 <span className="text-gray-500">Subtotal Produk ({items.length} item)</span>
-                <span className="font-medium text-gray-900">{rupiah(originalSubtotal)}</span>
+                <span className="text-gray-900">{rupiah(order.subtotal)}</span>
               </div>
 
-              {/* 2. Diskon variant (potongan) — tampilkan kalau ada */}
-              {hasVariantDiscount && (
-                <div className="flex justify-between">
-                  <span className="text-green-600">↓ Diskon Variant</span>
-                  <span className="font-medium text-green-600">− {rupiah(variantDiscount)}</span>
-                </div>
-              )}
-
-              {/* 3. Subtotal setelah diskon variant — tampilkan kalau ada diskon */}
-              {hasVariantDiscount && (
-                <div className="flex justify-between">
-                  <span className="text-gray-500">Subtotal Setelah Diskon</span>
-                  <span className="font-medium text-gray-900">{rupiah(discountedSubtotal)}</span>
-                </div>
-              )}
-
-              {/* 4. Ongkir */}
-              {shippingCost > 0 && (
+              {/* Ongkir */}
+              {Number(order.shipping_cost) > 0 && (
                 <div className="flex justify-between">
                   <span className="text-gray-500">
                     Ongkir
@@ -451,20 +526,41 @@ const HistoryDetailPanel = ({ order, onClose, onTicket }) => {
                       </span>
                     )}
                   </span>
-                  <span className="font-medium text-gray-900">{rupiah(shippingCost)}</span>
+                  <span className="text-gray-900">{rupiah(order.shipping_cost)}</span>
                 </div>
               )}
 
-              {/* 5. Biaya Admin & Tax (% dari base price) — pakai nilai persisten dari DB */}
-              {taxAmount > 0 && (
+              {/* Biaya lain kalau ada */}
+              {Number(order.courier_rate) > 0 && Number(order.courier_rate) !== Number(order.shipping_cost) && (
                 <div className="flex justify-between">
-                  <span className="text-gray-500">Biaya Admin &amp; Tax ({taxPercent}%)</span>
-                  <span className="font-medium text-gray-900">{rupiah(taxAmount)}</span>
+                  <span className="text-gray-500">Biaya Kurir (Rate)</span>
+                  <span className="text-gray-900">{rupiah(order.courier_rate)}</span>
                 </div>
               )}
 
-              {/* 6. Voucher Discount — tampilkan kalau ada */}
-              {voucherDiscount > 0 && (
+              {/* ⭐ Tax / Biaya Admin (3% dari base price) — pakai nilai persisten dari DB */}
+              {/* Fallback: kalau order lama (sebelum SQL 042), recalc dari items */}
+              {(() => {
+                let adminFee = Number(order.tax_amount) || 0;
+                let taxPercent = Number(order.tax_percent) || 3;
+                if (!adminFee && items.length > 0) {
+                  const originalSubtotal = items.reduce((s, item) => {
+                    const orig = Number(item.original_unit_price) || Number(item.unit_price_snapshot) || 0;
+                    return s + (orig * (Number(item.quantity) || 1));
+                  }, 0);
+                  adminFee = Math.round(originalSubtotal * taxPercent / 100);
+                }
+                if (adminFee <= 0) return null;
+                return (
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">Biaya Admin &amp; Tax ({taxPercent}%)</span>
+                    <span className="text-gray-900">{rupiah(adminFee)}</span>
+                  </div>
+                );
+              })()}
+
+              {/* Voucher Discount (kalau ada) */}
+              {Number(order.voucher_discount) > 0 && (
                 <div className="flex justify-between">
                   <span className="text-green-600">
                     🎟️ Voucher
@@ -472,20 +568,20 @@ const HistoryDetailPanel = ({ order, onClose, onTicket }) => {
                       <span className="text-gray-400 ml-1">({order.voucher_code})</span>
                     )}
                   </span>
-                  <span className="text-green-600 font-medium">− {rupiah(voucherDiscount)}</span>
+                  <span className="text-green-600 font-medium">− {rupiah(Number(order.voucher_discount))}</span>
                 </div>
               )}
 
-              {/* 7. Grand Total */}
+              {/* Grand Total */}
               <div className="border-t border-gray-200 pt-2 mt-2 flex justify-between items-center">
                 <span className="font-semibold text-gray-900">Total Pembayaran</span>
                 <span className="text-lg font-bold text-eglux-secondary">{rupiah(order.total_amount)}</span>
               </div>
 
-              {/* Hint hemat = total diskon (variant discount + voucher) */}
-              {totalSavings > 0 && (
-                <p className="text-[0.65rem] text-green-600 mt-1.5 text-right">
-                  🎉 Kamu hemat {rupiah(totalSavings)}!
+              {/* Verifikasi: subtotal + shipping = total (untuk transaparency check) */}
+              {Number(order.subtotal) + Number(order.shipping_cost) !== Number(order.total_amount) && (
+                <p className="text-[0.65rem] text-amber-600 mt-1">
+                  ℹ Total termasuk biaya lain (selisih: {rupiah(Number(order.total_amount) - Number(order.subtotal) - Number(order.shipping_cost))})
                 </p>
               )}
             </div>
@@ -528,16 +624,27 @@ const HistoryDetailPanel = ({ order, onClose, onTicket }) => {
             </div>
           )}
 
-          {/* ⭐ v2: Action footer — Tiket Bantuan (untuk semua status) + Tutup */}
+          {/* Action footer — Refund / Ticket + Tutup */}
           <div className="pt-2 pb-4 flex gap-2">
             <button
-              onClick={() => onTicket(order)}
-              className="flex-1 px-4 py-2.5 bg-white border border-eglux-secondary/30 text-eglux-secondary rounded-lg text-xs font-semibold hover:bg-eglux-secondary hover:text-white transition-colors cursor-pointer flex items-center justify-center gap-1.5"
+              onClick={() => onRefund(order)}
+              className={`flex-1 px-4 py-2.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer border flex items-center justify-center gap-1.5 ${
+                order.status === 'completed'
+                  ? 'bg-white border-eglux-secondary/30 text-eglux-secondary hover:bg-eglux-secondary hover:text-white'
+                  : 'bg-white border-gray-300 text-gray-600 hover:bg-gray-100'
+              }`}
             >
               <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z" />
+                {order.status === 'completed' ? (
+                  <>
+                    <polyline points="1 4 1 10 7 10" />
+                    <path d="M3.51 15a9 9 0 102.13-9.36L1 10" />
+                  </>
+                ) : (
+                  <path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z" />
+                )}
               </svg>
-              Tiket Bantuan
+              {order.status === 'completed' ? 'Ajukan Pengembalian' : 'Tiket Bantuan'}
             </button>
             <button
               onClick={onClose}
@@ -548,6 +655,46 @@ const HistoryDetailPanel = ({ order, onClose, onTicket }) => {
           </div>
         </div>
       </aside>
+
+      {/* ⭐ ReviewModal — render kalau user klik tombol Tulis/Edit Review */}
+      {reviewModal && (
+        <ReviewModal
+          isOpen={Boolean(reviewModal)}
+          onClose={() => setReviewModal(null)}
+          productId={reviewModal.productId}
+          productName={reviewModal.productName}
+          orderId={reviewModal.orderId}
+          reviewId={reviewModal.reviewId}
+          initialRating={reviewModal.initialRating || 0}
+          initialTitle={reviewModal.initialTitle || ''}
+          initialComment={reviewModal.initialComment || ''}
+          initialImages={reviewModal.initialImages || []}
+          onSuccess={() => {
+            // ⭐ Refresh reviews list — re-fetch supaya tombol "Edit" muncul + rating updated
+            setExistingReviews({});
+            setTimeout(() => {
+              const fetchReviews = async () => {
+                try {
+                  const { data: session } = await supabase.auth.getSession();
+                  const userId = session?.session?.user?.id;
+                  if (!userId) return;
+                  const { data: reviews } = await supabase
+                    .from("product_reviews")
+                    .select("id, product_id, order_id, rating, title, comment, images")
+                    .eq("user_id", userId)
+                    .eq("order_id", order.id);
+                  const reviewMap = {};
+                  (reviews || []).forEach((r) => {
+                    reviewMap[`${r.product_id}_${r.order_id}`] = r;
+                  });
+                  setExistingReviews(reviewMap);
+                } catch (e) { console.warn('[OrderHistory] re-fetch reviews failed', e?.message); }
+              };
+              fetchReviews();
+            }, 100);
+          }}
+        />
+      )}
     </>
   );
 };
@@ -557,7 +704,7 @@ const HistoryDetailPanel = ({ order, onClose, onTicket }) => {
 // ============================================================================
 const OrderHistoryPage = () => {
   const { user } = useAuth();
-  const { openCart, openTicket } = useCartActions();
+  const { openCart } = useCartActions();
   const navigate = useNavigate();
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -574,7 +721,6 @@ const OrderHistoryPage = () => {
     setError(null);
 
     try {
-      // ⭐ v2: tambah original_unit_price di order_items (untuk rincian pembayaran lengkap)
       const selectFields = `
         id, status, payment_status, total_amount, subtotal, shipping_cost,
         courier_code, courier_service, courier_duration, courier_rate,
@@ -597,14 +743,13 @@ const OrderHistoryPage = () => {
           )
         )
       `;
-      // ⭐ Hanya fetch delivered + cancelled (archive)
-      // DB constraint (SQL 032e) hanya allow 'delivered' (BUKAN 'completed' lagi)
-      // Tapi tetap include 'completed' di filter untuk backward compat dengan data lama
+      // ⭐ Hanya fetch completed + cancelled (archive)
+      // Order by created_at DESC (orders table gak punya updated_at column)
       const { data, error: fetchErr } = await supabase
         .from('orders')
         .select(selectFields)
         .eq('customer.email', user.email)
-        .in('status', ['delivered', 'completed', 'cancelled'])
+        .in('status', ['completed', 'cancelled'])
         .order('created_at', { ascending: false })
         .limit(100);
 
@@ -619,14 +764,14 @@ const OrderHistoryPage = () => {
         if (allErr) throw allErr;
         setOrders((allData || []).filter(o =>
           o.customer?.email === user.email &&
-          ['delivered', 'completed', 'cancelled'].includes(o.status)
+          ['completed', 'cancelled'].includes(o.status)
         ));
       } else {
         setOrders(data || []);
       }
     } catch (e) {
-      console.error('[OrderHistory] fetch error:', e?.message);
-      setError(friendlyErrorMessage(e, 'Memuat riwayat order'));
+      console.error('[OrderHistory] fetch error:', e);
+      setError(e.message);
     } finally {
       setLoading(false);
     }
@@ -635,6 +780,7 @@ const OrderHistoryPage = () => {
   useEffect(() => { fetchOrders(); }, [fetchOrders]);
 
   // ⭐ Realtime subscription: auto-update orders saat ada perubahan di DB
+  // (Biteship webhook update orders.status → frontend auto-refresh)
   useEffect(() => {
     if (!user) return;
 
@@ -676,10 +822,6 @@ const OrderHistoryPage = () => {
 
   const filteredOrders = useMemo(() => {
     if (activeTab === 'all') return orders;
-    // ⭐ Backward compat: tab "delivered" juga show "completed" (legacy data)
-    if (activeTab === 'delivered') {
-      return orders.filter(o => o.status === 'delivered' || o.status === 'completed');
-    }
     return orders.filter(o => o.status === activeTab);
   }, [orders, activeTab]);
 
@@ -687,53 +829,41 @@ const OrderHistoryPage = () => {
     const counts = { all: orders.length };
     for (const tab of STATUS_TABS) {
       if (tab.key === 'all') continue;
-      // ⭐ Backward compat: tab "delivered" juga count "completed" (legacy data)
-      if (tab.key === 'delivered') {
-        counts[tab.key] = orders.filter(o => o.status === 'delivered' || o.status === 'completed').length;
-      } else {
-        counts[tab.key] = orders.filter(o => o.status === tab.key).length;
-      }
+      counts[tab.key] = orders.filter(o => o.status === tab.key).length;
     }
     return counts;
   }, [orders]);
 
-  // ⭐ v2: Tiket Bantuan handler → tutup detail panel + buka modal Tiket Bantuan
-  // (gak navigate ke /tickets lagi — pakai openTicket() dari useCartActions)
-  const handleTicket = useCallback((order) => {
+  // Refund / Tiket action → navigate to /tickets?order=<id>
+  const handleRefund = (order) => {
     setSelectedOrder(null);
-    openTicket();
-  }, [openTicket]);
+    navigate(`/tickets?order=${order.id}`);
+  };
 
-  // ── Login required ──
   if (!user) {
     return (
-      <div className="section-full-mobile w-full">
-        <div className="mobile-viewport-group">
-          <HeaderProducts onCartOpen={openCart} forceScrolled />
-
-          <section className="section-mobile relative flex flex-col items-center justify-center text-center px-4">
-            <p className="text-gray-500 mb-4">Sudah punya Akun?</p>
-            <Link to="/admin" className="text-eglux-secondary font-semibold hover:underline">
-              Masuk ke akun
-            </Link>
-          </section>
-        </div>
-
+      <>
+        <HeaderProducts onCartOpen={openCart} />
+        <section className="max-w-container mx-auto px-4 md:px-8 py-16 text-center">
+          <p className="text-gray-500 mb-4">Kamu perlu masuk dulu untuk melihat riwayat pesanan.</p>
+          <Link to="/admin" className="text-eglux-secondary font-semibold hover:underline">
+            Masuk ke akun
+          </Link>
+        </section>
         <Footer />
-      </div>
+      </>
     );
   }
 
   return (
     <>
-      {/* ⭐ forceScrolled — header selalu putih, gak transparan menumpuk konten */}
-      <HeaderProducts onCartOpen={openCart} forceScrolled />
+      <HeaderProducts onCartOpen={openCart} />
 
-      <section className="max-w-3xl mx-auto px-4 md:px-6 pt-24 md:pt-28 pb-8">
+      <section className="max-w-container mx-auto px-4 md:px-8 py-8 md:py-12">
         {/* Header dengan back link ke Pesanan Saya */}
         <div className="flex items-center justify-between mb-6 gap-4 flex-wrap">
           <div>
-            <h1 className="text-2xl font-bold text-eglux-primary">Riwayat Order</h1>
+            <h1 className="text-xl md:text-2xl font-bold text-eglux-primary">Riwayat Order</h1>
             <p className="text-sm text-gray-500 mt-0.5">Pesanan yang sudah selesai atau dibatalkan</p>
           </div>
           <Link to="/orders" className="text-xs text-eglux-secondary font-medium hover:underline whitespace-nowrap">
@@ -798,7 +928,7 @@ const OrderHistoryPage = () => {
                 key={order.id}
                 order={order}
                 onOpen={setSelectedOrder}
-                onTicket={handleTicket}
+                onRefund={handleRefund}
               />
             ))}
           </div>
@@ -809,7 +939,7 @@ const OrderHistoryPage = () => {
           <HistoryDetailPanel
             order={selectedOrder}
             onClose={() => setSelectedOrder(null)}
-            onTicket={handleTicket}
+            onRefund={handleRefund}
           />
         )}
 
@@ -822,6 +952,7 @@ const OrderHistoryPage = () => {
         `}</style>
       </section>
 
+      <Footer />
     </>
   );
 };

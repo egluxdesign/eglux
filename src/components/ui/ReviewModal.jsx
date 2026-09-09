@@ -31,7 +31,7 @@
 //   />
 // ============================================================================
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../lib/supabaseClient';
 
@@ -86,6 +86,9 @@ const ReviewModal = ({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
+  // ⭐ NEW: photo upload state
+  const [uploadingImages, setUploadingImages] = useState(false);
+  const fileInputRef = useRef(null);
 
   // ⭐ Sync state saat props change (kalau modal di-reuse untuk edit review berbeda)
   useEffect(() => {
@@ -99,6 +102,114 @@ const ReviewModal = ({
       setSubmitting(false);
     }
   }, [isOpen, reviewId, initialRating, initialTitle, initialComment, initialImages]);
+
+  // ⭐ NEW: Handle file selection + upload to Supabase Storage
+  const handleImageUpload = useCallback(async (e) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+
+    // Validate: max 5 images total (existing + new)
+    const remainingSlots = MAX_IMAGES - images.length;
+    if (remainingSlots <= 0) {
+      setError(`Maksimal ${MAX_IMAGES} gambar per review`);
+      return;
+    }
+    const filesToUpload = files.slice(0, remainingSlots);
+
+    // Validate: each file must be image + max 5MB
+    const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+    const validFiles = [];
+    const invalidFiles = [];
+    for (const f of filesToUpload) {
+      if (!f.type.startsWith('image/')) {
+        invalidFiles.push(`${f.name}: bukan gambar`);
+        continue;
+      }
+      if (f.size > MAX_FILE_SIZE) {
+        invalidFiles.push(`${f.name}: lebih dari 5MB`);
+        continue;
+      }
+      validFiles.push(f);
+    }
+
+    if (invalidFiles.length > 0) {
+      setError(`File ditolak: ${invalidFiles.join(', ')}`);
+      // Clear error after 5s
+      setTimeout(() => setError(''), 5000);
+    }
+
+    if (validFiles.length === 0) {
+      // Reset input supaya user bisa select file yang sama lagi setelah fix
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
+
+    setUploadingImages(true);
+    setError('');
+
+    try {
+      const { data: session } = await supabase.auth.getSession();
+      const userId = session?.session?.user?.id;
+      if (!userId) {
+        setError('Sesi login habis. Silakan login ulang untuk upload gambar.');
+        setUploadingImages(false);
+        return;
+      }
+
+      const uploadedUrls = [];
+      for (const file of validFiles) {
+        // Path pattern: {user_id}/{timestamp}_{random}.ext
+        const ext = file.name.split('.').pop()?.toLowerCase() || 'jpg';
+        const fileName = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
+        const filePath = `${userId}/${fileName}`;
+
+        const { error: uploadErr } = await supabase.storage
+          .from('review-images')
+          .upload(filePath, file, {
+            cacheControl: '3600',
+            upsert: false,
+            contentType: file.type,
+          });
+
+        if (uploadErr) {
+          console.warn('[ReviewModal] Upload error for', file.name, ':', uploadErr.message);
+          // Skip this file, continue with others
+          continue;
+        }
+
+        // Get public URL
+        const { data: publicUrlData } = supabase.storage
+          .from('review-images')
+          .getPublicUrl(filePath);
+
+        if (publicUrlData?.publicUrl) {
+          uploadedUrls.push(publicUrlData.publicUrl);
+        }
+      }
+
+      if (uploadedUrls.length > 0) {
+        setImages((prev) => [...prev, ...uploadedUrls].slice(0, MAX_IMAGES));
+      }
+      if (uploadedUrls.length < validFiles.length) {
+        setError(`${validFiles.length - uploadedUrls.length} gambar gagal diupload. Coba lagi.`);
+      }
+    } catch (e) {
+      console.error('[ReviewModal] Upload exception:', e);
+      setError('Gagal upload gambar: ' + e.message);
+    } finally {
+      setUploadingImages(false);
+      // Reset input supaya user bisa re-select same file
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  }, [images]);
+
+  // ⭐ NEW: Remove image dari list (kalau user klik X di thumbnail)
+  const handleRemoveImage = useCallback((urlToRemove) => {
+    setImages((prev) => prev.filter((url) => url !== urlToRemove));
+    // Note: kita gak delete dari Storage supaya simple (kalau user gak submit review,
+    // image orphaned di storage — acceptable trade-off untuk simplicity)
+    // Alternative: track uploaded URLs + delete on modal close kalau gak submit
+  }, []);
 
   const handleSubmit = useCallback(async () => {
     setError('');
@@ -272,6 +383,74 @@ const ReviewModal = ({
                   className="w-full px-3 py-2.5 text-sm border border-gray-300 rounded-lg outline-none focus:border-eglux-secondary resize-y"
                 />
                 <p className="text-[0.65rem] text-gray-400 mt-1">{comment.length}/{MAX_COMMENT}</p>
+              </div>
+
+              {/* ⭐ Photo upload section */}
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 uppercase mb-1.5">
+                  Foto <span className="text-gray-400">(opsional, maks {MAX_IMAGES} gambar)</span>
+                </label>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  onChange={handleImageUpload}
+                  disabled={uploadingImages || images.length >= MAX_IMAGES}
+                  className="hidden"
+                  id="review-image-upload"
+                />
+                <label
+                  htmlFor="review-image-upload"
+                  className={`flex items-center justify-center gap-2 py-2.5 px-3 text-sm border-2 border-dashed rounded-lg cursor-pointer transition-colors ${
+                    uploadingImages || images.length >= MAX_IMAGES
+                      ? 'border-gray-200 text-gray-400 cursor-not-allowed'
+                      : 'border-gray-300 text-gray-600 hover:border-eglux-secondary hover:text-eglux-secondary'
+                  }`}
+                >
+                  {uploadingImages ? (
+                    <>
+                      <span className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin inline-block" />
+                      Mengupload...
+                    </>
+                  ) : images.length >= MAX_IMAGES ? (
+                    <>Maksimal {MAX_IMAGES} gambar</>
+                  ) : (
+                    <>
+                      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                        <circle cx="8.5" cy="8.5" r="1.5" />
+                        <polyline points="21 15 16 10 5 21" />
+                      </svg>
+                      Tambah Foto ({images.length}/{MAX_IMAGES})
+                    </>
+                  )}
+                </label>
+
+                {/* Preview uploaded images */}
+                {images.length > 0 && (
+                  <div className="flex flex-wrap gap-2 mt-2">
+                    {images.map((url, idx) => (
+                      <div key={idx} className="relative w-16 h-16 rounded-lg overflow-hidden border border-gray-200">
+                        <img
+                          src={url}
+                          alt={`Review foto ${idx + 1}`}
+                          className="w-full h-full object-cover"
+                          loading="lazy"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveImage(url)}
+                          className="absolute top-0 right-0 w-5 h-5 bg-black/60 text-white rounded-bl-lg rounded-tr-lg flex items-center justify-center text-xs cursor-pointer border-none hover:bg-black/80"
+                          aria-label="Hapus foto"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <p className="text-[0.65rem] text-gray-400 mt-1">Maks 5MB per gambar, format JPG/PNG/WebP</p>
               </div>
 
               {/* Verified purchase notice */}
