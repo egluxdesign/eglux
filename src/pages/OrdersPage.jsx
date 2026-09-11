@@ -17,8 +17,9 @@ const OrdersPage = () => {
         {/* ⭐ forceScrolled — header selalu putih, gak transparan */}
         <HeaderProducts onCartOpen={openCart} forceScrolled />
  
-        <main className="section-mobile">
+          <main className="section-mobile">
           <OrdersList />
+        <Footer />
         </main>
       </div>
     </div>

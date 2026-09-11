@@ -28,8 +28,10 @@ import { useAuth } from '../../../context/AuthContext';
 import { supabase } from '../../../lib/supabaseClient';
 import { rupiah } from '../../../context/CartContext';
 import { ensureSnapLoaded } from '../../../hooks/useMidtransSnap';
+import { friendlyErrorMessage } from '../../../lib/errorMessage';
 import ChangeCourierModal from '../../ui/ChangeCourierModal';
-import ReviewModal from '../../ui/ReviewModal';
+
+import '/src/assets/styles/orderpage.css'
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 
@@ -38,21 +40,24 @@ const STATUS_TABS = [
   { key: 'all_active', label: 'Semua Active' },
   { key: 'pending', label: 'Menunggu' },
   { key: 'processing', label: 'Diproses' },
-  { key: 'shipping', label: 'Dikirim' },
+  { key: 'shipped', label: 'Dikirim' },
 ];
 
 // Active statuses (yang ditampilkan di /orders)
-const ACTIVE_STATUSES = ['pending', 'processing', 'shipping'];
+const ACTIVE_STATUSES = ['pending', 'processing', 'shipped'];
 
 // ⚠️ NOTE: orders.status vocab: pending, processing, shipping, completed, cancelled
 // (di midtrans-webhook mapOrderStatus pakai 'shipping' bukan 'shipped')
 const STATUS_BADGE = {
   pending:    { text: 'Menunggu Pembayaran', cls: 'bg-gray-100 text-gray-600', banner: 'bg-gray-500' },
+  paid:       { text: 'Dibayar',              cls: 'bg-blue-50 text-blue-600',  banner: 'bg-blue-500' },
   processing: { text: 'Diproses',             cls: 'bg-blue-50 text-blue-600',  banner: 'bg-blue-500' },
-  shipping:   { text: 'Dikirim',              cls: 'bg-purple-50 text-purple-600', banner: 'bg-purple-500' },
+  shipping:   { text: 'Dikirim',              cls: 'bg-purple-50 text-purple-600', banner: 'bg-purple-500' }, // legacy fallback
   shipped:    { text: 'Dikirim',              cls: 'bg-purple-50 text-purple-600', banner: 'bg-purple-500' },
-  completed:  { text: 'Selesai',              cls: 'bg-green-50 text-green-600', banner: 'bg-green-500' },
+  completed:  { text: 'Selesai',              cls: 'bg-green-50 text-green-600', banner: 'bg-green-500' }, // legacy fallback
+  delivered:  { text: 'Selesai',              cls: 'bg-green-50 text-green-600', banner: 'bg-green-500' },
   cancelled:  { text: 'Dibatalkan',           cls: 'bg-red-50 text-red-600',   banner: 'bg-red-500' },
+  expired:    { text: 'Kedaluwarsa',          cls: 'bg-gray-100 text-gray-600', banner: 'bg-gray-500' },
 };
 
 const PAYMENT_LABEL = {
@@ -225,54 +230,6 @@ const OrderDetailPanel = ({ order: orderProp, onClose, onOrderUpdated }) => {
   const [showCourierModal, setShowCourierModal] = useState(false);
   const [paying, setPaying] = useState(false);
   const [actionError, setActionError] = useState(null);
-
-  // ⭐ Review state — track reviews user udah pernah submit per item (product_id+order_id)
-  const [existingReviews, setExistingReviews] = useState({}); // key: `${product_id}_${order_id}` → review object
-  const [reviewModal, setReviewModal] = useState(null); // { productId, productName, orderId, reviewId?, initialRating?, initialTitle?, initialComment? }
-  const isOrderCompleted = ["delivered", "completed"].includes(order.status);
-
-  // ⭐ Fetch existing reviews untuk items di order ini (cuma kalau order completed)
-  useEffect(() => {
-    if (!isOrderCompleted || items.length === 0) {
-      setExistingReviews({});
-      return;
-    }
-
-    const fetchReviews = async () => {
-      try {
-        const { data: session } = await supabase.auth.getSession();
-        const userId = session?.session?.user?.id;
-        if (!userId) return;
-
-        // Get all reviews by this user for any product in this order
-        const productIds = items.map((it) => it.product_id).filter(Boolean);
-        if (productIds.length === 0) return;
-
-        const { data: reviews, error } = await supabase
-          .from("product_reviews")
-          .select("id, product_id, order_id, rating, title, comment, images")
-          .eq("user_id", userId)
-          .eq("order_id", order.id)
-          .in("product_id", productIds);
-
-        if (error) {
-          console.warn("[OrdersList] fetch reviews error:", error.message);
-          return;
-        }
-
-        // Build map: `${product_id}_${order_id}` → review
-        const reviewMap = {};
-        (reviews || []).forEach((r) => {
-          reviewMap[`${r.product_id}_${r.order_id}`] = r;
-        });
-        setExistingReviews(reviewMap);
-      } catch (e) {
-        console.warn("[OrdersList] fetch reviews exception:", e?.message);
-      }
-    };
-
-    fetchReviews();
-  }, [order.id, order.status, items.length, isOrderCompleted]);
 
   // ⭐ Lacak Pesanan: direct ke biteship_waybill_url (kalau ada), fallback ke /track page
   const handleTrackOrder = () => {
@@ -553,84 +510,36 @@ const OrderDetailPanel = ({ order: orderProp, onClose, onOrderUpdated }) => {
           <div className="bg-white border border-gray-200 rounded-xl p-4">
             <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-3">Produk Dibeli</p>
             <div className="space-y-3">
-              {items.map((item, idx) => {
-                // ⭐ Review check — lookup by `${product_id}_${order_id}`
-                const reviewKey = `${item.product_id}_${order.id}`;
-                const existingReview = existingReviews[reviewKey];
-
-                return (
-                  <div key={idx} className="flex items-start gap-3">
-                    <div className="w-14 h-14 rounded-lg bg-eglux-accent flex items-center justify-center flex-shrink-0 overflow-hidden">
-                      {(() => {
-                        const img = getProductImage(item);
-                        return img
-                          ? <img src={img} alt={item.product_name_snapshot} className="w-full h-full object-cover" loading="lazy" />
-                          : <span className="text-lg font-bold text-eglux-secondary uppercase">{(item.product_name_snapshot || '?').charAt(0)}</span>;
-                      })()}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <a
-                        href={`/products?open=${item.product_id}`}
-                        onClick={(e) => handleProductClick(e, item.product_id)}
-                        className="text-sm font-medium text-eglux-primary hover:text-eglux-secondary hover:underline line-clamp-2 cursor-pointer"
-                      >
-                        {item.product_name_snapshot}
-                      </a>
-                      {item.variant_name_snapshot && (
-                        <p className="text-[0.75rem] text-gray-400 mt-0.5">{item.variant_name_snapshot}</p>
-                      )}
-                      <p className="text-[0.75rem] text-gray-500 mt-0.5">
-                        {item.quantity}x · {rupiah(item.unit_price_snapshot)}
-                      </p>
-
-                      {/* ⭐ Review button — cuma muncul kalau order completed/delivered */}
-                      {isOrderCompleted && (
-                        <div className="mt-2">
-                          {existingReview ? (
-                            // User udah pernah review → tombol Edit + display rating
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="text-[0.7rem] text-amber-600 flex items-center gap-0.5">
-                                {'★'.repeat(existingReview.rating)}<span className="text-gray-300">{'★'.repeat(5 - existingReview.rating)}</span>
-                                <span className="ml-1 text-gray-500">({existingReview.rating}.0)</span>
-                              </span>
-                              <button
-                                onClick={() => setReviewModal({
-                                  productId: item.product_id,
-                                  productName: item.product_name_snapshot,
-                                  orderId: order.id,
-                                  reviewId: existingReview.id,
-                                  initialRating: existingReview.rating || 0,
-                                  initialTitle: existingReview.title || '',
-                                  initialComment: existingReview.comment || '',
-                                  initialImages: existingReview.images || [],
-                                })}
-                                className="text-[0.7rem] font-medium text-eglux-secondary hover:underline cursor-pointer border-none bg-transparent"
-                              >
-                                ✏️ Edit Review
-                              </button>
-                            </div>
-                          ) : (
-                            // Belum pernah review → tombol Tulis Review + bonus poin hint
-                            <button
-                              onClick={() => setReviewModal({
-                                productId: item.product_id,
-                                productName: item.product_name_snapshot,
-                                orderId: order.id,
-                              })}
-                              className="text-[0.7rem] font-semibold text-white bg-eglux-secondary hover:opacity-90 px-3 py-1.5 rounded-md cursor-pointer border-none flex items-center gap-1"
-                            >
-                              ⭐ Tulis Review (+5 poin)
-                            </button>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                    <p className="text-sm font-semibold text-eglux-primary whitespace-nowrap self-center">
-                      {rupiah(item.subtotal)}
+              {items.map((item, idx) => (
+                <div key={idx} className="flex items-start gap-3">
+                  <div className="w-14 h-14 rounded-lg bg-eglux-accent flex items-center justify-center flex-shrink-0 overflow-hidden">
+                    {(() => {
+                      const img = getProductImage(item);
+                      return img
+                        ? <img src={img} alt={item.product_name_snapshot} className="w-full h-full object-cover" loading="lazy" />
+                        : <span className="text-lg font-bold text-eglux-secondary uppercase">{(item.product_name_snapshot || '?').charAt(0)}</span>;
+                    })()}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <a
+                      href={`/products?open=${item.product_id}`}
+                      onClick={(e) => handleProductClick(e, item.product_id)}
+                      className="text-sm font-medium text-eglux-primary hover:text-eglux-secondary hover:underline line-clamp-2 cursor-pointer"
+                    >
+                      {item.product_name_snapshot}
+                    </a>
+                    {item.variant_name_snapshot && (
+                      <p className="text-[0.75rem] text-gray-400 mt-0.5">{item.variant_name_snapshot}</p>
+                    )}
+                    <p className="text-[0.75rem] text-gray-500 mt-0.5">
+                      {item.quantity}x · {rupiah(item.unit_price_snapshot)}
                     </p>
                   </div>
-                );
-              })}
+                  <p className="text-sm font-semibold text-eglux-primary whitespace-nowrap self-center">
+                    {rupiah(item.subtotal)}
+                  </p>
+                </div>
+              ))}
             </div>
           </div>
 
@@ -708,23 +617,16 @@ const OrderDetailPanel = ({ order: orderProp, onClose, onOrderUpdated }) => {
                 </div>
               )}
 
-              {/* Biaya Admin & Tax (3% dari harga asli produk) — pakai nilai persisten dari DB */}
+              {/* Biaya Admin & Tax (3% dari harga asli produk) */}
               {(() => {
-                // ⭐ Pakai order.tax_amount yang sudah disimpan saat checkout
-                // Fallback: kalau order lama (sebelum SQL 042), recalc dari items
-                let adminFee = Number(order.tax_amount) || 0;
-                let taxPercent = Number(order.tax_percent) || 3;
-                if (!adminFee) {
-                  const originalSubtotal = items.reduce((s, item) => {
-                    const orig = Number(item.original_unit_price) || Number(item.unit_price_snapshot) || 0;
-                    return s + (orig * (Number(item.quantity) || 1));
-                  }, 0);
-                  adminFee = Math.round(originalSubtotal * taxPercent / 100);
-                }
-                if (adminFee <= 0) return null;
+                const originalSubtotal = items.reduce((s, item) => {
+                  const orig = Number(item.original_unit_price) || Number(item.unit_price_snapshot) || 0;
+                  return s + (orig * (Number(item.quantity) || 1));
+                }, 0);
+                const adminFee = Math.round(originalSubtotal * 0.03);
                 return (
                   <div className="flex justify-between">
-                    <span className="text-gray-500">Biaya Admin &amp; Tax ({taxPercent}%)</span>
+                    <span className="text-gray-500">Biaya Admin & Tax (3%)</span>
                     <span className="text-gray-900">{rupiah(adminFee)}</span>
                   </div>
                 );
@@ -896,50 +798,6 @@ const OrderDetailPanel = ({ order: orderProp, onClose, onOrderUpdated }) => {
           onUpdated={handleCourierUpdated}
         />
       )}
-
-      {/* ⭐ ReviewModal — render kalau user klik tombol Tulis/Edit Review */}
-      {reviewModal && (
-        <ReviewModal
-          isOpen={Boolean(reviewModal)}
-          onClose={() => setReviewModal(null)}
-          productId={reviewModal.productId}
-          productName={reviewModal.productName}
-          orderId={reviewModal.orderId}
-          reviewId={reviewModal.reviewId}
-          initialRating={reviewModal.initialRating || 0}
-          initialTitle={reviewModal.initialTitle || ''}
-          initialComment={reviewModal.initialComment || ''}
-          initialImages={reviewModal.initialImages || []}
-          onSuccess={() => {
-            // ⭐ Refresh reviews list — re-fetch supaya tombol "Edit" muncul + rating updated
-            // (useEffect will re-run karena kita trigger state change)
-            setExistingReviews({});
-            // Trigger re-fetch by calling effect manually
-            setTimeout(() => {
-              const fetchReviews = async () => {
-                try {
-                  const { data: session } = await supabase.auth.getSession();
-                  const userId = session?.session?.user?.id;
-                  if (!userId) return;
-                  const { data: reviews } = await supabase
-                    .from("product_reviews")
-                    .select("id, product_id, order_id, rating, title, comment, images")
-                    .eq("user_id", userId)
-                    .eq("order_id", order.id);
-                  const reviewMap = {};
-                  (reviews || []).forEach((r) => {
-                    reviewMap[`${r.product_id}_${r.order_id}`] = r;
-                  });
-                  setExistingReviews(reviewMap);
-                } catch (e) { console.warn('[OrdersList] re-fetch reviews failed', e?.message); }
-              };
-              fetchReviews();
-            }, 100);
-            // Call parent refresh if needed (kalau ada perubahan yang perlu propagate)
-            if (onOrderUpdated) onOrderUpdated();
-          }}
-        />
-      )}
     </>
   );
 };
@@ -978,7 +836,6 @@ const OrdersList = () => {
         created_at, notes,
         payment_method,
         voucher_code, voucher_discount,
-        tax_percent, tax_base, tax_amount,
         midtrans_payment_type, midtrans_payment_code, midtrans_settlement_time,
         midtrans_transaction_status,
         customer:customers!inner(email, name, phone),
@@ -1073,7 +930,7 @@ const OrdersList = () => {
       )
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
-          console.log('[OrdersList] ✓ Realtime subscribed');
+          // console.log('[OrdersList] ✓ Realtime subscribed');
         } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
           console.warn('[OrdersList] Realtime subscription issue:', status);
         }
@@ -1111,10 +968,10 @@ const OrdersList = () => {
     return counts;
   }, [orders]);
 
-  if (!user) {
+ if (!user) {
     return (
-      <section className="max-w-container mx-auto px-4 md:px-8 py-16 text-center">
-        <p className="text-gray-500 mb-4">Kamu perlu masuk dulu untuk melihat pesanan.</p>
+      <section className="flex-1 flex flex-col items-center justify-center text-center px-4">
+        <p className="text-gray-500 mb-4">Sudah punya Akun?</p>
         <Link to="/admin" className="text-eglux-secondary font-semibold hover:underline">
           Masuk ke akun
         </Link>
@@ -1123,11 +980,11 @@ const OrdersList = () => {
   }
 
   return (
-    <section className="max-w-container mx-auto px-4 md:px-8 py-8 md:py-12">
-      <h1 className="text-xl md:text-2xl font-bold text-eglux-primary mb-6">Pesanan Saya</h1>
+    <section className="max-w-3xl mx-auto px-4 md:px-6 pt-24 md:pt-28 pb-8 100vh">
+      <h1 className="text-2xl font-bold text-eglux-primary">Pesanan Saya</h1>
 
       {/* Status tabs — Active only (Semua Active / Menunggu / Diproses / Dikirim) */}
-      <div className="flex items-center gap-2 overflow-x-auto pb-2 mb-6 -mx-1 px-1 no-scrollbar">
+      <div className="flex items-center justify-between mb-1 gap-4 flex-wrap">
         {STATUS_TABS.map((tab) => (
           <button
             key={tab.key}
@@ -1170,7 +1027,7 @@ const OrdersList = () => {
 
       {/* Empty state */}
       {!loading && !error && filteredOrders.length === 0 && (
-        <div className="text-center py-16">
+        <div className="bg-white border border-gray-200 rounded-2xl p-10 text-center">
           <div className="text-4xl mb-3">📦</div>
           <p className="text-gray-700 font-medium mb-1">
             {activeTab === 'all_active' ? 'Tidak ada pesanan aktif' : `Tidak ada pesanan "${STATUS_TABS.find(t => t.key === activeTab)?.label}"`}

@@ -152,61 +152,46 @@ const AdminLayout = ({ children, title = 'Admin', subtitle, actions }) => {
     return () => document.removeEventListener('click', handler);
   }, []);
 
-  // ── Fetch notifications (pending orders, claims, shipping delays) ──
+  // ── Fetch notifications from admin_notifications table (via edge function) ──
   const fetchNotifications = useCallback(async () => {
     try {
       const token = await getToken();
-      const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/get-dashboard-data`, {
+      const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/get-admin-notifications`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ date_range: '30d' }),
+        body: JSON.stringify({ action: 'list' }),
       });
       const result = await resp.json();
-      if (result.success && result.alerts) {
-        const notifs = [];
-        if (result.alerts.pending_orders_count > 0) {
-          notifs.push({
-            id: 'pending-orders',
-            type: 'urgent',
-            icon: '🔴',
-            title: `${result.alerts.pending_orders_count} order pending >23 jam`,
-            description: 'Akan expire segera — butuh follow up',
-            href: '/orders-admin',
-          });
-        }
-        if (result.alerts.pending_claims_count > 0) {
-          notifs.push({
-            id: 'pending-claims',
-            type: 'warning',
-            icon: '🟡',
-            title: `${result.alerts.pending_claims_count} klaim poin menunggu`,
-            description: 'Verifikasi klaim poin marketplace',
-            href: '/points-admin',
-          });
-        }
-        if (result.alerts.shipping_delays_count > 0) {
-          notifs.push({
-            id: 'shipping-delays',
-            type: 'warning',
-            icon: '🟠',
-            title: `${result.alerts.shipping_delays_count} paket shipping delay`,
-            description: 'Paket >3 hari belum sampai',
-            href: '/orders-admin',
-          });
-        }
-        setNotifications(notifs);
-        setNotifCount(notifs.length);
+      if (result.success) {
+        setNotifications(result.notifications || []);
+        setNotifCount(result.unread_count || 0);
       }
     } catch (e) {
       console.warn('[AdminLayout] notif fetch error:', e?.message);
     }
   }, [getToken]);
 
+  // Mark all as read
+  const markAllRead = useCallback(async () => {
+    try {
+      const token = await getToken();
+      await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/get-admin-notifications`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'mark_all_read' }),
+      });
+      setNotifCount(0);
+      setNotifications(prev => prev.map(n => ({ ...n, is_read: true })));
+    } catch (e) {
+      console.warn('[AdminLayout] mark all read error:', e?.message);
+    }
+  }, [getToken]);
+
   useEffect(() => { fetchNotifications(); }, [fetchNotifications]);
 
-  // Refresh notif setiap 60s
+  // Refresh notif setiap 30s (lebih sering karena ada event real-time)
   useEffect(() => {
-    const interval = setInterval(fetchNotifications, 60000);
+    const interval = setInterval(fetchNotifications, 30000);
     return () => clearInterval(interval);
   }, [fetchNotifications]);
 
@@ -493,10 +478,16 @@ const AdminLayout = ({ children, title = 'Admin', subtitle, actions }) => {
 
             {/* === Right-side group: Notif + UserMenu (dipush ke kanan, align dengan container) === */}
             <div className="ml-auto flex items-center gap-2">
-              {/* Notification Bell — original theme (gray + red badge) */}
+              {/* Notification Bell — admin notifications (order, review, return, alert) */}
               <div ref={notifRef} className="relative">
                 <button
-                  onClick={() => setShowNotifDropdown(!showNotifDropdown)}
+                  onClick={() => {
+                    setShowNotifDropdown(!showNotifDropdown);
+                    if (!showNotifDropdown && notifCount > 0) {
+                      // Auto mark all read after 2s (let user see the notifications first)
+                      setTimeout(() => markAllRead(), 2000);
+                    }
+                  }}
                   className="relative p-2 rounded-lg hover:bg-gray-100 cursor-pointer border-none bg-transparent transition-colors"
                   aria-label="Notifikasi"
                 >
@@ -505,42 +496,68 @@ const AdminLayout = ({ children, title = 'Admin', subtitle, actions }) => {
                     <path d="M13.73 21a2 2 0 0 1-3.46 0" />
                   </svg>
                   {notifCount > 0 && (
-                    <span className="absolute top-0 right-0 w-4 h-4 bg-red-500 text-white text-[0.6rem] font-bold rounded-full flex items-center justify-center">
+                    <span className="absolute top-0 right-0 min-w-[16px] h-4 px-1 bg-red-500 text-white text-[0.6rem] font-bold rounded-full flex items-center justify-center">
                       {notifCount > 9 ? '9+' : notifCount}
                     </span>
                   )}
                 </button>
 
-                {/* Notification Dropdown — original theme */}
+                {/* Notification Dropdown */}
                 {showNotifDropdown && (
-                  <div className="absolute top-full mt-1 right-0 w-80 bg-white border border-gray-200 rounded-lg shadow-xl max-h-[400px] overflow-y-auto z-[2000]">
-                    <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+                  <div className="absolute top-full mt-1 right-0 w-96 max-w-[calc(100vw-2rem)] bg-white border border-gray-200 rounded-lg shadow-xl max-h-[450px] flex flex-col z-[2000]">
+                    {/* Header */}
+                    <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between flex-shrink-0">
                       <h3 className="text-sm font-bold text-gray-900">Notifikasi</h3>
-                      {notifCount > 0 && (
-                        <span className="text-[0.65rem] text-gray-400">{notifCount} alert aktif</span>
-                      )}
+                      <div className="flex items-center gap-2">
+                        {notifCount > 0 && (
+                          <button
+                            onClick={() => markAllRead()}
+                            className="text-[0.65rem] text-blue-600 hover:underline cursor-pointer border-none bg-transparent"
+                          >
+                            Tandai semua dibaca
+                          </button>
+                        )}
+                        <span className="text-[0.65rem] text-gray-400">{notifCount} belum dibaca</span>
+                      </div>
                     </div>
-                    <div className="py-2">
+
+                    {/* Notifications list */}
+                    <div className="flex-1 overflow-y-auto">
                       {notifications.length === 0 ? (
-                        <div className="py-8 text-center">
-                          <p className="text-3xl mb-2">✅</p>
-                          <p className="text-xs text-gray-400">Semua aman, tidak ada alert.</p>
+                        <div className="py-10 text-center">
+                          <p className="text-3xl mb-2">🔔</p>
+                          <p className="text-xs text-gray-400">Tidak ada notifikasi</p>
                         </div>
                       ) : (
-                        notifications.map((n) => (
-                          <Link
-                            key={n.id}
-                            to={n.href}
-                            onClick={() => setShowNotifDropdown(false)}
-                            className="flex items-start gap-3 px-4 py-2.5 hover:bg-gray-50 no-underline border-b border-gray-50 last:border-0 transition-colors"
-                          >
-                            <span className="text-base flex-shrink-0 mt-0.5">{n.icon}</span>
-                            <div className="min-w-0 flex-1">
-                              <p className="text-xs font-semibold text-gray-900">{n.title}</p>
-                              <p className="text-[0.65rem] text-gray-400">{n.description}</p>
-                            </div>
-                          </Link>
-                        ))
+                        notifications.map((n) => {
+                          // Color per type
+                          const bgUnread = n.type === 'order' ? 'bg-blue-50' :
+                                          n.type === 'review' ? 'bg-amber-50' :
+                                          n.type === 'return' ? 'bg-orange-50' :
+                                          n.type === 'alert' ? 'bg-red-50' : '';
+                          return (
+                            <Link
+                              key={n.id}
+                              to={n.link || '#'}
+                              onClick={() => setShowNotifDropdown(false)}
+                              className={`flex items-start gap-3 px-4 py-3 hover:bg-gray-50 no-underline border-b border-gray-50 last:border-0 transition-colors ${!n.is_read ? bgUnread : ''}`}
+                            >
+                              <span className="text-lg flex-shrink-0 mt-0.5">{n.icon}</span>
+                              <div className="min-w-0 flex-1">
+                                <p className={`text-xs ${!n.is_read ? 'font-bold text-gray-900' : 'font-medium text-gray-700'}`}>{n.title}</p>
+                                {n.description && (
+                                  <p className="text-[0.65rem] text-gray-500 mt-0.5 line-clamp-2">{n.description}</p>
+                                )}
+                                <p className="text-[0.6rem] text-gray-400 mt-1">
+                                  {new Date(n.created_at).toLocaleString('id-ID', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                                </p>
+                              </div>
+                              {!n.is_read && (
+                                <span className="w-2 h-2 bg-red-500 rounded-full flex-shrink-0 mt-1.5"></span>
+                              )}
+                            </Link>
+                          );
+                        })
                       )}
                     </div>
                   </div>

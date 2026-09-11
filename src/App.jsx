@@ -47,6 +47,7 @@ import ProfilePage from './pages/ProfilePage';
 import ForgotPasswordPage from './pages/ForgotPasswordPage';
 import ResetPasswordPage from './pages/ResetPasswordPage';
 import AdminReviewsPage from './pages/AdminReviewsPage';
+import AdminReturnsPage from './pages/AdminReturnsPage';
 
 // Protected route wrapper
 import ProtectedRoute from './components/ui/ProtectedRoute';
@@ -180,6 +181,15 @@ const App = () => {
                   <ProtectedRoute roles={['team_dev', 'master', 'admin']} page="reviews">
                     <AdminReviewsPage />
                   </ProtectedRoute>
+                }
+              />
+
+              <Route
+                  path="/returns-admin"
+                  element={
+                    <ProtectedRoute roles={['team_dev', 'master', 'admin']} page="returns">
+                      <AdminReturnsPage />
+                    </ProtectedRoute>
                 }
               />
 

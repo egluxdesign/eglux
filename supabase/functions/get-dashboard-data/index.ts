@@ -145,7 +145,10 @@ serve(async (req: Request) => {
     console.log("[get-dashboard-data] orders query:", `${Date.now() - tOrders}ms`, `(${(orders || []).length} rows)`);
 
     const allOrders = orders || [];
-    const paidOrders = allOrders.filter((o: any) => o.payment_status === "paid");
+    const paidOrders = allOrders.filter((o: any) =>
+      o.payment_status === "paid" &&
+      !["cancelled", "expired", "refund"].includes(o.status)
+    );
     const totalRevenue = paidOrders.reduce((s: number, o: any) => s + Number(o.total_amount || 0), 0);
     const totalOrders = allOrders.length;
     const paidCount = paidOrders.length;
@@ -435,7 +438,10 @@ serve(async (req: Request) => {
       .gte("created_at", prevRange.from)
       .lte("created_at", prevRange.to);
     const prevOrders = prevOrdersData || [];
-    const prevPaidOrders = prevOrders.filter((o: any) => o.payment_status === "paid");
+    const prevPaidOrders = prevOrders.filter((o: any) =>
+      o.payment_status === "paid" &&
+      !["cancelled", "expired", "refund"].includes(o.status)
+    );
     const prevRevenue = prevPaidOrders.reduce((s: number, o: any) => s + Number(o.total_amount || 0), 0);
     const prevPaidCount = prevPaidOrders.length;
     const prevTotalOrders = prevOrders.length;
