@@ -43,26 +43,62 @@ const ProductModal = ({ product, onClose, onAddToCart }) => {
       return;
     }
     setReviewsLoading(true);
-    supabase
-      .from('product_reviews')
-      .select(`
-        id, rating, title, comment, images,
-        is_verified, created_at,
-        user:profiles!product_reviews_user_id_fkey(full_name)
-      `)
-      .eq('product_id', product.id)
-      .eq('is_published', true)
-      .order('created_at', { ascending: false })
-      .limit(50)
-      .then(({ data, error }) => {
-        if (error) {
-          console.warn('[ProductModal] fetch reviews error:', error.message);
+
+    // Refactor: fetch reviews + profiles terpisah (gak pakai FK hint)
+    // Alasan: hint `!product_reviews_user_id_fkey` mengarah ke FK auth.users(id),
+    // bukan profiles(id). Di local env yang belum run SQL 058b, query akan error
+    // "Could not find a relationship" → reviews kosong → preview tidak muncul.
+    (async () => {
+      try {
+        // Step 1: Fetch reviews tanpa nested select
+        const { data: reviewData, error: reviewErr } = await supabase
+          .from('product_reviews')
+          .select('id, rating, title, comment, images, is_verified, admin_reply, created_at, updated_at, user_id')
+          .eq('product_id', product.id)
+          .eq('is_published', true)
+          .order('created_at', { ascending: false })
+          .limit(50);
+
+        if (reviewErr) {
+          console.warn('[ProductModal] fetch reviews error:', reviewErr.message);
           setReviews([]);
-        } else {
-          setReviews(data || []);
+          return;
         }
+
+        if (!reviewData || reviewData.length === 0) {
+          setReviews([]);
+          return;
+        }
+
+        // Step 2: Fetch profiles untuk semua user_id (batch, N+1 avoidance)
+        const userIds = [...new Set(reviewData.map(r => r.user_id).filter(Boolean))];
+        let profileMap = new Map();
+        if (userIds.length > 0) {
+          const { data: profileData, error: profileErr } = await supabase
+            .from('profiles')
+            .select('id, full_name')
+            .in('id', userIds);
+          if (profileErr) {
+            console.warn('[ProductModal] fetch profiles error (non-fatal):', profileErr.message);
+            // Continue with empty profileMap — review tetap muncul, cuma tanpa nama user
+          } else {
+            profileMap = new Map((profileData || []).map(p => [p.id, p]));
+          }
+        }
+
+        // Step 3: Merge reviews + profiles
+        const merged = reviewData.map(r => ({
+          ...r,
+          user: profileMap.get(r.user_id) || null,
+        }));
+        setReviews(merged);
+      } catch (e) {
+        console.warn('[ProductModal] unexpected error:', e);
+        setReviews([]);
+      } finally {
         setReviewsLoading(false);
-      });
+      }
+    })();
   }, [product?.id]);
 
   // ⭐ Compute average rating + distribution
@@ -591,6 +627,17 @@ const ProductModal = ({ product, onClose, onAddToCart }) => {
                           )}
                           {r.comment && (
                             <p className="text-[0.78rem] text-gray-600 mt-1 leading-relaxed">{r.comment}</p>
+                          )}
+                          {/* ⭐ Admin reply (official response dari store) */}
+                          {r.admin_reply && (
+                            <div className="mt-2 bg-amber-50/60 border border-amber-100 rounded-md p-2">
+                              <div className="flex items-center gap-1.5 mb-0.5">
+                                <span className="text-[0.65rem] font-bold text-eglux-primary uppercase tracking-wide">EGLUX Official</span>
+                                <span className="text-[0.6rem] text-amber-700/70">·</span>
+                                <span className="text-[0.6rem] text-amber-700/80">Penjual</span>
+                              </div>
+                              <p className="text-[0.78rem] text-gray-700 leading-relaxed">{r.admin_reply}</p>
+                            </div>
                           )}
                           {r.images && Array.isArray(r.images) && r.images.length > 0 && (
                             <div className="flex gap-1.5 mt-2">

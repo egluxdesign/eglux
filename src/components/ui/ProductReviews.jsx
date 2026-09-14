@@ -111,13 +111,13 @@ const ProductReviews = ({ productId }) => {
     try {
       const offset = (pageNum - 1) * PAGE_SIZE;
 
-      // Fetch reviews (public, published only)
-      const { data, error: fetchErr, count } = await supabase
+      // Refactor: fetch reviews + profiles terpisah (gak pakai FK hint)
+      // Alasan: hint `!user_id` bisa ambiguous kalau ada multiple FK
+      // (auth.users + profiles), error di local env yang belum run SQL 058b.
+      const { data: reviewData, error: fetchErr, count } = await supabase
         .from('product_reviews')
-        .select(`
-          id, rating, title, comment, images, is_verified, admin_reply, created_at,
-          user:profiles!user_id(full_name, email)
-        `, { count: 'exact' })
+        .select('id, rating, title, comment, images, is_verified, admin_reply, created_at, updated_at, user_id',
+          { count: 'exact' })
         .eq('product_id', productId)
         .eq('is_published', true)
         .order('created_at', { ascending: false })
@@ -125,7 +125,21 @@ const ProductReviews = ({ productId }) => {
 
       if (fetchErr) throw fetchErr;
 
-      setReviews(data || []);
+      // Fetch profiles terpisah (batch)
+      let merged = reviewData || [];
+      if (merged.length > 0) {
+        const userIds = [...new Set(merged.map(r => r.user_id).filter(Boolean))];
+        if (userIds.length > 0) {
+          const { data: profileData } = await supabase
+            .from('profiles')
+            .select('id, full_name, email')
+            .in('id', userIds);
+          const profileMap = new Map((profileData || []).map(p => [p.id, p]));
+          merged = merged.map(r => ({ ...r, user: profileMap.get(r.user_id) || null }));
+        }
+      }
+
+      setReviews(merged);
       setTotal(count || 0);
 
       // Fetch all ratings for distribution + avg (separate query, head=false to get all)
