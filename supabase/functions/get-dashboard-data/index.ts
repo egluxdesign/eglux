@@ -279,7 +279,7 @@ serve(async (req: Request) => {
       // ⭐ Phase 1.1: Product page views (lebih spesifik untuk conversion)
       supabase.from("page_views").select("*", { count: "exact", head: true }).eq("page_type", "product").gte("created_at", from).lte("created_at", to),
       // ⭐ Phase 2.1: Active vouchers (marketing center)
-      supabase.from("vouchers").select("id, code, discount_type, discount_value, is_active, valid_until").eq("is_active", true).order("valid_until", { ascending: true }).limit(5),
+      supabase.from("vouchers").select("id, code, discount_type, discount_value, is_active, end_at").eq("is_active", true).order("end_at", { ascending: true }).limit(5),
       // ⭐ Phase 2.1: Active point rewards (marketing center)
       supabase.from("point_rewards").select("id, name, points_cost, is_active").eq("is_active", true).order("points_cost", { ascending: true }).limit(5),
     ]);
@@ -398,7 +398,7 @@ serve(async (req: Request) => {
       code: v.code,
       discount_type: v.discount_type,
       discount_value: v.discount_value,
-      valid_until: v.valid_until,
+      valid_until: v.end_at,
     }));
     const activeRewards = (activeRewardsRes.data || []).map((r: any) => ({
       id: r.id,
