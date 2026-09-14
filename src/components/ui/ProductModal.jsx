@@ -601,19 +601,18 @@ const ProductModal = ({ product, onClose, onAddToCart }) => {
                                   alt={`Review ${i + 1}`}
                                   className="w-12 h-12 object-cover rounded border border-gray-100 bg-gray-50"
                                   loading="lazy"
+                                  referrerPolicy="no-referrer"
+                                  crossOrigin="anonymous"
                                   onError={(e) => {
-                                    // Fallback kalau gambar gagal load (URL expired / di-cleanup / RLS issue)
-                                    // Sembunyikan gambar broken, ganti dengan placeholder SVG
+                                    // Kalau gambar gagal load, ganti src dengan placeholder SVG data URI
+                                    // (jangan hide — biar user tetap lihat ada slot gambar + bisa debug)
                                     const el = e.currentTarget;
-                                    el.style.display = 'none';
-                                    const parent = el.parentElement;
-                                    if (parent && !parent.dataset.fallbackApplied) {
-                                      parent.dataset.fallbackApplied = 'true';
-                                      const placeholder = document.createElement('div');
-                                      placeholder.className = 'w-12 h-12 rounded border border-gray-200 bg-gray-100 flex items-center justify-center text-gray-300';
-                                      placeholder.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="1.5"/><path d="m21 15-3.5-3.5a2 2 0 0 0-2.8 0L6 20"/></svg>';
-                                      parent.appendChild(placeholder);
-                                    }
+                                    if (el.dataset.errorHandled) return; // prevent infinite loop
+                                    el.dataset.errorHandled = 'true';
+                                    console.warn('[ProductModal] Review image failed to load:', img);
+                                    el.src = 'data:image/svg+xml;utf8,' + encodeURIComponent(
+                                      '<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48"><rect width="48" height="48" fill="#f3f4f6" rx="4"/><g fill="none" stroke="#d1d5db" stroke-width="1.5"><rect x="6" y="6" width="36" height="36" rx="3"/><circle cx="18" cy="18" r="3"/><path d="m42 30-7-7a4 4 0 0 0-5.6 0L12 40"/></g></svg>'
+                                    );
                                   }}
                                 />
                               ))}
@@ -662,4 +661,4 @@ const ProductModal = ({ product, onClose, onAddToCart }) => {
   );
 };
 
-export default ProductModal;  
+export default ProductModal;

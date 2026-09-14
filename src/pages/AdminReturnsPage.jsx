@@ -327,7 +327,17 @@ const AdminReturnsPage = () => {
                         <div><p className="text-[0.65rem] text-gray-400 uppercase font-semibold mb-1">Foto</p>
                           <div className="flex gap-2">{r.images.map((img, i) => (
                             <a key={i} href={img} target="_blank" rel="noopener noreferrer" className="block w-16 h-16 rounded-lg overflow-hidden border border-gray-200 hover:opacity-80">
-                              <img src={img} alt={`Bukti ${i+1}`} className="w-full h-full object-cover" loading="lazy" /></a>
+                              <img src={img} alt={`Bukti ${i+1}`} className="w-full h-full object-cover" loading="lazy"
+                                referrerPolicy="no-referrer"
+                                onError={(e) => {
+                                  const el = e.currentTarget;
+                                  if (el.dataset.errorHandled) return;
+                                  el.dataset.errorHandled = 'true';
+                                  console.warn('[AdminReturns] Image failed to load:', img);
+                                  el.src = 'data:image/svg+xml;utf8,' + encodeURIComponent(
+                                    '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><rect width="64" height="64" fill="#f3f4f6"/><g fill="none" stroke="#d1d5db" stroke-width="1.5"><rect x="8" y="8" width="48" height="48" rx="4"/><circle cx="24" cy="24" r="4"/><path d="m56 40-9-9a5 5 0 0 0-7 0L16 53"/></g></svg>'
+                                  );
+                                }} /></a>
                           ))}</div></div>
                       )}
                       {r.video && (
