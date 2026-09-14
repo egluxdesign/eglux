@@ -328,7 +328,6 @@ const AdminReturnsPage = () => {
                           <div className="flex gap-2">{r.images.map((img, i) => (
                             <a key={i} href={img} target="_blank" rel="noopener noreferrer" className="block w-16 h-16 rounded-lg overflow-hidden border border-gray-200 hover:opacity-80">
                               <img src={img} alt={`Bukti ${i+1}`} className="w-full h-full object-cover" loading="lazy"
-                                referrerPolicy="no-referrer"
                                 onError={(e) => {
                                   const el = e.currentTarget;
                                   if (el.dataset.errorHandled) return;

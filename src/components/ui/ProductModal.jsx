@@ -601,11 +601,9 @@ const ProductModal = ({ product, onClose, onAddToCart }) => {
                                   alt={`Review ${i + 1}`}
                                   className="w-12 h-12 object-cover rounded border border-gray-100 bg-gray-50"
                                   loading="lazy"
-                                  referrerPolicy="no-referrer"
-                                  crossOrigin="anonymous"
                                   onError={(e) => {
                                     // Kalau gambar gagal load, ganti src dengan placeholder SVG data URI
-                                    // (jangan hide — biar user tetap lihat ada slot gambar + bisa debug)
+                                    // (jangan hide — biar slot image tetap visible + bisa debug)
                                     const el = e.currentTarget;
                                     if (el.dataset.errorHandled) return; // prevent infinite loop
                                     el.dataset.errorHandled = 'true';
