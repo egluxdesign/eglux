@@ -38,6 +38,37 @@ import { supabase } from '../../lib/supabaseClient';
 const MAX_IMAGES = 5;
 const MAX_COMMENT = 1000;
 const MAX_TITLE = 200;
+const MAX_PHOTO_SIZE = 5 * 1024 * 1024; // 5MB sebelum kompresi
+
+// ⭐ Kompresi foto sebelum upload (hemat ~94% storage)
+const compressImage = (file, maxWidth = 800, quality = 0.7) => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let { width, height } = img;
+        if (width > maxWidth) {
+          height = Math.round((height * maxWidth) / width);
+          width = maxWidth;
+        }
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+        canvas.toBlob((blob) => {
+          if (blob) resolve(new File([blob], file.name.replace(/\.[^.]+$/, '.jpg'), { type: 'image/jpeg' }));
+          else reject(new Error('Kompresi gagal'));
+        }, 'image/jpeg', quality);
+      };
+      img.onerror = () => reject(new Error('Gagal load gambar'));
+      img.src = e.target.result;
+    };
+    reader.onerror = () => reject(new Error('Gagal read file'));
+    reader.readAsDataURL(file);
+  });
+};
 
 const StarRating = ({ value, onChange, size = 'text-3xl' }) => {
   const [hover, setHover] = useState(0);
@@ -134,12 +165,10 @@ const ReviewModal = ({
 
     if (invalidFiles.length > 0) {
       setError(`File ditolak: ${invalidFiles.join(', ')}`);
-      // Clear error after 5s
       setTimeout(() => setError(''), 5000);
     }
 
     if (validFiles.length === 0) {
-      // Reset input supaya user bisa select file yang sama lagi setelah fix
       if (fileInputRef.current) fileInputRef.current.value = '';
       return;
     }
@@ -158,17 +187,16 @@ const ReviewModal = ({
 
       const uploadedUrls = [];
       for (const file of validFiles) {
-        // Path pattern: {user_id}/{timestamp}_{random}.ext
-        const ext = file.name.split('.').pop()?.toLowerCase() || 'jpg';
-        const fileName = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
-        const filePath = `${userId}/${fileName}`;
+        // ⭐ Kompresi foto sebelum upload
+        const compressedFile = await compressImage(file, 800, 0.7);
+        const filePath = `${userId}/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.jpg`;
 
         const { error: uploadErr } = await supabase.storage
           .from('review-images')
-          .upload(filePath, file, {
+          .upload(filePath, compressedFile, {
             cacheControl: '3600',
             upsert: false,
-            contentType: file.type,
+            contentType: 'image/jpeg',
           });
 
         if (uploadErr) {

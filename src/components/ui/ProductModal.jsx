@@ -2,6 +2,18 @@
 // ============================================================================
 // [v7] ProductModal with Reviews — full rewrite
 // ============================================================================
+// Features:
+//   - Product image gallery (Swiper + thumbnails)
+//   - Variant selection (discount-aware)
+//   - Quantity selector
+//   - Add to cart
+//   - Description (collapsible)
+//   - ⭐ Reviews section (collapsible):
+//     - Average rating + star display
+//     - Rating distribution bars (5★→1★)
+//     - List of published reviews (username, stars, verified badge, date, title, comment, images)
+//   - ⭐ Photo upload support in reviews (via ReviewModal)
+// ============================================================================
 
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Swiper, SwiperSlide } from 'swiper/react';
@@ -31,55 +43,24 @@ const ProductModal = ({ product, onClose, onAddToCart }) => {
       return;
     }
     setReviewsLoading(true);
-
-    // Query 1: fetch reviews TANPA join profiles (avoid FK error)
     supabase
       .from('product_reviews')
-      .select('id, rating, title, comment, images, is_verified, created_at, user_id')
+      .select(`
+        id, rating, title, comment, images,
+        is_verified, created_at,
+        user:profiles!product_reviews_user_id_fkey(full_name)
+      `)
       .eq('product_id', product.id)
       .eq('is_published', true)
       .order('created_at', { ascending: false })
       .limit(50)
-      .then(async ({ data, error }) => {
+      .then(({ data, error }) => {
         if (error) {
           console.warn('[ProductModal] fetch reviews error:', error.message);
           setReviews([]);
-          setReviewsLoading(false);
-          return;
+        } else {
+          setReviews(data || []);
         }
-
-        if (!data || data.length === 0) {
-          setReviews([]);
-          setReviewsLoading(false);
-          return;
-        }
-
-        // Query 2: fetch user names untuk reviews yang ada
-        const userIds = [...new Set(data.map((r) => r.user_id).filter(Boolean))];
-        if (userIds.length === 0) {
-          setReviews(data);
-          setReviewsLoading(false);
-          return;
-        }
-
-// Query 2: fetch user names + roles
-const { data: profilesData } = await supabase
-  .from('profiles')
-  .select('id, full_name, role')
-  .in('id', userIds);
-
-const profileMap = {};
-(profilesData || []).forEach((p) => {
-  profileMap[p.id] = { full_name: p.full_name, role: p.role };
-});
-
-const reviewsWithUser = data.map((r) => ({
-  ...r,
-  user: { full_name: profileMap[r.user_id]?.full_name || null },
-  user_role: profileMap[r.user_id]?.role || null,
-}));
-
-        setReviews(reviewsWithUser);
         setReviewsLoading(false);
       });
   }, [product?.id]);
@@ -591,20 +572,15 @@ const reviewsWithUser = data.map((r) => ({
                                 {r.user?.full_name || 'Customer'}
                               </p>
                               <div className="flex items-center gap-1 mt-0.5">
-  <span className="text-amber-500 text-[0.7rem]">
-    {'★'.repeat(r.rating)}<span className="text-gray-300">{'★'.repeat(5 - r.rating)}</span>
-  </span>
-  {r.is_verified && (
-    <span className="text-[0.6rem] text-green-600 bg-green-50 px-1.5 py-0.5 rounded">
-      ✓ Verified
-    </span>
-  )}
-  {r.user_role && ['team_dev', 'master', 'admin'].includes(r.user_role) && (
-    <span className="text-[0.6rem] text-eglux-secondary bg-eglux-accent px-1.5 py-0.5 rounded font-medium">
-      {r.user_role === 'team_dev' ? 'Developer' : r.user_role === 'master' ? 'Owner' : 'Admin'}
-    </span>
-  )}
-</div>
+                                <span className="text-amber-500 text-[0.7rem]">
+                                  {'★'.repeat(r.rating)}<span className="text-gray-300">{'★'.repeat(5 - r.rating)}</span>
+                                </span>
+                                {r.is_verified && (
+                                  <span className="text-[0.6rem] text-green-600 bg-green-50 px-1.5 py-0.5 rounded">
+                                    ✓ Verified
+                                  </span>
+                                )}
+                              </div>
                             </div>
                             <span className="text-[0.6rem] text-gray-400 whitespace-nowrap">
                               {formatDate(r.created_at)}
@@ -617,25 +593,32 @@ const reviewsWithUser = data.map((r) => ({
                             <p className="text-[0.78rem] text-gray-600 mt-1 leading-relaxed">{r.comment}</p>
                           )}
                           {r.images && Array.isArray(r.images) && r.images.length > 0 && (
-  <                         div className="flex gap-1.5 mt-2">
-    {r.images.slice(0, 5).map((img, i) => (
-      <a
-        key={i}
-        href={img}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="block w-12 h-12 overflow-hidden rounded border border-gray-100 cursor-pointer hover:opacity-80 transition-opacity"
-      >
-        <img
-          src={img}
-          alt={`Review foto ${i + 1}`}
-          className="w-full h-full object-cover"
-          loading="lazy"
-        />
-      </a>
-    ))}
-  </div>
-)}
+                            <div className="flex gap-1.5 mt-2">
+                              {r.images.slice(0, 5).map((img, i) => (
+                                <img
+                                  key={i}
+                                  src={img}
+                                  alt={`Review ${i + 1}`}
+                                  className="w-12 h-12 object-cover rounded border border-gray-100 bg-gray-50"
+                                  loading="lazy"
+                                  onError={(e) => {
+                                    // Fallback kalau gambar gagal load (URL expired / di-cleanup / RLS issue)
+                                    // Sembunyikan gambar broken, ganti dengan placeholder SVG
+                                    const el = e.currentTarget;
+                                    el.style.display = 'none';
+                                    const parent = el.parentElement;
+                                    if (parent && !parent.dataset.fallbackApplied) {
+                                      parent.dataset.fallbackApplied = 'true';
+                                      const placeholder = document.createElement('div');
+                                      placeholder.className = 'w-12 h-12 rounded border border-gray-200 bg-gray-100 flex items-center justify-center text-gray-300';
+                                      placeholder.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="1.5"/><path d="m21 15-3.5-3.5a2 2 0 0 0-2.8 0L6 20"/></svg>';
+                                      parent.appendChild(placeholder);
+                                    }
+                                  }}
+                                />
+                              ))}
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -679,4 +662,4 @@ const reviewsWithUser = data.map((r) => ({
   );
 };
 
-export default ProductModal;
+export default ProductModal;  

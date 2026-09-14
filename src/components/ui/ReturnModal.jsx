@@ -1,33 +1,61 @@
 // src/components/ui/ReturnModal.jsx
 // ============================================================================
-// ReturnModal v2 — Customer ajukan pengembalian
+// ReturnModal v3 — Customer ajukan pengembalian (dengan kompresi foto)
 // ============================================================================
-// v2 changes:
-//   - 3 reasons only: damaged, missing_item, wrong_item
-//   - 2 resolutions only: refund, refund_return
-//   - Phone field (auto-fill from customer data, editable)
-//   - Photo upload (max 5, max 5MB each)
-//   - Video upload (1 video, max 20MB)
+// v3 changes:
+//   - Foto: auto-kompres ke max 800px, quality 70% (hemat 94% storage)
+//   - Foto: max 3 foto (bukan 5)
+//   - Video: max 10MB (bukan 20MB)
 // ============================================================================
 
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 import { rupiah } from '../../context/CartContext';
 
-const MAX_IMAGES = 5;
-const MAX_VIDEO_SIZE = 20 * 1024 * 1024; // 20MB
-const MAX_PHOTO_SIZE = 5 * 1024 * 1024; // 5MB
+const MAX_IMAGES = 3;
+const MAX_VIDEO_SIZE = 10 * 1024 * 1024; // 10MB
+const MAX_PHOTO_SIZE = 5 * 1024 * 1024; // 5MB (sebelum kompresi)
 const MAX_DESC = 500;
 
+// ⭐ Kompresi foto sebelum upload (hemat ~94% storage)
+const compressImage = (file, maxWidth = 800, quality = 0.7) => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let { width, height } = img;
+        if (width > maxWidth) {
+          height = Math.round((height * maxWidth) / width);
+          width = maxWidth;
+        }
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+        canvas.toBlob((blob) => {
+          if (blob) resolve(new File([blob], file.name.replace(/\.[^.]+$/, '.jpg'), { type: 'image/jpeg' }));
+          else reject(new Error('Kompresi gagal'));
+        }, 'image/jpeg', quality);
+      };
+      img.onerror = () => reject(new Error('Gagal load gambar'));
+      img.src = e.target.result;
+    };
+    reader.onerror = () => reject(new Error('Gagal read file'));
+    reader.readAsDataURL(file);
+  });
+};
+
 const REASON_OPTIONS = [
-  { value: 'damaged', label: 'Produk Rusak / Cacat' },
-  { value: 'missing_item', label: 'Barang Kurang / Tidak Lengkap' },
-  { value: 'wrong_item', label: 'Salah Kirim Barang' },
+  { value: 'damaged', label: 'Produk Rusak / Cacat', icon: '💔' },
+  { value: 'missing_item', label: 'Barang Kurang / Tidak Lengkap', icon: '📦' },
+  { value: 'wrong_item', label: 'Salah Kirim Barang', icon: '🔄' },
 ];
 
 const RESOLUTION_OPTIONS = [
-  { value: 'refund', label: 'Refund', desc: 'Pengembalian dana berdasarkan kondisi barang' },
-  { value: 'refund_return', label: 'Refund + Return', desc: 'Kirim balik barang, dana dikembalikan' },
+  { value: 'refund', label: 'Refund', icon: '💰', desc: 'Pengembalian dana berdasarkan kondisi barang' },
+  { value: 'refund_return', label: 'Refund + Return', icon: '↩️', desc: 'Kirim balik barang, dana dikembalikan' },
 ];
 
 const ReturnModal = ({ isOpen, onClose, orderId, orderTotal, onSuccess }) => {
@@ -67,7 +95,7 @@ const ReturnModal = ({ isOpen, onClose, orderId, orderTotal, onSuccess }) => {
     }
   }, [isOpen]);
 
-  // ── Photo upload ──
+  // ── Photo upload (dengan kompresi) ──
   const handleImageUpload = useCallback(async (e) => {
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
@@ -90,9 +118,10 @@ const ReturnModal = ({ isOpen, onClose, orderId, orderTotal, onSuccess }) => {
 
       const uploaded = [];
       for (const file of validFiles.slice(0, remainingSlots)) {
-        const ext = file.name.split('.').pop()?.toLowerCase() || 'jpg';
-        const filePath = `${userId}/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
-        const { error: uploadErr } = await supabase.storage.from('return-images').upload(filePath, file, { cacheControl: '3600', contentType: file.type });
+        // ⭐ Kompresi foto sebelum upload
+        const compressedFile = await compressImage(file, 800, 0.7);
+        const filePath = `${userId}/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.jpg`;
+        const { error: uploadErr } = await supabase.storage.from('return-images').upload(filePath, compressedFile, { cacheControl: '3600', contentType: 'image/jpeg' });
         if (uploadErr) continue;
         const { data: urlData } = supabase.storage.from('return-images').getPublicUrl(filePath);
         if (urlData?.publicUrl) uploaded.push(urlData.publicUrl);
@@ -105,7 +134,7 @@ const ReturnModal = ({ isOpen, onClose, orderId, orderTotal, onSuccess }) => {
     }
   }, [images]);
 
-  // ── Video upload ──
+  // ── Video upload (max 10MB) ──
   const handleVideoUpload = useCallback(async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -116,7 +145,7 @@ const ReturnModal = ({ isOpen, onClose, orderId, orderTotal, onSuccess }) => {
       return;
     }
     if (file.size > MAX_VIDEO_SIZE) {
-      setError('Video maksimal 20MB');
+      setError('Video maksimal 10MB');
       setTimeout(() => setError(''), 5000);
       if (videoInputRef.current) videoInputRef.current.value = '';
       return;
@@ -271,7 +300,7 @@ const ReturnModal = ({ isOpen, onClose, orderId, orderTotal, onSuccess }) => {
                 <label htmlFor="return-photo-upload" className={`flex items-center justify-center gap-2 py-2.5 px-3 text-sm border-2 border-dashed rounded-lg cursor-pointer transition-colors ${uploadingImages || images.length >= MAX_IMAGES ? 'border-gray-200 text-gray-400 cursor-not-allowed' : 'border-gray-300 text-gray-600 hover:border-eglux-secondary hover:text-eglux-secondary'}`}>
                   {uploadingImages ? (<><span className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin inline-block" /> Mengupload...</>) : images.length >= MAX_IMAGES ? (<>Maksimal {MAX_IMAGES} foto</>) : (<>📷 Tambah Foto ({images.length}/{MAX_IMAGES})</>)}
                 </label>
-                <p className="text-[0.65rem] text-gray-400 mt-1">Maks 5MB per foto, format JPG/PNG/WebP</p>
+                <p className="text-[0.65rem] text-gray-400 mt-1">Maks 5MB per foto (auto-kompres), format JPG/PNG/WebP</p>
                 {images.length > 0 && (
                   <div className="flex flex-wrap gap-2 mt-2">
                     {images.map((url, idx) => (
@@ -291,7 +320,7 @@ const ReturnModal = ({ isOpen, onClose, orderId, orderTotal, onSuccess }) => {
                 <label htmlFor="return-video-upload" className={`flex items-center justify-center gap-2 py-2.5 px-3 text-sm border-2 border-dashed rounded-lg cursor-pointer transition-colors ${uploadingVideo || video ? 'border-gray-200 text-gray-400 cursor-not-allowed' : 'border-gray-300 text-gray-600 hover:border-eglux-secondary hover:text-eglux-secondary'}`}>
                   {uploadingVideo ? (<><span className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin inline-block" /> Mengupload video...</>) : video ? (<>✅ Video terunggah</>) : (<>🎥 Tambah Video</>)}
                 </label>
-                <p className="text-[0.65rem] text-gray-400 mt-1">Maks 20MB, format MP4/MOV/WebM</p>
+                <p className="text-[0.65rem] text-gray-400 mt-1">Maks 10MB, format MP4/MOV/WebM</p>
                 {video && (
                   <button type="button" onClick={handleRemoveVideo} className="mt-2 text-xs text-red-500 hover:underline cursor-pointer border-none bg-transparent">Hapus video</button>
                 )}

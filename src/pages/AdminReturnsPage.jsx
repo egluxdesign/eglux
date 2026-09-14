@@ -1,13 +1,13 @@
 // src/pages/AdminReturnsPage.jsx
 // ============================================================================
-// AdminReturnsPage — Admin manage return/refund requests
+// AdminReturnsPage v2 — Manage return/refund + exchange + partial refund
 // ============================================================================
-// Features:
-//   - List all return requests (filter by status)
-//   - View detail (reason, resolution, description, images, customer info)
-//   - Approve (set refund_amount + return_shipping_cost)
-//   - Reject (with admin_notes)
-//   - Confirm received (complete return, update order status to 'refund')
+// v2 changes:
+//   - Admin can choose resolution type saat approve:
+//     full_refund | exchange | partial_refund
+//   - Exchange: select replacement product + variant + price difference
+//   - Partial refund: set amount, customer keeps product, auto-complete
+//   - Return shipping: admin decide who pays (customer/seller)
 // ============================================================================
 
 import { useState, useEffect, useCallback } from 'react';
@@ -16,349 +16,451 @@ import { supabase } from '../lib/supabaseClient';
 import { rupiah } from '../context/CartContext';
 
 const STATUS_TABS = [
-  { key: 'pending', label: 'Menunggu Review', color: 'bg-amber-50 text-amber-700 border-amber-200' },
-  { key: 'approved', label: 'Disetujui', color: 'bg-blue-50 text-blue-700 border-blue-200' },
-  { key: 'shipping_back', label: 'Dalam Pengiriman', color: 'bg-purple-50 text-purple-700 border-purple-200' },
-  { key: 'completed', label: 'Selesai', color: 'bg-green-50 text-green-700 border-green-200' },
-  { key: 'rejected', label: 'Ditolak', color: 'bg-red-50 text-red-700 border-red-200' },
-  { key: 'all', label: 'Semua', color: 'bg-gray-50 text-gray-700 border-gray-200' },
+  { key: 'pending', label: 'Menunggu' },
+  { key: 'approved', label: 'Disetujui' },
+  { key: 'shipping_back', label: 'Dikirim Balik' },
+  { key: 'received', label: 'Diterima' },
+  { key: 'completed', label: 'Selesai' },
+  { key: 'rejected', label: 'Ditolak' },
+  { key: 'all', label: 'Semua' },
 ];
 
 const REASON_LABELS = {
-  damaged: 'Produk Rusak / Cacat',
-  missing_item: 'Barang Kurang / Tidak Lengkap',
-  wrong_item: 'Salah Kirim Barang',
+  damaged: 'Produk Rusak',
+  missing_item: 'Barang Kurang',
+  wrong_item: 'Salah Kirim',
 };
 
 const RESOLUTION_LABELS = {
-  refund: 'Refund (berdasarkan kondisi)',
-  refund_return: 'Refund + Return (kirim balik)',
+  refund: 'Refund',
+  refund_return: 'Refund + Return',
+};
+
+const ADMIN_RESOLUTION_LABELS = {
+  full_refund: 'Full Refund',
+  exchange: 'Exchange (Ganti Barang)',
+  partial_refund: 'Partial Refund',
 };
 
 const STATUS_BADGE = {
   pending: { text: 'Menunggu', cls: 'bg-amber-50 text-amber-700 border-amber-200' },
   approved: { text: 'Disetujui', cls: 'bg-blue-50 text-blue-700 border-blue-200' },
-  shipping_back: { text: 'Dalam Pengiriman', cls: 'bg-purple-50 text-purple-700 border-purple-200' },
+  shipping_back: { text: 'Dikirim Balik', cls: 'bg-purple-50 text-purple-700 border-purple-200' },
+  received: { text: 'Diterima', cls: 'bg-indigo-50 text-indigo-700 border-indigo-200' },
   completed: { text: 'Selesai', cls: 'bg-green-50 text-green-700 border-green-200' },
   rejected: { text: 'Ditolak', cls: 'bg-red-50 text-red-700 border-red-200' },
   cancelled: { text: 'Dibatalkan', cls: 'bg-gray-50 text-gray-700 border-gray-200' },
 };
 
-function shortId(uuid) {
-  return (uuid || '').replace(/-/g, '').slice(0, 8).toUpperCase();
-}
+function shortId(uuid) { return (uuid || '').replace(/-/g, '').slice(0, 8).toUpperCase(); }
 
 const AdminReturnsPage = () => {
-  const [returns, setReturns] = useState([]);
+  const [allReturns, setAllReturns] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('pending');
   const [selectedReturn, setSelectedReturn] = useState(null);
   const [processing, setProcessing] = useState(null);
-  const [refundAmount, setRefundAmount] = useState('');
-  const [adminNotes, setAdminNotes] = useState('');
-  const [returnShippingCost, setReturnShippingCost] = useState('');
 
+  // Approval form state
+  const [adminResolution, setAdminResolution] = useState('full_refund');
+  const [refundAmount, setRefundAmount] = useState('');
+  const [partialRefundAmount, setPartialRefundAmount] = useState('');
+  const [adminNotes, setAdminNotes] = useState('');
+  const [returnShippingPaidBy, setReturnShippingPaidBy] = useState('customer');
+  const [forwardShippingCost, setForwardShippingCost] = useState('');
+  const [skipReturnShipping, setSkipReturnShipping] = useState(false);
+
+  // Exchange: product search
+  const [searchProduct, setSearchProduct] = useState('');
+  const [searchResults, setSearchResults] = useState([]);
+  const [selectedReplacement, setSelectedReplacement] = useState(null);
+
+  // Fetch ALL returns (no status filter) — supaya count tiap tab akurat
+  // tidak terpengaruh oleh activeTab
   const fetchReturns = useCallback(async () => {
     setLoading(true);
     try {
-      let query = supabase
+      const { data, error } = await supabase
         .from('order_returns')
         .select(`
           id, order_id, user_id, reason, resolution, description, images, video,
-          phone, status, admin_notes, refund_amount, return_shipping_cost,
+          phone, status, admin_notes, admin_resolution,
+          refund_amount, partial_refund_amount,
+          replacement_product_id, replacement_variant_id,
+          replacement_product_name, replacement_variant_name,
+          replacement_price, price_difference,
+          return_shipping_paid_by, return_shipping_cost,
+          forward_shipping_cost, forward_tracking_number, forward_courier,
           return_tracking_number, return_courier,
           created_at, updated_at, resolved_at
         `)
         .order('created_at', { ascending: false });
-
-      if (activeTab !== 'all') {
-        query = query.eq('status', activeTab);
-      }
-
-      const { data, error } = await query;
       if (error) throw error;
-      setReturns(data || []);
-    } catch (e) {
-      console.warn('[AdminReturns] fetch error:', e?.message);
-    } finally {
-      setLoading(false);
-    }
-  }, [activeTab]);
+      setAllReturns(data || []);
+    } catch (e) { console.warn('[AdminReturns] fetch:', e?.message); }
+    finally { setLoading(false); }
+  }, []);
 
   useEffect(() => { fetchReturns(); }, [fetchReturns]);
 
-  // Approve return request
-  const handleApprove = async (returnId) => {
+  // Filter returns for display berdasarkan activeTab (computed dari allReturns)
+  const returns = activeTab === 'all'
+    ? allReturns
+    : allReturns.filter(r => r.status === activeTab);
+
+  // Search products for exchange
+  const handleProductSearch = async (query) => {
+    setSearchProduct(query);
+    if (query.trim().length < 2) { setSearchResults([]); return; }
+    const { data } = await supabase
+      .from('products')
+      .select(`id, name, product_variants(id, name, price, sku, is_active)`)
+      .ilike('name', `%${query}%`)
+      .limit(5);
+    setSearchResults(data || []);
+  };
+
+  // Select replacement variant
+  const handleSelectReplacement = (product, variant) => {
+    setSelectedReplacement({ product, variant });
+    setSearchProduct('');
+    setSearchResults([]);
+  };
+
+  // Calculate price difference
+  const calculatePriceDiff = (originalTotal, replacementPrice) => {
+    const diff = Number(replacementPrice) - Number(originalTotal);
+    return diff; // positive = customer pays, negative = seller refunds
+  };
+
+  // Approve with resolution
+  const handleApprove = async (returnId, orderTotal) => {
     setProcessing(returnId);
     try {
       const { data: { user } } = await supabase.auth.getUser();
-      const updates = {
-        status: 'approved',
-        resolved_at: new Date().toISOString(),
-        admin_user_id: user?.id,
+      const payload = {
+        return_id: returnId,
+        action: 'approve',
+        admin_resolution: adminResolution,
+        admin_notes: adminNotes,
+        return_shipping_paid_by: returnShippingPaidBy,
       };
-      if (refundAmount) updates.refund_amount = Number(refundAmount);
-      if (returnShippingCost) updates.return_shipping_cost = Number(returnShippingCost);
-      if (adminNotes) updates.admin_notes = adminNotes;
 
-      const { error } = await supabase
-        .from('order_returns')
-        .update(updates)
-        .eq('id', returnId);
+      if (adminResolution === 'full_refund') {
+        if (refundAmount) payload.refund_amount = Number(refundAmount);
+      } else if (adminResolution === 'exchange') {
+        if (!selectedReplacement) { alert('Pilih produk pengganti dulu'); setProcessing(null); return; }
+        payload.replacement_product_id = selectedReplacement.product.id;
+        payload.replacement_variant_id = selectedReplacement.variant.id;
+        payload.replacement_product_name = selectedReplacement.product.name;
+        payload.replacement_variant_name = selectedReplacement.variant.name;
+        payload.replacement_price = Number(selectedReplacement.variant.price);
+        payload.price_difference = calculatePriceDiff(orderTotal, selectedReplacement.variant.price);
+        if (forwardShippingCost) payload.forward_shipping_cost = Number(forwardShippingCost);
+        if (skipReturnShipping) payload.skip_return_shipping = true;
+      } else if (adminResolution === 'partial_refund') {
+        if (!partialRefundAmount) { alert('Isi partial refund amount'); setProcessing(null); return; }
+        payload.partial_refund_amount = Number(partialRefundAmount);
+      }
 
-      if (error) throw error;
-      alert('✅ Return request disetujui');
+      const { data: session } = await supabase.auth.getSession();
+      const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/submit-return-request`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${session.session.access_token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const result = await resp.json();
+      if (!resp.ok || !result.success) throw new Error(result.error || 'Gagal approve');
+
+      alert('✅ ' + result.message);
       setSelectedReturn(null);
-      setRefundAmount('');
-      setAdminNotes('');
-      setReturnShippingCost('');
+      resetForm();
       fetchReturns();
-    } catch (e) {
-      alert('Error: ' + e.message);
-    } finally {
-      setProcessing(null);
-    }
+    } catch (e) { alert('Error: ' + e.message); }
+    finally { setProcessing(null); }
   };
 
-  // Reject return request
   const handleReject = async (returnId) => {
-    if (!adminNotes) { alert('Isi alasan penolakan di Admin Notes'); return; }
+    if (!adminNotes) { alert('Isi alasan di Admin Notes'); return; }
     setProcessing(returnId);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      const { error } = await supabase
-        .from('order_returns')
-        .update({
-          status: 'rejected',
-          admin_notes: adminNotes,
-          resolved_at: new Date().toISOString(),
-          admin_user_id: user?.id,
-        })
-        .eq('id', returnId);
-
-      if (error) throw error;
-      alert('❌ Return request ditolak');
-      setSelectedReturn(null);
-      setAdminNotes('');
-      fetchReturns();
-    } catch (e) {
-      alert('Error: ' + e.message);
-    } finally {
-      setProcessing(null);
-    }
+      const { data: session } = await supabase.auth.getSession();
+      const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/submit-return-request`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${session.session.access_token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ return_id: returnId, action: 'reject', admin_notes: adminNotes }),
+      });
+      const result = await resp.json();
+      if (!resp.ok || !result.success) throw new Error(result.error);
+      alert('❌ Return ditolak');
+      setSelectedReturn(null); resetForm(); fetchReturns();
+    } catch (e) { alert('Error: ' + e.message); }
+    finally { setProcessing(null); }
   };
 
-  // Confirm received (complete return)
   const handleComplete = async (returnId, orderId) => {
-    if (!confirm('Konfirmasi barang sudah diterima? Refund akan diproses dan order status diupdate ke refund.')) return;
+    if (!confirm('Selesaikan return ini?\n\nPastikan refund sudah ditransfer / barang pengganti sudah dikirim.')) return;
     setProcessing(returnId);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-
-      // Update return status
-      const { error: returnErr } = await supabase
-        .from('order_returns')
-        .update({
-          status: 'completed',
-          resolved_at: new Date().toISOString(),
-          admin_user_id: user?.id,
-        })
-        .eq('id', returnId);
-      if (returnErr) throw returnErr;
-
-      // Update order status to 'refund'
-      const { error: orderErr } = await supabase
-        .from('orders')
-        .update({ status: 'refund' })
-        .eq('id', orderId);
-      if (orderErr) console.warn('[AdminReturns] Order status update failed:', orderErr.message);
-
-      alert('✅ Return completed. Order status updated to refund.');
-      setSelectedReturn(null);
-      fetchReturns();
-    } catch (e) {
-      alert('Error: ' + e.message);
-    } finally {
-      setProcessing(null);
-    }
+      const { data: session } = await supabase.auth.getSession();
+      const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/submit-return-request`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${session.session.access_token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ return_id: returnId, action: 'complete' }),
+      });
+      const result = await resp.json();
+      if (!resp.ok || !result.success) throw new Error(result.error);
+      alert('✅ ' + result.message);
+      setSelectedReturn(null); fetchReturns();
+    } catch (e) { alert('Error: ' + e.message); }
+    finally { setProcessing(null); }
   };
 
-  const pendingCount = returns.filter(r => r.status === 'pending').length;
+  const handleConfirmReceived = async (returnId) => {
+    setProcessing(returnId);
+    try {
+      const { data: session } = await supabase.auth.getSession();
+      await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/submit-return-request`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${session.session.access_token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ return_id: returnId, action: 'confirm_received' }),
+      });
+      fetchReturns();
+    } catch (e) { alert('Error: ' + e.message); }
+    finally { setProcessing(null); }
+  };
+
+  const resetForm = () => {
+    setAdminResolution('full_refund');
+    setRefundAmount(''); setPartialRefundAmount('');
+    setAdminNotes(''); setReturnShippingPaidBy('customer');
+    setForwardShippingCost(''); setSkipReturnShipping(false);
+    setSelectedReplacement(null); setSearchProduct(''); setSearchResults([]);
+  };
+
+  const pendingCount = allReturns.filter(r => r.status === 'pending').length;
 
   return (
-    <AdminLayout
-      title="Return & Refund"
-      subtitle={pendingCount > 0 ? `${pendingCount} request menunggu review` : 'Kelola pengembalian'}
-    >
+    <AdminLayout title="Return & Refund" subtitle={pendingCount > 0 ? `${pendingCount} menunggu review` : 'Kelola pengembalian'}>
       <div className="space-y-6">
         {/* Tabs */}
         <div className="flex gap-2 flex-wrap">
-          {STATUS_TABS.map((tab) => {
-            const count = tab.key === 'all' ? returns.length : returns.filter(r => r.status === tab.key).length;
+          {STATUS_TABS.map(tab => {
+            const count = tab.key === 'all' ? allReturns.length : allReturns.filter(r => r.status === tab.key).length;
             return (
-              <button
-                key={tab.key}
-                onClick={() => { setActiveTab(tab.key); setSelectedReturn(null); }}
+              <button key={tab.key} onClick={() => { setActiveTab(tab.key); setSelectedReturn(null); }}
                 className={`px-4 py-2 rounded-lg text-sm font-medium border cursor-pointer transition-all ${
-                  activeTab === tab.key
-                    ? 'bg-eglux-primary text-white border-eglux-primary'
-                    : 'bg-white text-gray-600 border-gray-200 hover:border-eglux-secondary'
-                }`}
-              >
+                  activeTab === tab.key ? 'bg-eglux-primary text-white border-eglux-primary' : 'bg-white text-gray-600 border-gray-200 hover:border-eglux-secondary'}`}>
                 {tab.label} {count > 0 && `(${count})`}
               </button>
             );
           })}
         </div>
 
-        {/* Loading */}
         {loading && (
           <div className="flex justify-center py-20">
             <div className="w-8 h-8 border-2 border-eglux-secondary border-t-transparent rounded-full animate-spin" />
           </div>
         )}
 
-        {/* Returns list */}
         {!loading && returns.length === 0 && (
           <div className="bg-white border border-gray-200 rounded-xl p-10 text-center">
             <div className="text-4xl mb-3">📭</div>
-            <p className="text-gray-500">Tidak ada return request untuk filter ini.</p>
+            <p className="text-gray-500">Tidak ada return request.</p>
           </div>
         )}
 
         {!loading && returns.length > 0 && (
           <div className="space-y-3">
-            {returns.map((r) => {
+            {returns.map(r => {
               const badge = STATUS_BADGE[r.status] || { text: r.status, cls: 'bg-gray-50 text-gray-600 border-gray-200' };
+              const adminRes = r.admin_resolution || 'full_refund';
               return (
                 <div key={r.id} className="bg-white border border-gray-200 rounded-xl p-4">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2 mb-1">
+                      <div className="flex items-center gap-2 mb-1 flex-wrap">
                         <p className="text-sm font-semibold text-gray-900">#{shortId(r.order_id)}</p>
-                        <span className={`text-[0.65rem] px-2 py-0.5 rounded-full border font-medium ${badge.cls}`}>
-                          {badge.text}
-                        </span>
+                        <span className={`text-[0.65rem] px-2 py-0.5 rounded-full border font-medium ${badge.cls}`}>{badge.text}</span>
+                        {r.admin_resolution && r.admin_resolution !== 'full_refund' && (
+                          <span className="text-[0.6rem] px-2 py-0.5 rounded-full bg-purple-50 text-purple-700 border border-purple-200 font-medium">
+                            {ADMIN_RESOLUTION_LABELS[adminRes]}
+                          </span>
+                        )}
                       </div>
                       <p className="text-xs text-gray-500">
                         {REASON_LABELS[r.reason] || r.reason} · {RESOLUTION_LABELS[r.resolution] || r.resolution}
                       </p>
-                      {r.phone && (
-                        <p className="text-xs text-blue-600 mt-1 font-medium">📞 {r.phone}</p>
-                      )}
+                      {r.phone && <p className="text-xs text-blue-600 mt-1 font-medium">📞 {r.phone}</p>}
                       <p className="text-[0.7rem] text-gray-400 mt-1">
-                        Diajukan: {new Date(r.created_at).toLocaleString('id-ID', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                        {new Date(r.created_at).toLocaleString('id-ID', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
                       </p>
-                      {r.refund_amount && (
-                        <p className="text-xs font-semibold text-green-600 mt-1">Refund: {rupiah(r.refund_amount)}</p>
+                      {r.refund_amount > 0 && <p className="text-xs font-semibold text-green-600 mt-1">Refund: {rupiah(r.refund_amount)}</p>}
+                      {r.partial_refund_amount > 0 && <p className="text-xs font-semibold text-amber-600 mt-1">Partial Refund: {rupiah(r.partial_refund_amount)}</p>}
+                      {r.replacement_product_name && (
+                        <p className="text-xs text-purple-600 mt-1">
+                          ↩️ Pengganti: {r.replacement_product_name} {r.replacement_variant_name ? `(${r.replacement_variant_name})` : ''}
+                          {r.price_difference !== 0 && (
+                            <span className={r.price_difference > 0 ? 'text-red-500' : 'text-green-500'}>
+                              {' '}{r.price_difference > 0 ? `+${rupiah(r.price_difference)}` : rupiah(r.price_difference)} (selisih)
+                            </span>
+                          )}
+                        </p>
                       )}
-                      {r.return_tracking_number && (
-                        <p className="text-xs text-purple-600 mt-1">Resi balik: {r.return_tracking_number} ({r.return_courier || '-'})</p>
-                      )}
+                      {r.return_tracking_number && <p className="text-xs text-purple-600 mt-1">Resi balik: {r.return_tracking_number}</p>}
+                      {r.forward_tracking_number && <p className="text-xs text-indigo-600 mt-1">Resi pengganti: {r.forward_tracking_number}</p>}
                     </div>
-                    <button
-                      onClick={() => {
-                        setSelectedReturn(selectedReturn?.id === r.id ? null : r);
-                        setRefundAmount(r.refund_amount ? String(r.refund_amount) : '');
-                        setAdminNotes(r.admin_notes || '');
-                        setReturnShippingCost(r.return_shipping_cost ? String(r.return_shipping_cost) : '');
-                      }}
-                      className="text-xs font-semibold text-eglux-secondary hover:underline cursor-pointer border-none bg-transparent flex-shrink-0"
-                    >
+                    <button onClick={() => { setSelectedReturn(selectedReturn?.id === r.id ? null : r); resetForm(); }}
+                      className="text-xs font-semibold text-eglux-secondary hover:underline cursor-pointer border-none bg-transparent flex-shrink-0">
                       {selectedReturn?.id === r.id ? 'Tutup' : 'Detail'}
                     </button>
                   </div>
 
-                  {/* Detail panel */}
+                  {/* Detail Panel */}
                   {selectedReturn?.id === r.id && (
                     <div className="mt-4 pt-4 border-t border-gray-100 space-y-3">
                       {r.description && (
-                        <div>
-                          <p className="text-[0.65rem] text-gray-400 uppercase font-semibold mb-1">Deskripsi</p>
-                          <p className="text-xs text-gray-700 leading-relaxed">{r.description}</p>
-                        </div>
+                        <div><p className="text-[0.65rem] text-gray-400 uppercase font-semibold mb-1">Deskripsi</p>
+                          <p className="text-xs text-gray-700 leading-relaxed">{r.description}</p></div>
                       )}
-
-                      {r.images && Array.isArray(r.images) && r.images.length > 0 && (
-                        <div>
-                          <p className="text-[0.65rem] text-gray-400 uppercase font-semibold mb-1">Foto Bukti</p>
-                          <div className="flex gap-2">
-                            {r.images.map((img, i) => (
-                              <a key={i} href={img} target="_blank" rel="noopener noreferrer" className="block w-16 h-16 rounded-lg overflow-hidden border border-gray-200 hover:opacity-80">
-                                <img src={img} alt={`Bukti ${i + 1}`} className="w-full h-full object-cover" loading="lazy" />
-                              </a>
-                            ))}
-                          </div>
-                        </div>
+                      {r.images?.length > 0 && (
+                        <div><p className="text-[0.65rem] text-gray-400 uppercase font-semibold mb-1">Foto</p>
+                          <div className="flex gap-2">{r.images.map((img, i) => (
+                            <a key={i} href={img} target="_blank" rel="noopener noreferrer" className="block w-16 h-16 rounded-lg overflow-hidden border border-gray-200 hover:opacity-80">
+                              <img src={img} alt={`Bukti ${i+1}`} className="w-full h-full object-cover" loading="lazy" /></a>
+                          ))}</div></div>
                       )}
-
                       {r.video && (
-                        <div>
-                          <p className="text-[0.65rem] text-gray-400 uppercase font-semibold mb-1">Video Bukti</p>
-                          <a href={r.video} target="_blank" rel="noopener noreferrer" className="inline-block px-3 py-2 bg-purple-50 text-purple-600 rounded-lg text-xs font-medium hover:bg-purple-100">
-                            ▶️ Lihat Video
-                          </a>
-                        </div>
+                        <div><p className="text-[0.65rem] text-gray-400 uppercase font-semibold mb-1">Video</p>
+                          <a href={r.video} target="_blank" rel="noopener noreferrer" className="inline-block px-3 py-2 bg-purple-50 text-purple-600 rounded-lg text-xs font-medium hover:bg-purple-100">▶️ Lihat Video</a></div>
                       )}
-
                       {r.admin_notes && (
-                        <div>
-                          <p className="text-[0.65rem] text-gray-400 uppercase font-semibold mb-1">Admin Notes</p>
-                          <p className="text-xs text-gray-700">{r.admin_notes}</p>
-                        </div>
+                        <div><p className="text-[0.65rem] text-gray-400 uppercase font-semibold mb-1">Admin Notes</p>
+                          <p className="text-xs text-gray-700">{r.admin_notes}</p></div>
                       )}
 
-                      {/* Admin actions */}
+                      {/* ── APPROVAL FORM (pending) ── */}
                       {r.status === 'pending' && (
-                        <div className="space-y-2 pt-2 border-t border-gray-100">
-                          <input
-                            type="text"
-                            value={refundAmount}
-                            onChange={(e) => setRefundAmount(e.target.value.replace(/\D/g, ''))}
-                            placeholder="Refund amount (Rp)"
-                            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg outline-none focus:border-eglux-secondary"
-                          />
-                          <input
-                            type="text"
-                            value={returnShippingCost}
-                            onChange={(e) => setReturnShippingCost(e.target.value.replace(/\D/g, ''))}
-                            placeholder="Return shipping cost (Rp, opsional)"
-                            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg outline-none focus:border-eglux-secondary"
-                          />
-                          <textarea
-                            value={adminNotes}
-                            onChange={(e) => setAdminNotes(e.target.value)}
-                            placeholder="Admin notes (wajib kalau reject)..."
-                            rows={2}
-                            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg outline-none focus:border-eglux-secondary resize-y"
-                          />
+                        <div className="space-y-3 pt-3 border-t border-gray-100">
+                          {/* Resolution type selector */}
+                          <div>
+                            <p className="text-[0.65rem] text-gray-400 uppercase font-semibold mb-2">Pilih Resolusi</p>
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                              {[
+                                { val: 'full_refund', label: 'Full Refund', icon: '💰', desc: 'Uang kembali 100%' },
+                                { val: 'exchange', label: 'Exchange', icon: '🔄', desc: 'Ganti barang' },
+                                { val: 'partial_refund', label: 'Partial', icon: '✂️', desc: 'Refund sebagian' },
+                              ].map(opt => (
+                                <button key={opt.val} type="button" onClick={() => setAdminResolution(opt.val)}
+                                  className={`px-3 py-2.5 rounded-lg border-2 text-xs cursor-pointer transition-all text-left ${
+                                    adminResolution === opt.val ? 'border-eglux-secondary bg-eglux-accent/30' : 'border-gray-200 hover:border-gray-300'}`}>
+                                  <p className="font-bold">{opt.icon} {opt.label}</p>
+                                  <p className="text-[0.65rem] text-gray-500">{opt.desc}</p>
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          {/* Full refund fields */}
+                          {adminResolution === 'full_refund' && (
+                            <input type="text" value={refundAmount} onChange={e => setRefundAmount(e.target.value.replace(/\D/g, ''))}
+                              placeholder="Refund amount (Rp)" className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg outline-none focus:border-eglux-secondary" />
+                          )}
+
+                          {/* Exchange fields */}
+                          {adminResolution === 'exchange' && (
+                            <div className="space-y-2">
+                              <input type="text" value={searchProduct} onChange={e => handleProductSearch(e.target.value)}
+                                placeholder="Cari produk pengganti..." className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg outline-none focus:border-eglux-secondary" />
+                              {searchResults.length > 0 && (
+                                <div className="border border-gray-200 rounded-lg max-h-[200px] overflow-y-auto">
+                                  {searchResults.map(p => (
+                                    <div key={p.id}>
+                                      <p className="px-3 py-1 text-[0.65rem] text-gray-400 uppercase bg-gray-50">{p.name}</p>
+                                      {(p.product_variants || []).filter(v => v.is_active).map(v => (
+                                        <button key={v.id} type="button" onClick={() => handleSelectReplacement(p, v)}
+                                          className="w-full px-3 py-2 text-left text-xs hover:bg-eglux-accent/30 border-none bg-transparent cursor-pointer">
+                                          {v.name} — {rupiah(v.price)} {v.sku ? `(${v.sku})` : ''}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                              {selectedReplacement && (
+                                <div className="p-2 bg-purple-50 border border-purple-200 rounded-lg text-xs">
+                                  <p className="font-semibold text-purple-700">Pengganti: {selectedReplacement.product.name} — {selectedReplacement.variant.name}</p>
+                                  <p>Harga: {rupiah(selectedReplacement.variant.price)}</p>
+                                  <p>Selisih: {calculatePriceDiff(r.refund_amount || 0, selectedReplacement.variant.price) > 0 ? 'Customer bayar' : 'Seller refund'} {rupiah(Math.abs(calculatePriceDiff(r.refund_amount || 0, selectedReplacement.variant.price)))}</p>
+                                </div>
+                              )}
+                              <label className="flex items-center gap-2 text-xs">
+                                <input type="checkbox" checked={skipReturnShipping} onChange={e => setSkipReturnShipping(e.target.checked)} className="cursor-pointer" />
+                                Customer tidak perlu kirim balik (langsung kirim pengganti)
+                              </label>
+                              <input type="text" value={forwardShippingCost} onChange={e => setForwardShippingCost(e.target.value.replace(/\D/g, ''))}
+                                placeholder="Ongkir kirim pengganti (Rp, opsional)" className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg outline-none focus:border-eglux-secondary" />
+                            </div>
+                          )}
+
+                          {/* Partial refund fields */}
+                          {adminResolution === 'partial_refund' && (
+                            <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg space-y-2">
+                              <p className="text-xs text-amber-700">Customer simpan barang. Refund sebagian. Order tetap 'completed'.</p>
+                              <input type="text" value={partialRefundAmount} onChange={e => setPartialRefundAmount(e.target.value.replace(/\D/g, ''))}
+                                placeholder="Partial refund amount (Rp)" className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg outline-none focus:border-eglux-secondary" />
+                            </div>
+                          )}
+
+                          {/* Common: shipping + notes */}
+                          <div>
+                            <p className="text-[0.65rem] text-gray-400 uppercase font-semibold mb-1">Return Shipping</p>
+                            <div className="flex gap-2">
+                              <button type="button" onClick={() => setReturnShippingPaidBy('customer')}
+                                className={`px-3 py-1.5 rounded-lg text-xs border-2 cursor-pointer ${returnShippingPaidBy === 'customer' ? 'border-eglux-secondary bg-eglux-accent/30' : 'border-gray-200'}`}>Customer bayar</button>
+                              <button type="button" onClick={() => setReturnShippingPaidBy('seller')}
+                                className={`px-3 py-1.5 rounded-lg text-xs border-2 cursor-pointer ${returnShippingPaidBy === 'seller' ? 'border-eglux-secondary bg-eglux-accent/30' : 'border-gray-200'}`}>Seller bayar</button>
+                            </div>
+                          </div>
+                          <textarea value={adminNotes} onChange={e => setAdminNotes(e.target.value)}
+                            placeholder="Admin notes (wajib kalau reject)..." rows={2}
+                            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg outline-none focus:border-eglux-secondary resize-y" />
+
                           <div className="flex gap-2">
-                            <button
-                              onClick={() => handleApprove(r.id)}
-                              disabled={processing === r.id}
-                              className="flex-1 py-2 bg-green-500 text-white rounded-lg text-xs font-bold hover:bg-green-600 disabled:opacity-50 cursor-pointer border-none"
-                            >
+                            <button onClick={() => handleApprove(r.id, r.refund_amount || 0)} disabled={processing === r.id}
+                              className="flex-1 py-2 bg-green-500 text-white rounded-lg text-xs font-bold hover:bg-green-600 disabled:opacity-50 cursor-pointer border-none">
                               {processing === r.id ? '⏳' : '✅ Setujui'}
                             </button>
-                            <button
-                              onClick={() => handleReject(r.id)}
-                              disabled={processing === r.id}
-                              className="flex-1 py-2 bg-red-500 text-white rounded-lg text-xs font-bold hover:bg-red-600 disabled:opacity-50 cursor-pointer border-none"
-                            >
+                            <button onClick={() => handleReject(r.id)} disabled={processing === r.id}
+                              className="flex-1 py-2 bg-red-500 text-white rounded-lg text-xs font-bold hover:bg-red-600 disabled:opacity-50 cursor-pointer border-none">
                               {processing === r.id ? '⏳' : '❌ Tolak'}
                             </button>
                           </div>
                         </div>
                       )}
 
+                      {/* ── SHIPPING_BACK: Confirm received ── */}
                       {r.status === 'shipping_back' && (
                         <div className="pt-2 border-t border-gray-100">
-                          <button
-                            onClick={() => handleComplete(r.id, r.order_id)}
-                            disabled={processing === r.id}
-                            className="w-full py-2 bg-green-500 text-white rounded-lg text-xs font-bold hover:bg-green-600 disabled:opacity-50 cursor-pointer border-none"
-                          >
-                            {processing === r.id ? '⏳ Memproses...' : '📦 Konfirmasi Diterima & Selesaikan'}
+                          <div className="mb-3 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                            <p className="text-xs font-semibold text-amber-700 mb-1">⚠️ Sebelum menyelesaikan:</p>
+                            {adminRes === 'full_refund' && <p className="text-[0.7rem] text-amber-600">Transfer refund {r.refund_amount ? rupiah(r.refund_amount) : '(set amount)'} ke customer via bank</p>}
+                            {adminRes === 'exchange' && <p className="text-[0.7rem] text-amber-600">Siapkan barang pengganti untuk dikirim ke customer</p>}
+                            <p className="text-[0.7rem] text-amber-600">📞 {r.phone || '-'}</p>
+                          </div>
+                          <button onClick={() => handleConfirmReceived(r.id)} disabled={processing === r.id}
+                            className="w-full py-2 bg-indigo-500 text-white rounded-lg text-xs font-bold hover:bg-indigo-600 disabled:opacity-50 cursor-pointer border-none">
+                            {processing === r.id ? '⏳' : '📦 Konfirmasi Diterima'}
+                          </button>
+                        </div>
+                      )}
+
+                      {/* ── RECEIVED: Complete ── */}
+                      {r.status === 'received' && (
+                        <div className="pt-2 border-t border-gray-100">
+                          <button onClick={() => handleComplete(r.id, r.order_id)} disabled={processing === r.id}
+                            className="w-full py-2 bg-green-500 text-white rounded-lg text-xs font-bold hover:bg-green-600 disabled:opacity-50 cursor-pointer border-none">
+                            {processing === r.id ? '⏳' : '✅ Selesaikan Return'}
                           </button>
                         </div>
                       )}
