@@ -61,9 +61,9 @@ const IconMail = ({ className = 'w-4 h-4' }) => (
 
 // ── Social links data ──
 const SOCIAL_LINKS = [
-  { label: 'Instagram', href: 'https://instagram.com/eglux', Icon: IconInstagram },
-  { label: 'WhatsApp',  href: 'https://wa.me/6281234567890', Icon: IconWhatsApp  },
-  { label: 'TikTok',    href: 'https://tiktok.com/@eglux',   Icon: IconTikTok    },
+  { label: 'Instagram', href: 'https://instagram.com/eglux_id', Icon: IconInstagram },
+  { label: 'WhatsApp',  href: 'https://wa.me/6285111752600', Icon: IconWhatsApp  },
+  { label: 'TikTok',    href: 'https://tiktok.com/@egluxdecor',   Icon: IconTikTok    },
 ];
 
 // ── Navigation links data ──
@@ -81,8 +81,8 @@ const HELP_LINKS = [
   { label: 'Lacak Pesanan',    href: '/track'          },
   { label: 'Riwayat Order',    href: '/order-history'  },
   { label: 'Tiket Bantuan',    href: null, isTicket: true },
-  { label: 'Pengiriman',       href: '/contact?section=shipping' },
-  { label: 'Kebijakan Return', href: '/contact?section=returns'  },
+  { label: 'Pengiriman',       href: '/shipping'       },
+  { label: 'Kebijakan Return', href: '/returns-policy'  },
 ];
 
 // ── Helper: cek internal vs external link ──

@@ -48,6 +48,8 @@ import ForgotPasswordPage from './pages/ForgotPasswordPage';
 import ResetPasswordPage from './pages/ResetPasswordPage';
 import AdminReviewsPage from './pages/AdminReviewsPage';
 import AdminReturnsPage from './pages/AdminReturnsPage';
+import ShippingInfoPage from './pages/ShippingInfoPage';
+import ReturnPolicyPage from './pages/ReturnPolicyPage';
 
 // Protected route wrapper
 import ProtectedRoute from './components/ui/ProtectedRoute';
@@ -75,6 +77,8 @@ const App = () => {
               <Route path="/blog" element={<BlogPage />} />
               <Route path="/contact" element={<Contact />} />
               <Route path="/about" element={<AboutPage />} />
+              <Route path="/shipping" element={<ShippingInfoPage />} />
+              <Route path="/returns-policy" element={<ReturnPolicyPage />} />
               <Route path="/membership" element={<MembershipPage />} />
               <Route path="/claim-points" element={<ClaimPointsPage />} />
               <Route path="/rewards" element={<RewardsPage />} />

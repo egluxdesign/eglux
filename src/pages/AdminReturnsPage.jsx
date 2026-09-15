@@ -17,6 +17,9 @@ import { rupiah } from '../context/CartContext';
 
 const STATUS_TABS = [
   { key: 'pending', label: 'Menunggu' },
+  { key: 'processing', label: 'Diproses' },
+  { key: 'awaiting_customer_confirmation', label: 'Menunggu Konfirmasi' },
+  { key: 'customer_confirmed', label: 'Siap Approve' },
   { key: 'approved', label: 'Disetujui' },
   { key: 'shipping_back', label: 'Dikirim Balik' },
   { key: 'received', label: 'Diterima' },
@@ -44,6 +47,9 @@ const ADMIN_RESOLUTION_LABELS = {
 
 const STATUS_BADGE = {
   pending: { text: 'Menunggu', cls: 'bg-amber-50 text-amber-700 border-amber-200' },
+  processing: { text: 'Diproses', cls: 'bg-orange-50 text-orange-700 border-orange-200' },
+  awaiting_customer_confirmation: { text: 'Menunggu Konfirmasi', cls: 'bg-yellow-50 text-yellow-700 border-yellow-200' },
+  customer_confirmed: { text: 'Siap Approve', cls: 'bg-teal-50 text-teal-700 border-teal-200' },
   approved: { text: 'Disetujui', cls: 'bg-blue-50 text-blue-700 border-blue-200' },
   shipping_back: { text: 'Dikirim Balik', cls: 'bg-purple-50 text-purple-700 border-purple-200' },
   received: { text: 'Diterima', cls: 'bg-indigo-50 text-indigo-700 border-indigo-200' },
@@ -75,6 +81,9 @@ const AdminReturnsPage = () => {
   const [searchResults, setSearchResults] = useState([]);
   const [selectedReplacement, setSelectedReplacement] = useState(null);
 
+  // ⭐ Toggle card edit nominal di status awaiting_customer_confirmation
+  const [showEditNominal, setShowEditNominal] = useState(null);
+
   // Fetch ALL returns (no status filter) — supaya count tiap tab akurat
   // tidak terpengaruh oleh activeTab
   const fetchReturns = useCallback(async () => {
@@ -86,6 +95,7 @@ const AdminReturnsPage = () => {
           id, order_id, user_id, reason, resolution, description, images, video,
           phone, status, admin_notes, admin_resolution,
           refund_amount, partial_refund_amount,
+          customer_refund_amount, customer_acknowledged_cs, customer_notes,
           replacement_product_id, replacement_variant_id,
           replacement_product_name, replacement_variant_name,
           replacement_price, price_difference,
@@ -131,6 +141,87 @@ const AdminReturnsPage = () => {
   const calculatePriceDiff = (originalTotal, replacementPrice) => {
     const diff = Number(replacementPrice) - Number(originalTotal);
     return diff; // positive = customer pays, negative = seller refunds
+  };
+
+  // ⭐ NEW: Handle "Proses" — admin click untuk mulai proses + kontak customer
+  const handleProcess = async (returnId, customerPhone) => {
+    if (!confirm('Ubah status ke "Diproses"?\n\nAnda akan menghubungi customer via WhatsApp untuk arahan nominal refund.')) return;
+    setProcessing(returnId);
+    try {
+      const { data: session } = await supabase.auth.getSession();
+      const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/submit-return-request`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${session.session.access_token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ return_id: returnId, action: 'process' }),
+      });
+      const result = await resp.json();
+      if (!resp.ok || !result.success) throw new Error(result.error);
+      alert('✅ ' + result.message);
+
+      // Open WhatsApp dengan pesan pre-filled
+      const waUrl = `https://wa.me/${customerPhone?.replace(/^0/, '62').replace(/\D/g, '') || '6281234567890'}?text=${encodeURIComponent(`Halo, saya admin EGLUX mengenai return yang Anda ajukan. Berikut nominal refund yang akan kami berikan: ...`)}`;
+      window.open(waUrl, '_blank', 'noopener,noreferrer');
+
+      fetchReturns();
+    } catch (e) { alert('Error: ' + e.message); }
+    finally { setProcessing(null); }
+  };
+
+  // ⭐ NEW: Handle "Propose Refund" — admin input nominal yang akan kasih ke customer
+  const handleProposeRefund = async (returnId) => {
+    if (!refundAmount || Number(refundAmount) <= 0) {
+      alert('Isi nominal refund yang akan dikasih ke customer');
+      return;
+    }
+    setProcessing(returnId);
+    try {
+      const { data: session } = await supabase.auth.getSession();
+      const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/submit-return-request`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${session.session.access_token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          return_id: returnId,
+          action: 'propose_refund',
+          refund_amount: Number(refundAmount),
+          admin_notes: adminNotes,
+        }),
+      });
+      const result = await resp.json();
+      if (!resp.ok || !result.success) throw new Error(result.error);
+      alert('✅ ' + result.message + '\n\nCustomer akan buka return form lagi untuk konfirmasi nominal.');
+      setSelectedReturn(null); resetForm();
+      fetchReturns();
+    } catch (e) { alert('Error: ' + e.message); }
+    finally { setProcessing(null); }
+  };
+
+  // ⭐ NEW: Handle "Paksa Setujui" — skip konfirmasi customer, langsung final approve
+  // Dipakai di status awaiting_customer_confirmation kalau customer sudah konfirmasi
+  // via WhatsApp tapi belum input di sistem, atau admin mau skip step konfirmasi
+  const handleSkipCustomerConfirm = async (returnId, refundAmount) => {
+    if (!refundAmount) { alert('Nominal refund belum di-set'); return; }
+    if (!confirm('Paksa setujui return ini tanpa konfirmasi customer di sistem?\n\nPastikan customer sudah konfirmasi nominal via WhatsApp.\nStatus akan langsung berubah ke "Disetujui".')) return;
+    setProcessing(returnId);
+    try {
+      const { data: session } = await supabase.auth.getSession();
+      const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/submit-return-request`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${session.session.access_token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          return_id: returnId,
+          action: 'approve',
+          admin_resolution: 'full_refund', // default; admin bisa edit lagi di tab "Disetujui"
+          refund_amount: Number(refundAmount),
+          admin_notes: adminNotes,
+        }),
+      });
+      const result = await resp.json();
+      if (!resp.ok || !result.success) throw new Error(result.error);
+      alert('✅ ' + result.message);
+      setSelectedReturn(null); resetForm();
+      fetchReturns();
+    } catch (e) { alert('Error: ' + e.message); }
+    finally { setProcessing(null); }
   };
 
   // Approve with resolution
@@ -319,6 +410,34 @@ const AdminReturnsPage = () => {
                   {/* Detail Panel */}
                   {selectedReturn?.id === r.id && (
                     <div className="mt-4 pt-4 border-t border-gray-100 space-y-3">
+                      {/* ⭐ Customer input (sesuai arahan CS) */}
+                      {r.customer_acknowledged_cs && (
+                        <div className="bg-amber-50/60 border border-amber-100 rounded-md p-3">
+                          <p className="text-[0.65rem] text-amber-700 uppercase font-bold mb-1.5">Customer Input (Arahan CS)</p>
+                          <div className="grid grid-cols-2 gap-3 text-xs">
+                            <div>
+                              <p className="text-[0.65rem] text-gray-500">Nominal refund yang diajukan</p>
+                              <p className="text-sm font-bold text-amber-700">{r.customer_refund_amount ? rupiah(r.customer_refund_amount) : '—'}</p>
+                            </div>
+                            <div>
+                              <p className="text-[0.65rem] text-gray-500">Final refund (admin set)</p>
+                              <p className="text-sm font-bold text-green-700">
+                                {r.refund_amount ? rupiah(r.refund_amount) : r.partial_refund_amount ? rupiah(r.partial_refund_amount) : '— (belum di-set)'}
+                              </p>
+                            </div>
+                          </div>
+                          {r.customer_refund_amount && r.refund_amount && Number(r.customer_refund_amount) !== Number(r.refund_amount) && (
+                            <p className="text-[0.7rem] text-red-600 mt-2 font-medium">
+                              ⚠️ Selisih: {rupiah(Math.abs(Number(r.customer_refund_amount) - Number(r.refund_amount)))} — verifikasi nominal dengan CS!
+                            </p>
+                          )}
+                          {r.customer_notes && (
+                            <p className="text-[0.65rem] text-gray-600 mt-2 leading-relaxed">
+                              <strong>Catatan customer:</strong> {r.customer_notes}
+                            </p>
+                          )}
+                        </div>
+                      )}
                       {r.description && (
                         <div><p className="text-[0.65rem] text-gray-400 uppercase font-semibold mb-1">Deskripsi</p>
                           <p className="text-xs text-gray-700 leading-relaxed">{r.description}</p></div>
@@ -348,8 +467,261 @@ const AdminReturnsPage = () => {
                           <p className="text-xs text-gray-700">{r.admin_notes}</p></div>
                       )}
 
-                      {/* ── APPROVAL FORM (pending) ── */}
+                      {/* ── PENDING: Tombol "Proses" untuk mulai ── */}
                       {r.status === 'pending' && (
+                        <div className="pt-3 border-t border-gray-100 space-y-2">
+                          <div className="bg-blue-50 border border-blue-200 rounded-md p-2.5 text-[0.7rem] text-blue-700 leading-relaxed">
+                            <strong>Next step:</strong> Klik "Proses" → status jadi "Diproses" → WhatsApp customer → kasih nominal refund.
+                          </div>
+                          <button onClick={() => handleProcess(r.id, r.phone)} disabled={processing === r.id}
+                            className="w-full py-2 bg-blue-500 text-white rounded-lg text-xs font-bold hover:bg-blue-600 disabled:opacity-50 cursor-pointer border-none flex items-center justify-center gap-1.5">
+                            {processing === r.id ? '⏳ Memproses...' : '🔵 Proses & Chat Customer via WA'}
+                          </button>
+                          <button onClick={() => handleReject(r.id)} disabled={processing === r.id}
+                            className="w-full py-1.5 bg-red-50 text-red-600 border border-red-200 rounded-lg text-xs font-medium hover:bg-red-100 disabled:opacity-50 cursor-pointer">
+                            ❌ Tolak
+                          </button>
+                        </div>
+                      )}
+
+                      {/* ── PROCESSING: Form input nominal proposed ── */}
+                      {r.status === 'processing' && (
+                        <div className="space-y-3 pt-3 border-t border-gray-100">
+                          <div className="bg-orange-50 border border-orange-200 rounded-md p-2.5">
+                            <p className="text-[0.7rem] text-orange-700 leading-relaxed">
+                              <strong>Status: Diproses.</strong> Sudah kontak customer? Input nominal refund yang akan dikasih ke customer. Customer akan konfirmasi nominal ini.
+                            </p>
+                          </div>
+
+                          <div>
+                            <label className="block text-[0.65rem] text-gray-400 uppercase font-semibold mb-1">Nominal Refund (proposed)</label>
+                            <div className="relative">
+                              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-gray-500 font-medium">Rp</span>
+                              <input type="number" min="0" step="1000" value={refundAmount}
+                                onChange={e => setRefundAmount(e.target.value)}
+                                placeholder="15000"
+                                className="w-full pl-8 pr-3 py-2 text-sm border border-gray-300 rounded-lg outline-none focus:border-eglux-secondary" />
+                            </div>
+                            <p className="text-[0.65rem] text-gray-500 mt-1">Nominal ini bisa di-edit lagi sebelum final approve</p>
+                          </div>
+
+                          <textarea value={adminNotes} onChange={e => setAdminNotes(e.target.value)}
+                            placeholder="Catatan admin (opsional)..." rows={2}
+                            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg outline-none focus:border-eglux-secondary resize-y" />
+
+                          <div className="flex gap-2">
+                            <button onClick={() => handleProposeRefund(r.id)} disabled={processing === r.id || !refundAmount}
+                              className="flex-1 py-2 bg-amber-500 text-white rounded-lg text-xs font-bold hover:bg-amber-600 disabled:opacity-50 cursor-pointer border-none">
+                              {processing === r.id ? '⏳' : '💸 Kirim Nominal ke Customer'}
+                            </button>
+                            <button onClick={() => handleReject(r.id)} disabled={processing === r.id}
+                              className="flex-1 py-2 bg-red-500 text-white rounded-lg text-xs font-bold hover:bg-red-600 disabled:opacity-50 cursor-pointer border-none">
+                              ❌ Tolak
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* ── AWAITING_CUSTOMER_CONFIRMATION: Edit nominal atau skip konfirmasi customer ── */}
+                      {r.status === 'awaiting_customer_confirmation' && (
+                        <div className="pt-3 border-t border-gray-100 space-y-3">
+                          <div className="bg-yellow-50 border border-yellow-200 rounded-md p-2.5">
+                            <p className="text-[0.7rem] text-yellow-700 leading-relaxed mb-1">
+                              <strong>Status: Menunggu Konfirmasi Customer.</strong> Nominal sudah dikirim ke customer. Anda dapat:
+                            </p>
+                            <p className="text-sm font-bold text-yellow-800 mt-1">
+                              Nominal yang dikirim: <span className="text-eglux-primary">{r.refund_amount ? rupiah(Number(r.refund_amount)) : '-'}</span>
+                            </p>
+                          </div>
+
+                          {/* 2 tombol aksi: Edit Nominal atau Skip Konfirmasi */}
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => {
+                                setSelectedReturn(r);
+                                setRefundAmount(r.refund_amount ? String(r.refund_amount) : '');
+                                setAdminNotes(r.admin_notes || '');
+                                setShowEditNominal(r.id);
+                              }}
+                              disabled={processing === r.id}
+                              className="flex-1 py-2 bg-amber-500 text-white rounded-lg text-xs font-bold hover:bg-amber-600 disabled:opacity-50 cursor-pointer border-none flex items-center justify-center gap-1.5"
+                            >
+                              ✏️ Edit Nominal
+                            </button>
+                            <button
+                              onClick={() => handleSkipCustomerConfirm(r.id, r.refund_amount)}
+                              disabled={processing === r.id}
+                              className="flex-1 py-2 bg-green-500 text-white rounded-lg text-xs font-bold hover:bg-green-600 disabled:opacity-50 cursor-pointer border-none flex items-center justify-center gap-1.5"
+                            >
+                              {processing === r.id ? '⏳' : '✅ Paksa Setujui'}
+                            </button>
+                          </div>
+
+                          {/* Form edit nominal (toggle) */}
+                          {showEditNominal === r.id && (
+                            <div className="bg-amber-50/60 border border-amber-200 rounded-md p-3 space-y-2">
+                              <p className="text-[0.7rem] font-bold text-amber-900 uppercase">Edit Nominal Refund</p>
+                              <div>
+                                <label className="block text-[0.65rem] text-gray-500 uppercase mb-1">Nominal Baru</label>
+                                <div className="relative">
+                                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-gray-500 font-medium">Rp</span>
+                                  <input type="number" min="0" step="1000" value={refundAmount}
+                                    onChange={e => setRefundAmount(e.target.value)}
+                                    placeholder="15000"
+                                    className="w-full pl-8 pr-3 py-2 text-sm border border-gray-300 rounded-lg outline-none focus:border-eglux-secondary" />
+                                </div>
+                              </div>
+                              <textarea value={adminNotes} onChange={e => setAdminNotes(e.target.value)}
+                                placeholder="Catatan admin (opsional)..." rows={2}
+                                className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg outline-none focus:border-eglux-secondary resize-y" />
+                              <div className="flex gap-2">
+                                <button
+                                  onClick={() => { setShowEditNominal(null); resetForm(); }}
+                                  disabled={processing === r.id}
+                                  className="flex-1 py-1.5 bg-gray-100 text-gray-600 rounded-md text-xs font-medium hover:bg-gray-200 disabled:opacity-50 cursor-pointer border-none"
+                                >
+                                  Batal
+                                </button>
+                                <button
+                                  onClick={() => handleProposeRefund(r.id)}
+                                  disabled={processing === r.id || !refundAmount}
+                                  className="flex-1 py-1.5 bg-amber-600 text-white rounded-md text-xs font-bold hover:bg-amber-700 disabled:opacity-50 cursor-pointer border-none"
+                                >
+                                  {processing === r.id ? '⏳' : 'Kirim Nominal Baru'}
+                                </button>
+                              </div>
+                              <p className="text-[0.6rem] text-amber-700 italic">
+                                Catatan: Customer harus konfirmasi nominal baru. Customer_refund_amount akan di-reset.
+                              </p>
+                            </div>
+                          )}
+
+                          <button onClick={() => handleReject(r.id)} disabled={processing === r.id}
+                            className="w-full py-1.5 bg-red-50 text-red-600 border border-red-200 rounded-lg text-xs font-medium hover:bg-red-100 disabled:opacity-50 cursor-pointer">
+                            ❌ Tolak
+                          </button>
+                        </div>
+                      )}
+
+                      {/* ── CUSTOMER_CONFIRMED: Final Approve form ── */}
+                      {r.status === 'customer_confirmed' && (
+                        <div className="space-y-3 pt-3 border-t border-gray-100">
+                          {/* Display nominal customer (LOCKED - tidak bisa edit) */}
+                          <div className="bg-teal-50 border border-teal-200 rounded-md p-2.5">
+                            <p className="text-[0.65rem] text-teal-700 uppercase font-semibold mb-1">Customer Sudah Konfirmasi</p>
+                            <div className="grid grid-cols-2 gap-2 text-xs">
+                              <div>
+                                <p className="text-[0.6rem] text-gray-500">Nominal admin (proposed)</p>
+                                <p className="font-bold text-amber-700">{r.refund_amount ? rupiah(Number(r.refund_amount)) : '-'}</p>
+                              </div>
+                              <div>
+                                <p className="text-[0.6rem] text-gray-500">Nominal customer (confirmed)</p>
+                                <p className="font-bold text-teal-700">{r.customer_refund_amount ? rupiah(Number(r.customer_refund_amount)) : '-'}</p>
+                              </div>
+                            </div>
+                            {r.customer_notes && (
+                              <p className="text-[0.65rem] text-gray-600 mt-1.5"><strong>Catatan customer:</strong> {r.customer_notes}</p>
+                            )}
+                          </div>
+
+                          {/* ⭐ SECURITY: Nominal final LOCKED = customer confirmed amount */}
+                          <div className="bg-green-50 border border-green-200 rounded-md p-2.5">
+                            <p className="text-[0.65rem] text-green-700 uppercase font-semibold mb-1">🔒 Nominal Final (Locked)</p>
+                            <p className="text-lg font-bold text-green-700">
+                              {r.customer_refund_amount ? rupiah(Number(r.customer_refund_amount)) : '-'}
+                            </p>
+                            <p className="text-[0.65rem] text-green-600 mt-1 leading-relaxed">
+                              Nominal final = nominal yang customer konfirmasi. Tidak dapat diubah saat final approve untuk hindari manipulasi. Jika perlu mengubah nominal, gunakan tombol "Edit Nominal" di bawah (customer harus konfirmasi ulang).
+                            </p>
+                          </div>
+
+                          {/* Resolution type selector */}
+                          <div>
+                            <p className="text-[0.65rem] text-gray-400 uppercase font-semibold mb-2">Pilih Resolusi Final</p>
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                              <button type="button" onClick={() => setAdminResolution('full_refund')}
+                                className={`px-2 py-1.5 rounded-lg text-[0.7rem] border-2 cursor-pointer ${adminResolution === 'full_refund' ? 'border-eglux-secondary bg-eglux-accent/30' : 'border-gray-200'}`}>Full Refund</button>
+                              <button type="button" onClick={() => setAdminResolution('exchange')}
+                                className={`px-2 py-1.5 rounded-lg text-[0.7rem] border-2 cursor-pointer ${adminResolution === 'exchange' ? 'border-eglux-secondary bg-eglux-accent/30' : 'border-gray-200'}`}>Exchange</button>
+                              <button type="button" onClick={() => setAdminResolution('partial_refund')}
+                                className={`px-2 py-1.5 rounded-lg text-[0.7rem] border-2 cursor-pointer ${adminResolution === 'partial_refund' ? 'border-eglux-secondary bg-eglux-accent/30' : 'border-gray-200'}`}>Partial</button>
+                            </div>
+                          </div>
+
+                          <textarea value={adminNotes} onChange={e => setAdminNotes(e.target.value)}
+                            placeholder="Catatan admin (opsional)..." rows={2}
+                            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg outline-none focus:border-eglux-secondary resize-y" />
+
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => handleApprove(r.id, r.customer_refund_amount || r.refund_amount || 0)}
+                              disabled={processing === r.id}
+                              className="flex-1 py-2 bg-green-500 text-white rounded-lg text-xs font-bold hover:bg-green-600 disabled:opacity-50 cursor-pointer border-none">
+                              {processing === r.id ? '⏳' : '✅ Final Approve'}
+                            </button>
+                            <button onClick={() => handleReject(r.id)} disabled={processing === r.id}
+                              className="flex-1 py-2 bg-red-500 text-white rounded-lg text-xs font-bold hover:bg-red-600 disabled:opacity-50 cursor-pointer border-none">
+                              ❌ Tolak
+                            </button>
+                          </div>
+
+                          {/* ⭐ Tombol re-propose (kalau admin mau ubah nominal) */}
+                          <button
+                            onClick={() => {
+                              setSelectedReturn(r);
+                              setRefundAmount(r.refund_amount ? String(r.refund_amount) : '');
+                              setAdminNotes(r.admin_notes || '');
+                              setShowEditNominal(r.id);
+                            }}
+                            disabled={processing === r.id}
+                            className="w-full py-1.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-lg text-xs font-medium hover:bg-amber-100 disabled:opacity-50 cursor-pointer"
+                          >
+                            ✏️ Edit Nominal (re-propose — customer konfirmasi ulang)
+                          </button>
+
+                          {/* Form edit nominal (toggle) */}
+                          {showEditNominal === r.id && (
+                            <div className="bg-amber-50/60 border border-amber-200 rounded-md p-3 space-y-2">
+                              <p className="text-[0.7rem] font-bold text-amber-900 uppercase">Edit Nominal Refund</p>
+                              <div>
+                                <label className="block text-[0.65rem] text-gray-500 uppercase mb-1">Nominal Baru</label>
+                                <div className="relative">
+                                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-gray-500 font-medium">Rp</span>
+                                  <input type="number" min="0" step="1000" value={refundAmount}
+                                    onChange={e => setRefundAmount(e.target.value)}
+                                    placeholder="15000"
+                                    className="w-full pl-8 pr-3 py-2 text-sm border border-gray-300 rounded-lg outline-none focus:border-eglux-secondary" />
+                                </div>
+                              </div>
+                              <textarea value={adminNotes} onChange={e => setAdminNotes(e.target.value)}
+                                placeholder="Catatan admin (opsional)..." rows={2}
+                                className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg outline-none focus:border-eglux-secondary resize-y" />
+                              <div className="flex gap-2">
+                                <button
+                                  onClick={() => { setShowEditNominal(null); resetForm(); }}
+                                  disabled={processing === r.id}
+                                  className="flex-1 py-1.5 bg-gray-100 text-gray-600 rounded-md text-xs font-medium hover:bg-gray-200 disabled:opacity-50 cursor-pointer border-none"
+                                >
+                                  Batal
+                                </button>
+                                <button
+                                  onClick={() => handleProposeRefund(r.id)}
+                                  disabled={processing === r.id || !refundAmount}
+                                  className="flex-1 py-1.5 bg-amber-600 text-white rounded-md text-xs font-bold hover:bg-amber-700 disabled:opacity-50 cursor-pointer border-none"
+                                >
+                                  {processing === r.id ? '⏳' : 'Kirim Nominal Baru'}
+                                </button>
+                              </div>
+                              <p className="text-[0.6rem] text-amber-700 italic">
+                                ⚠️ Customer harus konfirmasi nominal baru. Status akan balik ke "Menunggu Konfirmasi".
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* ── APPROVAL FORM (legacy pending mode — fallback) ── */}
+                      {r.status === 'pending_legacy' && (
                         <div className="space-y-3 pt-3 border-t border-gray-100">
                           {/* Resolution type selector */}
                           <div>

@@ -36,11 +36,13 @@ import ReturnModal from '../components/ui/ReturnModal';
 const STATUS_TABS = [
   { key: 'all', label: 'Semua Riwayat' },
   { key: 'completed', label: 'Selesai' },
+  { key: 'refund', label: 'Refund' },
   { key: 'cancelled', label: 'Dibatalkan' },
 ];
 
 const STATUS_BADGE = {
   completed: { text: 'Selesai', cls: 'bg-green-50 text-green-600', banner: 'bg-green-500' },
+  refund: { text: 'Refund', cls: 'bg-purple-50 text-purple-600', banner: 'bg-purple-500' },
   cancelled: { text: 'Dibatalkan', cls: 'bg-red-50 text-red-600', banner: 'bg-red-500' },
 };
 
@@ -109,7 +111,7 @@ function getProductImage(item) {
 // ============================================================================
 // HistoryCard — card dengan foto + nama + badge + tanggal selesai + 2 tombol
 // ============================================================================
-const HistoryCard = ({ order, onOpen, onRefund, onReturn, returnRequest }) => {
+const HistoryCard = ({ order, onOpen, onRefund, onReturn, onOpenReturn, returnRequest }) => {
   const items = order.order_items || [];
   const previewItems = items.slice(0, 2);
   const remainingCount = items.length - previewItems.length;
@@ -118,7 +120,8 @@ const HistoryCard = ({ order, onOpen, onRefund, onReturn, returnRequest }) => {
 
   // Tanggal selesai = midtrans_settlement_time (untuk completed) atau created_at (fallback)
   const selesaiDate = getSelesaiDate(order);
-  const selesaiLabel = order.status === 'completed' ? 'Selesai pada' : 'Dibatalkan pada';
+  const selesaiLabel = order.status === 'completed' ? 'Selesai pada' :
+                       order.status === 'refund' ? 'Refund pada' : 'Dibatalkan pada';
 
   return (
     <div className="bg-white rounded-xl border border-gray-100 overflow-hidden hover:shadow-md hover:border-eglux-secondary/30 transition-all">
@@ -201,8 +204,8 @@ const HistoryCard = ({ order, onOpen, onRefund, onReturn, returnRequest }) => {
               Ajukan Pengembalian
             </button>
           )}
-          {/* Tiket Bantuan — for cancelled orders (atau sebagai alternatif) */}
-          {order.status === 'cancelled' && (
+          {/* Tiket Bantuan — for cancelled + refund orders */}
+          {(order.status === 'cancelled' || order.status === 'refund') && (
             <button
               onClick={() => onRefund(order)}
               className="flex-1 px-3 py-2 bg-white border border-gray-300 text-gray-600 rounded-lg text-xs font-semibold hover:bg-gray-100 transition-colors cursor-pointer flex items-center justify-center gap-1.5"
@@ -227,32 +230,61 @@ const HistoryCard = ({ order, onOpen, onRefund, onReturn, returnRequest }) => {
 
         {/* ⭐ Return status badge (kalau ada return request) */}
         {returnRequest && (
-          <div className={`mt-2 px-3 py-2 rounded-lg text-xs font-medium flex items-center gap-2 ${
-            returnRequest.status === 'pending' ? 'bg-amber-50 text-amber-700' :
-            returnRequest.status === 'approved' ? 'bg-blue-50 text-blue-700' :
-            returnRequest.status === 'shipping_back' ? 'bg-purple-50 text-purple-700' :
-            returnRequest.status === 'completed' ? 'bg-green-50 text-green-700' :
-            returnRequest.status === 'rejected' ? 'bg-red-50 text-red-700' :
-            'bg-gray-50 text-gray-600'
-          }`}>
-            <span className="flex-shrink-0">
-              {returnRequest.status === 'pending' && '⏳'}
-              {returnRequest.status === 'approved' && '✅'}
-              {returnRequest.status === 'shipping_back' && '📦'}
-              {returnRequest.status === 'completed' && '✅'}
-              {returnRequest.status === 'rejected' && '❌'}
-              {returnRequest.status === 'cancelled' && '🚫'}
-            </span>
-            <span>
-              Return: {returnRequest.status === 'pending' ? 'Menunggu Review Admin' :
-                       returnRequest.status === 'approved' ? 'Disetujui — Silakan kirim balik barang' :
-                       returnRequest.status === 'shipping_back' ? 'Dalam Pengiriman Balik' :
-                       returnRequest.status === 'completed' ? 'Selesai' :
-                       returnRequest.status === 'rejected' ? 'Ditolak' :
-                       returnRequest.status === 'cancelled' ? 'Dibatalkan' : returnRequest.status}
-              {returnRequest.refund_amount && returnRequest.status === 'completed' && ` (${rupiah(returnRequest.refund_amount)})`}
-            </span>
-          </div>
+          <>
+            <div className={`mt-2 px-3 py-2 rounded-lg text-xs font-medium flex items-center gap-2 ${
+              returnRequest.status === 'pending' ? 'bg-amber-50 text-amber-700' :
+              returnRequest.status === 'processing' ? 'bg-orange-50 text-orange-700' :
+              returnRequest.status === 'awaiting_customer_confirmation' ? 'bg-yellow-50 text-yellow-700' :
+              returnRequest.status === 'customer_confirmed' ? 'bg-teal-50 text-teal-700' :
+              returnRequest.status === 'approved' ? 'bg-blue-50 text-blue-700' :
+              returnRequest.status === 'shipping_back' ? 'bg-purple-50 text-purple-700' :
+              returnRequest.status === 'completed' ? 'bg-green-50 text-green-700' :
+              returnRequest.status === 'rejected' ? 'bg-red-50 text-red-700' :
+              returnRequest.status === 'cancelled' ? 'bg-gray-50 text-gray-700' :
+              'bg-gray-50 text-gray-600'
+            }`}>
+              <span className="flex-shrink-0">
+                {returnRequest.status === 'pending' && '⏳'}
+                {returnRequest.status === 'processing' && '🔵'}
+                {returnRequest.status === 'awaiting_customer_confirmation' && '💰'}
+                {returnRequest.status === 'customer_confirmed' && '✅'}
+                {returnRequest.status === 'approved' && '✅'}
+                {returnRequest.status === 'shipping_back' && '📦'}
+                {returnRequest.status === 'completed' && '✅'}
+                {returnRequest.status === 'rejected' && '❌'}
+                {returnRequest.status === 'cancelled' && '🚫'}
+              </span>
+              <span className="flex-1">
+                Return: {returnRequest.status === 'pending' ? 'Menunggu Review Admin' :
+                         returnRequest.status === 'processing' ? 'Sedang Diproses — Admin menghubungi Anda' :
+                         returnRequest.status === 'awaiting_customer_confirmation' ? `Menunggu Konfirmasi Nominal Anda (${rupiah(returnRequest.refund_amount)})` :
+                         returnRequest.status === 'customer_confirmed' ? 'Konfirmasi Terkirim — Menunggu Persetujuan Akhir' :
+                         returnRequest.status === 'approved' ? 'Disetujui — Silakan kirim balik barang' :
+                         returnRequest.status === 'shipping_back' ? 'Dalam Pengiriman Balik' :
+                         returnRequest.status === 'completed' ? 'Selesai' :
+                         returnRequest.status === 'rejected' ? 'Ditolak' :
+                         returnRequest.status === 'cancelled' ? 'Dibatalkan' : returnRequest.status}
+                {returnRequest.refund_amount && returnRequest.status === 'completed' && ` (${rupiah(returnRequest.refund_amount)})`}
+              </span>
+            </div>
+
+            {/* ⭐ Tombol Konfirmasi Nominal — muncul kalau status awaiting_customer_confirmation */}
+            {returnRequest.status === 'awaiting_customer_confirmation' && returnRequest.refund_amount && (
+              <button
+                onClick={() => onOpenReturn && onOpenReturn(order)}
+                className="mt-2 w-full py-2 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-lg cursor-pointer border-none flex items-center justify-center gap-1.5 transition-colors"
+              >
+                💰 Konfirmasi Nominal Refund ({rupiah(returnRequest.refund_amount)})
+              </button>
+            )}
+
+            {/* ⭐ Tombol Cek Status (untuk status lain yang butuh action customer) */}
+            {(returnRequest.status === 'pending' || returnRequest.status === 'processing') && (
+              <p className="mt-1 text-[0.7rem] text-gray-500 italic">
+                Tim admin akan menghubungi Anda via WhatsApp untuk arahan nominal refund.
+              </p>
+            )}
+          </>
         )}
       </div>
     </div>
@@ -262,7 +294,7 @@ const HistoryCard = ({ order, onOpen, onRefund, onReturn, returnRequest }) => {
 // ============================================================================
 // HistoryDetailPanel — slide-in panel (mirip OrdersList tapi dengan refund action)
 // ============================================================================
-const HistoryDetailPanel = ({ order, onClose, onRefund, onReturn, returnRequest }) => {
+const HistoryDetailPanel = ({ order, onClose, onRefund, onReturn, onOpenReturn, returnRequest }) => {
   const navigate = useNavigate();
   const items = order.order_items || [];
   const statusCfg = STATUS_BADGE[order.status] || { banner: 'bg-gray-500' };
@@ -661,22 +693,32 @@ const HistoryDetailPanel = ({ order, onClose, onRefund, onReturn, returnRequest 
               <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-3">Status Pengembalian</p>
               <div className={`px-3 py-2.5 rounded-lg text-sm font-medium flex items-center gap-2 ${
                 returnRequest.status === 'pending' ? 'bg-amber-50 text-amber-700' :
+                returnRequest.status === 'processing' ? 'bg-orange-50 text-orange-700' :
+                returnRequest.status === 'awaiting_customer_confirmation' ? 'bg-yellow-50 text-yellow-700' :
+                returnRequest.status === 'customer_confirmed' ? 'bg-teal-50 text-teal-700' :
                 returnRequest.status === 'approved' ? 'bg-blue-50 text-blue-700' :
                 returnRequest.status === 'shipping_back' ? 'bg-purple-50 text-purple-700' :
                 returnRequest.status === 'completed' ? 'bg-green-50 text-green-700' :
                 returnRequest.status === 'rejected' ? 'bg-red-50 text-red-700' :
+                returnRequest.status === 'cancelled' ? 'bg-gray-50 text-gray-700' :
                 'bg-gray-50 text-gray-600'
               }`}>
                 <span className="flex-shrink-0">
                   {returnRequest.status === 'pending' && '⏳'}
+                  {returnRequest.status === 'processing' && '🔵'}
+                  {returnRequest.status === 'awaiting_customer_confirmation' && '💰'}
+                  {returnRequest.status === 'customer_confirmed' && '✅'}
                   {returnRequest.status === 'approved' && '✅'}
                   {returnRequest.status === 'shipping_back' && '📦'}
                   {returnRequest.status === 'completed' && '✅'}
                   {returnRequest.status === 'rejected' && '❌'}
                   {returnRequest.status === 'cancelled' && '🚫'}
                 </span>
-                <span>
+                <span className="flex-1">
                   {returnRequest.status === 'pending' ? 'Menunggu Review Admin (1-2 hari kerja)' :
+                   returnRequest.status === 'processing' ? 'Sedang Diproses — Admin menghubungi Anda' :
+                   returnRequest.status === 'awaiting_customer_confirmation' ? `Menunggu Konfirmasi Nominal Anda (${rupiah(returnRequest.refund_amount)})` :
+                   returnRequest.status === 'customer_confirmed' ? 'Konfirmasi Terkirim — Menunggu Persetujuan Akhir' :
                    returnRequest.status === 'approved' ? 'Disetujui — Silakan kirim balik barang + upload resi' :
                    returnRequest.status === 'shipping_back' ? 'Dalam Pengiriman Balik' :
                    returnRequest.status === 'completed' ? 'Selesai' :
@@ -684,6 +726,16 @@ const HistoryDetailPanel = ({ order, onClose, onRefund, onReturn, returnRequest 
                    returnRequest.status === 'cancelled' ? 'Dibatalkan' : returnRequest.status}
                 </span>
               </div>
+
+              {/* ⭐ Tombol Konfirmasi Nominal di detail panel */}
+              {returnRequest.status === 'awaiting_customer_confirmation' && returnRequest.refund_amount && (
+                <button
+                  onClick={() => onOpenReturn && onOpenReturn(order)}
+                  className="mt-3 w-full py-2.5 bg-amber-500 hover:bg-amber-600 text-white text-sm font-bold rounded-lg cursor-pointer border-none flex items-center justify-center gap-1.5 transition-colors"
+                >
+                  💰 Konfirmasi Nominal Refund ({rupiah(returnRequest.refund_amount)})
+                </button>
+              )}
 
               {/* Return details */}
               <div className="mt-3 space-y-1 text-xs text-gray-500">
@@ -815,13 +867,13 @@ const OrderHistoryPage = () => {
           )
         )
       `;
-      // ⭐ Hanya fetch completed + cancelled (archive)
-      // Order by created_at DESC (orders table gak punya updated_at column)
+      // ⭐ Fetch completed + refund + cancelled (archive)
+      // Order by created_at DESC
       const { data, error: fetchErr } = await supabase
         .from('orders')
         .select(selectFields)
         .eq('customer.email', user.email)
-        .in('status', ['completed', 'cancelled'])
+        .in('status', ['completed', 'refund', 'cancelled'])
         .order('created_at', { ascending: false })
         .limit(100);
 
@@ -836,7 +888,7 @@ const OrderHistoryPage = () => {
         if (allErr) throw allErr;
         setOrders((allData || []).filter(o =>
           o.customer?.email === user.email &&
-          ['completed', 'cancelled'].includes(o.status)
+          ['completed', 'refund', 'cancelled'].includes(o.status)
         ));
       } else {
         setOrders(data || []);
@@ -928,7 +980,7 @@ const OrderHistoryPage = () => {
     const orderIds = orders.map(o => o.id);
     supabase
       .from('order_returns')
-      .select('id, order_id, status, reason, resolution, refund_amount, return_tracking_number, return_courier, admin_notes, created_at')
+      .select('id, order_id, status, reason, resolution, refund_amount, customer_refund_amount, customer_acknowledged_cs, description, images, video, phone, customer_notes, return_tracking_number, return_courier, admin_notes, created_at')
       .in('order_id', orderIds)
       .order('created_at', { ascending: false })
       .then(({ data }) => {
@@ -940,33 +992,28 @@ const OrderHistoryPage = () => {
       });
   }, [orders]);
 
-  // ── Login required ──
   if (!user) {
     return (
-      <div className="section-full-mobile w-full">
-        <div className="mobile-viewport-group">
-          <HeaderProducts onCartOpen={openCart} forceScrolled />
-
-          <section className="section-mobile relative flex flex-col items-center justify-center text-center px-4">
-            <p className="text-gray-500 mb-4">Sudah punya Akun?</p>
-            <Link to="/admin" className="text-eglux-secondary font-semibold hover:underline">
-              Masuk ke akun
-            </Link>
-          </section>
-        </div>
-
+      <>
+        <HeaderProducts onCartOpen={openCart} />
+        <section className="max-w-2xl mx-auto px-4 md:px-6 py-16 text-center">
+          <p className="text-gray-500 mb-4">Kamu perlu masuk dulu untuk melihat riwayat pesanan.</p>
+          <Link to="/admin" className="text-eglux-secondary font-semibold hover:underline">
+            Masuk ke akun
+          </Link>
+        </section>
         <Footer />
-      </div>
+      </>
     );
   }
 
   return (
     <>
-      <HeaderProducts onCartOpen={openCart} forceScrolled />
+      <HeaderProducts onCartOpen={openCart} />
 
-      <section className="max-w-3xl mx-auto px-4 md:px-6 pt-24 md:pt-28 pb-8">
+      <section className="max-w-2xl mx-auto px-4 md:px-6 py-8">
         {/* Header dengan back link ke Pesanan Saya */}
-        <div className="flex items-center justify-between mb-1 gap-4 flex-wrap">
+        <div className="flex items-center justify-between mb-6 gap-4 flex-wrap">
           <div>
             <h1 className="text-xl md:text-2xl font-bold text-eglux-primary">Riwayat Order</h1>
             <p className="text-sm text-gray-500 mt-0.5">Pesanan yang sudah selesai atau dibatalkan</p>
@@ -1035,6 +1082,7 @@ const OrderHistoryPage = () => {
                 onOpen={setSelectedOrder}
                 onRefund={handleRefund}
                 onReturn={handleOpenReturn}
+                onOpenReturn={handleOpenReturn}
                 returnRequest={returnRequests[order.id]}
               />
             ))}
@@ -1048,6 +1096,7 @@ const OrderHistoryPage = () => {
             onClose={() => setSelectedOrder(null)}
             onRefund={handleRefund}
             onReturn={handleOpenReturn}
+            onOpenReturn={handleOpenReturn}
             returnRequest={returnRequests[selectedOrder.id]}
           />
         )}
@@ -1059,11 +1108,12 @@ const OrderHistoryPage = () => {
             onClose={() => setReturnModalOrder(null)}
             orderId={returnModalOrder.id}
             orderTotal={returnModalOrder.total_amount}
+            existingReturn={returnRequests[returnModalOrder.id]}
             onSuccess={() => {
               // Refresh return requests untuk update status badge
               supabase
                 .from('order_returns')
-                .select('id, order_id, status, reason, resolution, refund_amount, return_tracking_number, return_courier, admin_notes, created_at')
+                .select('id, order_id, status, reason, resolution, refund_amount, customer_refund_amount, customer_acknowledged_cs, description, images, video, phone, customer_notes, return_tracking_number, return_courier, admin_notes, created_at')
                 .eq('order_id', returnModalOrder.id)
                 .order('created_at', { ascending: false })
                 .limit(1)
