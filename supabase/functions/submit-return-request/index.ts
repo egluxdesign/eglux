@@ -280,27 +280,37 @@ serve(async (req: Request) => {
         }
 
         const adminRes = ret.admin_resolution || "full_refund";
+        const completedAt = new Date().toISOString();
+        // ⭐ Nominal actual refund (locked value dari approve action)
+        const actualRefundAmount = Number(ret.refund_amount) || 0;
 
+        // ⭐ Update order_returns: set status=completed + completed_at (untuk trigger + audit)
         await supabase.from("order_returns").update({
           status: "completed",
-          resolved_at: new Date().toISOString(),
+          resolved_at: completedAt,
+          completed_at: completedAt,
           admin_user_id: userId,
         }).eq("id", return_id);
 
-        // Update order status based on resolution
-        if (adminRes === "full_refund") {
-          // Order → 'refund' (revenue berkurang)
-          await supabase.from("orders").update({ status: "refund" }).eq("id", ret.order_id);
+        // ⭐ Sync orders table untuk revenue tracking (Shopee-style)
+        // - full_refund + partial_refund: ada uang keluar → orders.refund_amount + refunded_at + status='refund'
+        // - exchange: gak ada uang keluar → order tetap 'completed'
+        if (adminRes === "full_refund" || adminRes === "partial_refund") {
+          await supabase.from("orders").update({
+            refund_amount: actualRefundAmount,
+            refunded_at: completedAt,
+            status: "refund",
+          }).eq("id", ret.order_id);
         }
-        // exchange & partial_refund → order stays 'completed'
+        // exchange → orders stays 'completed' (no money out)
 
         return json({
           success: true,
           message: adminRes === "exchange"
-            ? "Exchange selesai. Kirim barang pengganti ke customer."
+            ? "Exchange selesai. Kirim barang pengganti ke customer. (No refund amount)"
             : adminRes === "partial_refund"
-            ? "Partial refund selesai. Order tetap completed."
-            : "Full refund selesai. Order status → refund.",
+            ? `Partial refund selesai. Refund ${actualRefundAmount.toLocaleString("id-ID")} di-sync ke orders. Order status → refund.`
+            : `Full refund selesai. Refund ${actualRefundAmount.toLocaleString("id-ID")} di-sync ke orders. Order status → refund.`,
         });
       }
 

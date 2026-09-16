@@ -50,6 +50,7 @@ import AdminReviewsPage from './pages/AdminReviewsPage';
 import AdminReturnsPage from './pages/AdminReturnsPage';
 import ShippingInfoPage from './pages/ShippingInfoPage';
 import ReturnPolicyPage from './pages/ReturnPolicyPage';
+import SalesReportPage from './pages/SalesReportPage';
 
 // Protected route wrapper
 import ProtectedRoute from './components/ui/ProtectedRoute';
@@ -188,6 +189,7 @@ const App = () => {
                 }
               />
 
+              {/* Returns & Refunds — team_dev + master only */}
               <Route
                   path="/returns-admin"
                   element={
@@ -196,6 +198,17 @@ const App = () => {
                     </ProtectedRoute>
                 }
               />
+
+              {/* Sales Report (Shopee-style) — team_dev + master only */}
+              <Route
+                path="/sales-report"
+                element={
+                  <ProtectedRoute roles={['team_dev', 'master']} page="sales_report">
+                    <SalesReportPage />
+                  </ProtectedRoute>
+                }
+              />
+
 
               {/* Blog — team_dev + master only */}
               <Route

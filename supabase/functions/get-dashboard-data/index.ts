@@ -137,12 +137,32 @@ serve(async (req: Request) => {
     const tOrders = Date.now();
     const { data: orders, error: ordersErr } = await supabase
       .from("orders")
-      .select("id, status, payment_status, total_amount, subtotal, shipping_cost, created_at, courier_code, biteship_status, biteship_order_id")
+      .select("id, status, payment_status, total_amount, subtotal, shipping_cost, created_at, refund_amount, refunded_at, courier_code, biteship_status, biteship_order_id")
       .gte("created_at", from)
       .lte("created_at", to)
       .order("created_at", { ascending: false });
     if (ordersErr) console.warn("[get-dashboard-data] orders query error:", ordersErr.message);
     console.log("[get-dashboard-data] orders query:", `${Date.now() - tOrders}ms`, `(${(orders || []).length} rows)`);
+
+    // ⭐ v3.2: Refund data diambil dari order_returns (source of truth)
+    // Include SEMUA status yang sudah commit refund (bukan cuma 'completed'):
+    // customer_confirmed, approved, shipping_back, received, completed
+    const { data: returnsInPeriod, error: returnsErr } = await supabase
+      .from("order_returns")
+      .select("id, status, admin_resolution, refund_amount, completed_at, resolved_at, customer_confirmed_at, admin_proposed_at, created_at, order_id")
+      .in("status", ["customer_confirmed", "approved", "shipping_back", "received", "completed"])
+      .in("admin_resolution", ["full_refund", "partial_refund"])
+      .gt("refund_amount", 0);
+    if (returnsErr) console.warn("[get-dashboard-data] order_returns query error:", returnsErr.message);
+
+    // Filter returns yang timestamp-nya dalam period (client-side filter dengan COALESCE fallback)
+    const allReturnsRaw = returnsInPeriod || [];
+    const returnsInPeriodFiltered = allReturnsRaw.filter((r: any) => {
+      // COALESCE chain: completed_at → resolved_at → customer_confirmed_at → admin_proposed_at → created_at
+      const refundDate = r.completed_at || r.resolved_at || r.customer_confirmed_at || r.admin_proposed_at || r.created_at;
+      if (!refundDate) return false;
+      return refundDate >= from && refundDate <= to;
+    });
 
     const allOrders = orders || [];
     const paidOrders = allOrders.filter((o: any) =>
@@ -192,10 +212,11 @@ serve(async (req: Request) => {
     };
 
     // Historical — pakai allOrders (yang udah filtered by date_range)
+    // ⭐ v3.2: refund count dari order_returns (source of truth), bukan orders.status
     const pipeline_history = {
       delivered: deliveredOrders.length,
       return: allOrders.filter((o: any) => o.status === "return").length,
-      refund: allOrders.filter((o: any) => o.status === "refund").length,
+      refund: returnsInPeriodFiltered.length, // ⭐ dari order_returns (5 status yang commit refund)
       cancelled: allOrders.filter((o: any) => o.status === "cancelled" || o.status === "expired").length,
     };
 
@@ -461,20 +482,36 @@ serve(async (req: Request) => {
     const totalTax = paidOrders.reduce((s: number, o: any) => s + Number(o.tax_amount || 0), 0);
     const totalShipping = paidOrders.reduce((s: number, o: any) => s + Number(o.shipping_cost || 0), 0);
     const totalSubtotal = paidOrders.reduce((s: number, o: any) => s + Number(o.subtotal || 0), 0);
-    const refundOrders = allOrders.filter((o: any) => o.status === "refund");
-    const totalRefund = refundOrders.reduce((s: number, o: any) => s + Number(o.total_amount || 0), 0);
+    // ⭐ v3.1 (Shopee-style): pakai order_returns.refund_amount (source of truth)
+    // Bukan lagi orders.refund_amount (yang bisa NULL/0 kalau sync belum jalan)
+    // Period filter: COALESCE(completed_at, resolved_at) dalam period
+    const refundRecords = returnsInPeriodFiltered.filter((r: any) =>
+      ["customer_confirmed", "approved", "shipping_back", "received", "completed"].includes(r.status) &&
+      ["full_refund", "partial_refund"].includes(r.admin_resolution) &&
+      Number(r.refund_amount) > 0
+    );
+    const totalRefund = refundRecords.reduce((s: number, r: any) => s + Number(r.refund_amount || 0), 0);
+    const refundCount = refundRecords.length;
+    // ⭐ Net revenue = Gross revenue - Refund amount (industry standard)
+    const netRevenue = totalRevenue - totalRefund;
+    // ⭐ Refund rate (amount-based) — Shopee pakai ini, bukan count-based
+    const refundRateAmount = totalRevenue > 0
+      ? Number(((totalRefund / totalRevenue) * 100).toFixed(2))
+      : 0;
     // Estimasi fee Midtrans (MDR 0.7% + Rp 2000 per transaksi)
     const estimatedMdrFee = Math.round(totalRevenue * 0.007);
     const estimatedFixedFee = paidCount * 2000;
-    const estimatedNetIncome = totalRevenue - estimatedMdrFee - estimatedFixedFee - totalRefund;
+    const estimatedNetIncome = netRevenue - estimatedMdrFee - estimatedFixedFee;
 
     const financeSummary = {
       gross_revenue: totalRevenue,
+      net_revenue: netRevenue,
       product_subtotal: totalSubtotal,
       tax_collected: totalTax,
       shipping_collected: totalShipping,
       refund_amount: totalRefund,
-      refund_count: refundOrders.length,
+      refund_count: refundCount,
+      refund_rate: refundRateAmount, // ⭐ amount-based (industry standard)
       estimated_mdr_fee: estimatedMdrFee,
       estimated_fixed_fee: estimatedFixedFee,
       estimated_net_income: estimatedNetIncome,
@@ -549,6 +586,13 @@ serve(async (req: Request) => {
       success: true,
       date_range: { from, to, label: range },
       kpis: {
+        // ⭐ Shopee-style: tampilkan gross_revenue + net_revenue + refund_amount + refund_rate
+        gross_revenue: totalRevenue,
+        net_revenue: netRevenue,
+        refund_amount: totalRefund,
+        refund_count: refundCount,
+        refund_rate: refundRateAmount,
+        // Backward compat — existing field name 'revenue' (sama dengan gross_revenue)
         revenue: totalRevenue,
         orders_count: totalOrders,
         paid_count: paidCount,

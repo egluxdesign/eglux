@@ -608,15 +608,35 @@ const DashboardAdminPage = () => {
             {/* KPI Cards */}
             <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
               {isAdmin && canSee('dashboard_revenue') && (
-                <div className="bg-gradient-to-br from-eglux-primary to-gray-800 rounded-xl p-4 text-white relative overflow-hidden">
-                  <div className="flex items-start justify-between mb-1">
-                    <div className="text-[0.65rem] uppercase tracking-wider text-white/60">💰 Revenue</div>
+                <div className="bg-gradient-to-br from-eglux-primary to-gray-800 rounded-xl p-4 text-white relative overflow-hidden col-span-2 lg:col-span-2">
+                  <div className="flex items-start justify-between mb-2">
+                    <div className="text-[0.65rem] uppercase tracking-wider text-white/60">💰 Revenue (Shopee-style)</div>
                     {data.kpis?.trends?.revenue !== null && data.kpis?.trends?.revenue !== undefined && (
                       <span className={`text-[0.6rem] font-bold px-1.5 py-0.5 rounded ${data.kpis.trends.revenue >= 0 ? 'bg-green-500/30 text-green-300' : 'bg-red-500/30 text-red-300'}`}>{formatTrend(data.kpis.trends.revenue)}</span>
                     )}
                   </div>
-                  <div className="text-xl font-bold">{rupiah(data.kpis?.revenue)}</div>
-                  <div className="text-[0.65rem] text-white/50 mt-1">{data.kpis?.paid_count || 0} paid orders</div>
+                  {/* 3 baris: Gross, Refund, Net */}
+                  <div className="space-y-1.5">
+                    <div>
+                      <div className="text-[0.6rem] text-white/50 uppercase tracking-wide">Gross Revenue</div>
+                      <div className="text-lg font-bold leading-tight">{rupiah(data.kpis?.gross_revenue || data.kpis?.revenue || 0)}</div>
+                    </div>
+                    <div className="flex items-center justify-between border-t border-white/10 pt-1.5">
+                      <div>
+                        <div className="text-[0.6rem] text-red-300/80 uppercase tracking-wide">− Refund ({data.kpis?.refund_count || 0}x)</div>
+                        <div className="text-sm font-semibold text-red-300 leading-tight">− {rupiah(data.kpis?.refund_amount || 0)}</div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-[0.55rem] text-white/40 uppercase">Rate</div>
+                        <div className="text-xs font-bold text-red-300">{data.kpis?.refund_rate || 0}%</div>
+                      </div>
+                    </div>
+                    <div className="border-t border-white/10 pt-1.5">
+                      <div className="text-[0.6rem] text-green-300/80 uppercase tracking-wide">= Net Revenue</div>
+                      <div className="text-lg font-bold text-green-300 leading-tight">{rupiah(data.kpis?.net_revenue || 0)}</div>
+                    </div>
+                  </div>
+                  <div className="text-[0.6rem] text-white/50 mt-1">{data.kpis?.paid_count || 0} paid orders</div>
                   <div className="absolute bottom-2 right-2 opacity-60">
                     <Sparkline data={data.kpis?.sparkline?.revenue || []} width={60} height={18} color="#10b981" fill={false} showDot={false} />
                   </div>

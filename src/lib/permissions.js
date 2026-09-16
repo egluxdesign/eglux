@@ -30,7 +30,7 @@ const ROLE_DEFAULTS = {
   team_dev: {
     dashboard: true, products: true, orders: true, discount: true,
     points: true, homepage: true, blog: true, about: true, contact: true,
-    users: true, reviews: true, returns: true,
+    users: true, reviews: true, returns: true, sales_report: true,
     // ⭐ Dashboard sub-sections (granular control)
     dashboard_revenue: true, dashboard_health: true, dashboard_conversion: true,
     dashboard_marketing: true, dashboard_finance: true, dashboard_category: true,
@@ -40,7 +40,7 @@ const ROLE_DEFAULTS = {
   master: {
     dashboard: true, products: true, orders: true, discount: true,
     points: true, homepage: true, blog: true, about: true, contact: true,
-    users: true, reviews: true, returns: true,
+    users: true, reviews: true, returns: true, sales_report: true,
     // ⭐ Dashboard sub-sections (granular control)
     dashboard_revenue: true, dashboard_health: true, dashboard_conversion: true,
     dashboard_marketing: true, dashboard_finance: true, dashboard_category: true,
@@ -50,7 +50,7 @@ const ROLE_DEFAULTS = {
   admin: {
     dashboard: true, products: true, orders: true, discount: false,
     points: false, homepage: false, blog: false, about: false, contact: false,
-    users: false, reviews: false, returns: false,
+    users: false, reviews: false, returns: false, sales_report: false,
     // ⭐ Dashboard sub-sections (default: all true for admin, bisa di-override)
     dashboard_revenue: true, dashboard_health: true, dashboard_conversion: true,
     dashboard_marketing: true, dashboard_finance: true, dashboard_category: true,
@@ -67,11 +67,12 @@ export const ADMIN_PAGES = [
   { key: 'dashboard', label: 'Dashboard',          href: '/dashboard-admin', icon: '📊', iconSvg: iconUrl('dashboard') },
   { key: 'products',  label: 'Products Admin',     href: '/products-admin',  icon: '📦', iconSvg: iconUrl('products') },
   { key: 'orders',    label: 'Pesanan Aktif',      href: '/orders-admin',    icon: '📋', iconSvg: iconUrl('orders') },
-  { key: 'discount',  label: 'Discount & Voucher', href: '/discount-admin',  icon: '🏷️', iconSvg: iconUrl('discounts') },
+  { key: 'discount',  label: 'Discount & Voucher', href: '/discount-admin',  icon: '🏷️', iconSvg: iconUrl('discount') },
   { key: 'points',    label: 'Points Management',  href: '/points-admin',    icon: '⭐', iconSvg: iconUrl('points') },
   { key: 'users',     label: 'User Management',    href: '/users-admin',     icon: '👥', iconSvg: iconUrl('users') },
-  { key: 'reviews',   label: 'Reviews',            href: '/reviews-admin',   icon: '⭐', iconSvg: iconUrl('review') },
+  { key: 'reviews',   label: 'Reviews',            href: '/reviews-admin',   icon: '⭐', iconSvg: iconUrl('reviews') },
   { key: 'returns',   label: 'Return & Refund',    href: '/returns-admin',  icon: '↩️', iconSvg: iconUrl('returns') },
+  { key: 'sales_report', label: 'Laporan Penjualan', href: '/sales-report', icon: '📊', iconSvg: iconUrl('sales_report') },
   { key: 'homepage',  label: 'Homepage Content',   href: '/homepage-admin',  icon: '🏠', iconSvg: iconUrl('homepage') },
   { key: 'blog',      label: 'Blog',               href: '/blog-admin',       icon: '📝', iconSvg: iconUrl('blog') },
   { key: 'about',     label: 'About Page',         href: '/about-admin',      icon: 'ℹ️', iconSvg: iconUrl('about') },
