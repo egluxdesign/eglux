@@ -54,12 +54,19 @@ function formatTimeAgo(seconds) {
 }
 
 // ⭐ Dashboard Chart Card — wrapper dengan header + date range
-const DashboardChartCard = ({ title, value, dateRange, setDateRange, DATE_RANGES, children }) => (
+const DashboardChartCard = ({ title, value, dateRange, setDateRange, DATE_RANGES, children, trend }) => (
   <div className="bg-white border border-gray-200 rounded-xl p-5">
     <div className="flex items-center justify-between mb-4">
       <div>
         <p className="text-[0.65rem] font-semibold text-gray-400 uppercase tracking-wider">{title}</p>
-        <p className="text-xl font-bold text-gray-900 mt-1">{value}</p>
+        <div className="flex items-center gap-2 mt-1">
+          <p className="text-xl font-bold text-gray-900">{value}</p>
+          {trend !== null && trend !== undefined && (
+            <span className={`text-[0.6rem] font-bold px-1.5 py-0.5 rounded ${trend >= 0 ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-600'}`}>
+              {trend >= 0 ? '▲' : '▼'} {Math.abs(trend).toFixed(1)}%
+            </span>
+          )}
+        </div>
       </div>
       <select
         value={dateRange}
@@ -432,30 +439,30 @@ const DashboardAdminPage = () => {
               <div className="bg-white border border-gray-200 rounded-xl p-5">
                 <div className="flex items-center justify-between mb-4">
                   <h3 className="text-sm font-bold text-gray-700">📊 Laporan Penjualan</h3>
-                  <span className="text-[0.6rem] text-gray-400">Standar Shopee Seller Center</span>
+                  <span className="text-[0.6rem] text-gray-400">Eglux</span>
                 </div>
 
                 {/* 4 Metric Cards */}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
                   <div className="bg-blue-50 rounded-lg p-3">
-                    <p className="text-[0.6rem] text-gray-500 uppercase">Jumlah Pesanan</p>
+                    <p className="text-[0.6rem] text-gray-500 uppercase">Total Order</p>
                     <p className="text-xl font-bold text-blue-700">{data.sales_report.jumlah_pesanan || 0}</p>
-                    <p className="text-[0.6rem] text-gray-400 mt-0.5">excl belum bayar</p>
+                    <p className="text-[0.6rem] text-gray-400 mt-0.5">paid</p>
                   </div>
                   <div className="bg-purple-50 rounded-lg p-3">
-                    <p className="text-[0.6rem] text-gray-500 uppercase">Penjualan Produk</p>
+                    <p className="text-[0.6rem] text-gray-500 uppercase">Product Sold</p>
                     <p className="text-xl font-bold text-purple-700">{(data.sales_report.penjualan_produk_sku || 0).toLocaleString('id-ID')}</p>
-                    <p className="text-[0.6rem] text-gray-400 mt-0.5">SKU terjual</p>
+                    <p className="text-[0.6rem] text-gray-400 mt-0.5">SKU per unit</p>
                   </div>
                   <div className="bg-green-50 rounded-lg p-3">
-                    <p className="text-[0.6rem] text-gray-500 uppercase">Dana Penjualan</p>
+                    <p className="text-[0.6rem] text-gray-500 uppercase">Gross Revenue</p>
                     <p className="text-lg font-bold text-green-700">{rupiah(data.sales_report.dana_penjualan)}</p>
-                    <p className="text-[0.6rem] text-gray-400 mt-0.5">produk + ongkir + tax</p>
+                    <p className="text-[0.6rem] text-gray-400 mt-0.5">product + shipping + tax</p>
                   </div>
                   <div className="bg-amber-50 rounded-lg p-3">
-                    <p className="text-[0.6rem] text-gray-500 uppercase">Dana Penjualan Produk</p>
+                    <p className="text-[0.6rem] text-gray-500 uppercase">Product Subtotal</p>
                     <p className="text-lg font-bold text-amber-700">{rupiah(data.sales_report.dana_penjualan_produk)}</p>
-                    <p className="text-[0.6rem] text-gray-400 mt-0.5">subtotal produk saja</p>
+                    <p className="text-[0.6rem] text-gray-400 mt-0.5">subtotal product sold</p>
                   </div>
                 </div>
 
@@ -472,12 +479,12 @@ const DashboardAdminPage = () => {
                 <div className="bg-gradient-to-r from-eglux-primary to-gray-800 rounded-lg p-4 text-white mb-4">
                   <div className="flex items-center justify-between">
                     <div>
-                      <p className="text-[0.65rem] uppercase tracking-wider text-white/60">Pendapatan Kotor</p>
+                      <p className="text-[0.65rem] uppercase tracking-wider text-white/60">Net Revenue</p>
                       <p className="text-2xl font-bold">{rupiah(data.sales_report.pendapatan_kotor)}</p>
-                      <p className="text-[0.6rem] text-white/50 mt-0.5">excl dibatalkan & refund + voucher</p>
+                      <p className="text-[0.6rem] text-white/50 mt-0.5">excluded cancelled & refunded + vouchers</p>
                     </div>
                     <div className="text-right">
-                      <p className="text-[0.6rem] text-white/60">Pesanan Valid</p>
+                      <p className="text-[0.6rem] text-white/60">Valid Orders</p>
                       <p className="text-lg font-bold">{data.sales_report.pesanan_valid || 0}</p>
                     </div>
                   </div>
@@ -488,7 +495,7 @@ const DashboardAdminPage = () => {
                   <div className="bg-red-50 border border-red-200 rounded-lg p-3">
                     <div className="flex items-center justify-between">
                       <div>
-                        <p className="text-[0.6rem] text-gray-500 uppercase">Pesanan Dibatalkan</p>
+                        <p className="text-[0.6rem] text-gray-500 uppercase">Order Cancelled</p>
                         <p className="text-lg font-bold text-red-700">{data.sales_report.pesanan_dibatalkan || 0}</p>
                         <p className="text-[0.6rem] text-gray-400">{rupiah(data.sales_report.detail?.cancelled_amount || 0)}</p>
                       </div>
@@ -501,7 +508,7 @@ const DashboardAdminPage = () => {
                   <div className="bg-orange-50 border border-orange-200 rounded-lg p-3">
                     <div className="flex items-center justify-between">
                       <div>
-                        <p className="text-[0.6rem] text-gray-500 uppercase">Pengembalian Dana</p>
+                        <p className="text-[0.6rem] text-gray-500 uppercase">Order Refunded</p>
                         <p className="text-lg font-bold text-orange-700">{data.sales_report.pesanan_pengembalian_dana || 0}</p>
                         <p className="text-[0.6rem] text-gray-400">{rupiah(data.sales_report.detail?.refund_amount || 0)}</p>
                       </div>
@@ -592,9 +599,9 @@ const DashboardAdminPage = () => {
                           })}
                           <div className="mt-4 pt-3 border-t border-gray-100">
                             <div className="bg-gradient-to-r from-green-50 to-blue-50 rounded-lg p-2.5 text-center">
-                              <p className="text-[0.6rem] text-gray-500 uppercase">Overall Conversion Rate</p>
-                              <p className="text-lg font-bold text-green-700">{rates.overall || 0}%</p>
-                              <p className="text-[0.6rem] text-gray-400">dari {stages[0]?.count || 0} impressions → {stages[4]?.count || 0} paid orders</p>
+                              <p className="text-[0.6rem] text-gray-500 uppercase">Product Conversion Rate</p>
+                              <p className="text-lg font-bold text-green-700">{data.kpis?.product_conversion_rate || 0}%</p>
+                              <p className="text-[0.6rem] text-gray-400">dari {data.kpis?.product_views || 0} product views → {data.kpis?.paid_count || 0} paid orders</p>
                             </div>
                           </div>
                         </div>
@@ -634,6 +641,9 @@ const DashboardAdminPage = () => {
                     <div className="border-t border-white/10 pt-1.5">
                       <div className="text-[0.6rem] text-green-300/80 uppercase tracking-wide">= Net Revenue</div>
                       <div className="text-lg font-bold text-green-300 leading-tight">{rupiah(data.kpis?.net_revenue || 0)}</div>
+                      <div className="text-[0.55rem] text-white/40 mt-0.5">
+                        Gross − Refund − Cancelled ({rupiah(data.finance?.cancelled_amount || 0)})
+                      </div>
                     </div>
                   </div>
                   <div className="text-[0.6rem] text-white/50 mt-1">{data.kpis?.paid_count || 0} paid orders</div>
@@ -679,10 +689,11 @@ const DashboardAdminPage = () => {
             {/* Revenue Chart */}
             <DashboardChartCard
               title="💰 Revenue Trend"
-              value={rupiah(data.kpis?.revenue)}
+              value={rupiah(data.kpis?.gross_revenue || data.kpis?.revenue)}
               dateRange={dateRange}
               setDateRange={setDateRange}
               DATE_RANGES={DATE_RANGES}
+              trend={data.kpis?.trends?.revenue}
             >
               <RevenueChart chart={data.revenue_chart || []} />
             </DashboardChartCard>
@@ -925,8 +936,9 @@ const DashboardAdminPage = () => {
                     <p className="text-[0.6rem] text-gray-400 mt-0.5">{data.kpis?.paid_count || 0} transaksi</p>
                   </div>
                   <div className="bg-blue-50 rounded-lg p-3">
-                    <p className="text-[0.6rem] text-gray-500 uppercase">Pajak Diterima</p>
-                    <p className="text-base font-bold text-blue-700">{rupiah(data.finance.tax_collected)}</p>
+                    <p className="text-[0.6rem] text-gray-500 uppercase">Tax (Midtrans Fee)</p>
+                    <p className="text-base font-bold text-blue-700">{rupiah((data.finance.estimated_mdr_fee || 0) + (data.finance.estimated_fixed_fee || 0))}</p>
+                    <p className="text-[0.6rem] text-gray-400 mt-0.5">MDR {data.finance.mdr_rate || 0.7}% + Rp 2K x {data.kpis?.paid_count || 0} transaksi</p>
                   </div>
                   <div className="bg-purple-50 rounded-lg p-3">
                     <p className="text-[0.6rem] text-gray-500 uppercase">Ongkir Diterima</p>
@@ -940,10 +952,19 @@ const DashboardAdminPage = () => {
                 </div>
                 <div className="mt-4 pt-4 border-t border-gray-100">
                   <p className="text-[0.65rem] uppercase tracking-wider text-gray-400 mb-2">Biaya Payment Gateway (Estimasi)</p>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
-                    <div className="flex justify-between"><span className="text-gray-500">MDR Fee ({data.finance.mdr_rate || 0.7}%)</span><span className="font-semibold text-gray-700">-{rupiah(data.finance.estimated_mdr_fee)}</span></div>
-                    <div className="flex justify-between"><span className="text-gray-500">Fixed Fee (Rp 2K x {data.kpis?.paid_count || 0})</span><span className="font-semibold text-gray-700">-{rupiah(data.finance.estimated_fixed_fee)}</span></div>
-                    <div className="flex justify-between"><span className="text-gray-500">Refund</span><span className="font-semibold text-red-600">-{rupiah(data.finance.refund_amount)}</span></div>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div className="bg-gray-50 rounded-lg p-2.5">
+                      <p className="text-[0.6rem] text-gray-500 uppercase mb-1">MDR Fee ({data.finance.mdr_rate || 0.7}%)</p>
+                      <p className="text-sm font-bold text-gray-700">-{rupiah(data.finance.estimated_mdr_fee)}</p>
+                    </div>
+                    <div className="bg-gray-50 rounded-lg p-2.5">
+                      <p className="text-[0.6rem] text-gray-500 uppercase mb-1">Fixed Fee (Rp 2K x {data.kpis?.paid_count || 0})</p>
+                      <p className="text-sm font-bold text-gray-700">-{rupiah(data.finance.estimated_fixed_fee)}</p>
+                    </div>
+                    <div className="bg-red-50 rounded-lg p-2.5">
+                      <p className="text-[0.6rem] text-gray-500 uppercase mb-1">Refund</p>
+                      <p className="text-sm font-bold text-red-600">-{rupiah(data.finance.refund_amount)}</p>
+                    </div>
                   </div>
                 </div>
                 <div className="mt-4 bg-gradient-to-r from-eglux-primary to-gray-800 rounded-lg p-4 text-white">

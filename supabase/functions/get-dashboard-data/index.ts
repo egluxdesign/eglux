@@ -144,37 +144,29 @@ serve(async (req: Request) => {
     if (ordersErr) console.warn("[get-dashboard-data] orders query error:", ordersErr.message);
     console.log("[get-dashboard-data] orders query:", `${Date.now() - tOrders}ms`, `(${(orders || []).length} rows)`);
 
-    // ⭐ v3.2: Refund data diambil dari order_returns (source of truth)
-    // Include SEMUA status yang sudah commit refund (bukan cuma 'completed'):
-    // customer_confirmed, approved, shipping_back, received, completed
-    const { data: returnsInPeriod, error: returnsErr } = await supabase
-      .from("order_returns")
-      .select("id, status, admin_resolution, refund_amount, completed_at, resolved_at, customer_confirmed_at, admin_proposed_at, created_at, order_id")
-      .in("status", ["customer_confirmed", "approved", "shipping_back", "received", "completed"])
-      .in("admin_resolution", ["full_refund", "partial_refund"])
-      .gt("refund_amount", 0);
-    if (returnsErr) console.warn("[get-dashboard-data] order_returns query error:", returnsErr.message);
-
-    // Filter returns yang timestamp-nya dalam period (client-side filter dengan COALESCE fallback)
-    const allReturnsRaw = returnsInPeriod || [];
-    const returnsInPeriodFiltered = allReturnsRaw.filter((r: any) => {
-      // COALESCE chain: completed_at → resolved_at → customer_confirmed_at → admin_proposed_at → created_at
-      const refundDate = r.completed_at || r.resolved_at || r.customer_confirmed_at || r.admin_proposed_at || r.created_at;
-      if (!refundDate) return false;
-      return refundDate >= from && refundDate <= to;
-    });
-
+    // ⭐ v4.0: Refund data PAKAI orders.refund_amount + orders.refunded_at (SYNCED dari order_returns via SQL 090 trigger)
+    // Tidak perlu query order_returns terpisah — data sudah sync ke orders table
+    // Filter: refund_amount > 0 AND refunded_at dalam period
     const allOrders = orders || [];
-    const paidOrders = allOrders.filter((o: any) =>
-      o.payment_status === "paid" &&
-      !["cancelled", "expired", "refund"].includes(o.status)
+    const allPaidOrders = allOrders.filter((o: any) => o.payment_status === "paid");
+    const refundedOrders = allPaidOrders.filter((o: any) =>
+      Number(o.refund_amount) > 0 && o.refunded_at && o.refunded_at >= from && o.refunded_at <= to
     );
-    const totalRevenue = paidOrders.reduce((s: number, o: any) => s + Number(o.total_amount || 0), 0);
+    const totalRefund = refundedOrders.reduce((s: number, o: any) => s + Number(o.refund_amount || 0), 0);
+    const refundCount = refundedOrders.length;
+    const paidOrders = allPaidOrders.filter((o: any) =>
+      !["cancelled", "expired", "refund"].includes(o.status)  // tetap dipakai untuk paid_count display
+    );
+    const totalRevenue = allPaidOrders.reduce((s: number, o: any) => s + Number(o.total_amount || 0), 0);
+    // ⭐ Cancelled amount (untuk subtract dari gross revenue → net revenue)
+    const cancelledAmount = allPaidOrders
+      .filter((o: any) => ["cancelled", "expired"].includes(o.status))
+      .reduce((s: number, o: any) => s + Number(o.total_amount || 0), 0);
     const totalOrders = allOrders.length;
-    const paidCount = paidOrders.length;
+    const paidCount = allPaidOrders.length;
 
     // Shipping on-time rate (computed from allOrders — no DB query needed)
-    const deliveredOrders = allOrders.filter((o: any) => o.status === "delivered" || o.status === "completed");
+    const deliveredOrders = allOrders.filter((o: any) => o.status === 'delivered' || o.status === 'completed' || o.status === 'refund');
     const shippingRate = deliveredOrders.length > 0 ? 100 : 0;
 
     // Order Pipeline — SPLIT jadi 2 sections (Opsi 1):
@@ -212,11 +204,10 @@ serve(async (req: Request) => {
     };
 
     // Historical — pakai allOrders (yang udah filtered by date_range)
-    // ⭐ v3.2: refund count dari order_returns (source of truth), bukan orders.status
     const pipeline_history = {
       delivered: deliveredOrders.length,
       return: allOrders.filter((o: any) => o.status === "return").length,
-      refund: returnsInPeriodFiltered.length, // ⭐ dari order_returns (5 status yang commit refund)
+      refund: refundedOrders.length,
       cancelled: allOrders.filter((o: any) => o.status === "cancelled" || o.status === "expired").length,
     };
 
@@ -234,10 +225,11 @@ serve(async (req: Request) => {
       cancelled: pipeline_history.cancelled,
     };
 
-    // Revenue chart data (computed from paidOrders — no DB query needed)
+    // Revenue chart data (computed from allPaidOrders — include ALL paid, not exclude refund)
+    // v4.0: pakai allPaidOrders supaya revenue chart konsisten dengan gross_revenue KPI
     const revenueChart: { date: string; label: string; revenue: number; orders: number }[] = [];
     const chartMap: Record<string, { revenue: number; orders: number }> = {};
-    paidOrders.forEach((o: any) => {
+    allPaidOrders.forEach((o: any) => {
       const d = new Date(o.created_at);
       const dateKey = d.toISOString().split("T")[0];
       if (!chartMap[dateKey]) chartMap[dateKey] = { revenue: 0, orders: 0 };
@@ -262,7 +254,9 @@ serve(async (req: Request) => {
     // ── 2. ALL remaining queries in PARALLEL (Promise.all) ──
     // Sebelumnya: 12 sequential queries × ~200ms = ~2.4s
     // Sekarang: 1 parallel batch × ~200ms = ~200ms (12x faster)
-    const orderIds = paidOrders.map((o: any) => o.id);
+    // ⭐ v4.0 FIX: pakai allPaidOrders (include refund orders) — bukan paidOrders yang exclude refund
+    // Sebelumnya: paidOrders exclude refund → product dari order refund gak masuk leaderboard
+    const orderIds = allPaidOrders.map((o: any) => o.id);
     const tParallel = Date.now();
     const parallelResults = await Promise.all([
       // Points count
@@ -359,12 +353,15 @@ serve(async (req: Request) => {
     const aov = paidCount > 0 ? Math.round(totalRevenue / paidCount) : 0;
 
     // ── 10. Shipping Performance ──
+    // ⭐ v4.0 FIX: include orders dengan courier_code (regardless status)
+    // Sebelumnya: hanya deliveredOrders → order yang jadi 'refund' setelah SQL 090 di-exclude
     const courierStats: Record<string, { courier: string; total: number; on_time: number; delayed: number }> = {};
-    deliveredOrders.forEach((o: any) => {
-      const courier = o.courier_code || "unknown";
+    allPaidOrders.forEach((o: any) => {
+      if (!o.courier_code) return; // skip orders tanpa courier
+      const courier = o.courier_code;
       if (!courierStats[courier]) courierStats[courier] = { courier, total: 0, on_time: 0, delayed: 0 };
       courierStats[courier].total++;
-      courierStats[courier].on_time++;
+      courierStats[courier].on_time++; // assume on-time kalau delivered/completed
     });
     (shippingDelays || []).forEach((o: any) => {
       const courier = o.courier_code || "unknown";
@@ -485,15 +482,12 @@ serve(async (req: Request) => {
     // ⭐ v3.1 (Shopee-style): pakai order_returns.refund_amount (source of truth)
     // Bukan lagi orders.refund_amount (yang bisa NULL/0 kalau sync belum jalan)
     // Period filter: COALESCE(completed_at, resolved_at) dalam period
-    const refundRecords = returnsInPeriodFiltered.filter((r: any) =>
-      ["customer_confirmed", "approved", "shipping_back", "received", "completed"].includes(r.status) &&
-      ["full_refund", "partial_refund"].includes(r.admin_resolution) &&
-      Number(r.refund_amount) > 0
-    );
-    const totalRefund = refundRecords.reduce((s: number, r: any) => s + Number(r.refund_amount || 0), 0);
-    const refundCount = refundRecords.length;
-    // ⭐ Net revenue = Gross revenue - Refund amount (industry standard)
-    const netRevenue = totalRevenue - totalRefund;
+    // v4.0: refund data sudah di-compute di atas (dari orders.refund_amount yang synced)
+    // totalRefund + refundCount sudah ada — tidak perlu re-compute
+    // ⭐ v3.2 FIX: Net Revenue = Gross Revenue - Refund Amount - Cancelled Amount
+    // (Shopee-style: include ALL paid orders in gross, then subtract refund + cancelled)
+    // SEBELUMNYA (BUG): gross exclude refund → double count when subtract refund
+    const netRevenue = totalRevenue - totalRefund - cancelledAmount;
     // ⭐ Refund rate (amount-based) — Shopee pakai ini, bukan count-based
     const refundRateAmount = totalRevenue > 0
       ? Number(((totalRefund / totalRevenue) * 100).toFixed(2))
@@ -506,6 +500,7 @@ serve(async (req: Request) => {
     const financeSummary = {
       gross_revenue: totalRevenue,
       net_revenue: netRevenue,
+      cancelled_amount: cancelledAmount, // ⭐ v3.2: tambah cancelled untuk transparency
       product_subtotal: totalSubtotal,
       tax_collected: totalTax,
       shipping_collected: totalShipping,

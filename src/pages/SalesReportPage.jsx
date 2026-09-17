@@ -85,38 +85,36 @@ const SalesReportPage = () => {
       setSalesReport(reportData);
 
       // 2. Fetch status breakdown (count orders per status in period)
+      // ⭐ v4.0: tambah refund_amount + refunded_at ke select untuk refund detection
       const { data: statusData, error: statusErr } = await supabase
         .from('orders')
-        .select('id, status, payment_status')
+        .select('id, status, payment_status, refund_amount, refunded_at')
         .gte('created_at', from)
         .lte('created_at', to);
       if (statusErr) throw statusErr;
 
-      // ⭐ v3.1: Fetch refund orders dari order_returns (source of truth)
-      // Bukan dari orders.status='refund' (yang gak sync kalau SQL 084 belum jalan)
-      const { data: refundReturns, error: refundErr } = await supabase
-        .from('order_returns')
-        .select('order_id, status, admin_resolution, refund_amount, completed_at, resolved_at')
-        .eq('status', 'completed')
-        .in('admin_resolution', ['full_refund', 'partial_refund'])
-        .gt('refund_amount', 0);
-      if (refundErr) throw refundErr;
-
-      // Build set of order_ids yang ada refund (untuk period ini)
+      // ⭐ v4.0: Refund detection dari orders.refund_amount (SYNCED via SQL 090)
+      // Tidak perlu query order_returns terpisah
       const refundedOrderIds = new Set(
-        (refundReturns || [])
-          .filter(r => {
-            const refundDate = r.completed_at || r.resolved_at;
-            return refundDate && refundDate >= from && refundDate <= to;
-          })
-          .map(r => r.order_id)
+        (statusData || [])
+          .filter(o => o.payment_status === 'paid' && Number(o.refund_amount) > 0 && o.refunded_at && o.refunded_at >= from && o.refunded_at <= to)
+          .map(o => o.id)
       );
+
+      // ⭐ v4.0: Build refund map per order_id dari orders table
+      const refundPerOrder = {};
+      (statusData || []).forEach(o => {
+        if (o.payment_status === 'paid' && Number(o.refund_amount) > 0 && o.refunded_at && o.refunded_at >= from && o.refunded_at <= to) {
+          refundPerOrder[o.id] = {
+            amount: Number(o.refund_amount || 0),
+          };
+        }
+      });
 
       const breakdown = { paid: 0, cancelled: 0, refund: 0, completed: 0, total: 0 };
       (statusData || []).forEach(o => {
         breakdown.total++;
         if (o.payment_status !== 'paid') return; // exclude unpaid
-        // ⭐ v3.1: refund detection via order_returns (bukan orders.status)
         if (refundedOrderIds.has(o.id)) {
           breakdown.refund++;
         } else if (o.status === 'cancelled' || o.status === 'expired') {
@@ -130,12 +128,12 @@ const SalesReportPage = () => {
       setStatusBreakdown(breakdown);
 
       // 3. Fetch product breakdown (top products by revenue in period)
-      // ⭐ v3.1: hapus refund_amount dari select orders (tidak dipakai lagi)
+      // ⭐ FIX: column name adalah product_name_snapshot (bukan product_name)
       const { data: items, error: itemsErr } = await supabase
         .from('order_items')
         .select(`
           product_id,
-          product_name,
+          product_name_snapshot,
           quantity,
           subtotal,
           order:orders!inner(id, status, payment_status, created_at, total_amount)
@@ -145,24 +143,15 @@ const SalesReportPage = () => {
         .eq('order.payment_status', 'paid');
       if (itemsErr) throw itemsErr;
 
-      // ⭐ v3.1: Build map refund per order_id dari order_returns (source of truth)
-      const refundPerOrder = {};
-      (refundReturns || []).forEach(r => {
-        const refundDate = r.completed_at || r.resolved_at;
-        if (refundDate && refundDate >= from && refundDate <= to) {
-          refundPerOrder[r.order_id] = {
-            amount: Number(r.refund_amount || 0),
-            resolution: r.admin_resolution,
-          };
-        }
-      });
+      // ⭐ v4.0: refundPerOrder sudah di-build dari orders.refund_amount (line 104-112)
+      // Tidak perlu query order_returns terpisah
 
       const productMap = {};
       (items || []).forEach(it => {
         const pid = it.product_id;
         if (!productMap[pid]) {
           productMap[pid] = {
-            name: it.product_name || 'Unknown',
+            name: it.product_name_snapshot || 'Unknown',
             sold: 0,
             revenue: 0,
             refund_count: 0,
@@ -177,7 +166,6 @@ const SalesReportPage = () => {
         if (orderRefund) {
           productMap[pid].refund_count++;
           // Approximate: proporsional refund berdasarkan subtotal item / total order
-          // (simplification — actual refund bisa beda untuk partial refund)
           const orderTotal = Number(it.order?.total_amount || it.subtotal || 1);
           productMap[pid].refund_amount += orderRefund.amount * (Number(it.subtotal) / orderTotal);
         }
@@ -207,9 +195,9 @@ const SalesReportPage = () => {
       ['Pesanan Valid', salesReport.pesanan_valid || 0],
       ['Pesanan Dibatalkan', salesReport.pesanan_dibatalkan || 0],
       ['Pesanan Refund', salesReport.pesanan_pengembalian_dana || 0],
-      ['Dana Penjualan (Gross)', salesReport.dana_penjualan || 0],
-      ['Dana Penjualan Produk', salesReport.dana_penjualan_produk || 0],
-      ['Pendapatan Kotor (Net)', salesReport.pendapatan_kotor || 0],
+      ['Gross Revenue', salesReport.dana_penjualan || 0],
+      ['Product Subtotal', salesReport.dana_penjualan_produk || 0],
+      ['Net Revenue', salesReport.pendapatan_kotor || 0],
       ['Cancelled Amount', salesReport.detail?.cancelled_amount || 0],
       ['Refund Amount (actual)', salesReport.detail?.refund_amount || 0],
       ['Refund Rate (amount)', `${salesReport.detail?.refund_rate_amount || 0}%`],
