@@ -158,8 +158,9 @@ const AdminReturnsPage = () => {
       if (!resp.ok || !result.success) throw new Error(result.error);
       alert('✅ ' + result.message);
 
-      // Open WhatsApp dengan pesan pre-filled
-      const waUrl = `https://wa.me/${customerPhone?.replace(/^0/, '62').replace(/\D/g, '') || '6281234567890'}?text=${encodeURIComponent(`Halo, saya admin EGLUX mengenai return yang Anda ajukan. Berikut nominal refund yang akan kami berikan: ...`)}`;
+      // Open WhatsApp dengan pesan pre-filled (include nominal refund)
+      const refundNominal = refundAmount ? rupiah(Number(refundAmount)) : '(set nominal)';
+      const waUrl = `https://wa.me/${customerPhone?.replace(/^0/, '62').replace(/\D/g, '') || '6285111752600'}?text=${encodeURIComponent(`Halo, saya admin EGLUX mengenai return yang Anda ajukan.\n\nNominal refund: ${refundNominal}\n\nMohon konfirmasi nominal tersebut. Terima kasih.`)}`;
       window.open(waUrl, '_blank', 'noopener,noreferrer');
 
       fetchReturns();

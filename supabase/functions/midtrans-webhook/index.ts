@@ -542,7 +542,7 @@ serve(async (req: Request) => {
     try {
       // ⭐ EMAIL NOTIFICATION via Resend (replaces WABA)
       // Call send-email-notification edge function
-      const emailResp = await fetch(`${SUPABASE_URL}/functions/v1/send-email-notification`, {
+      const emailResp = await fetch(`${SUPABASE_URL}/functions/v1/send-waba-test`, {
         method: "POST",
         headers: {
           "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
