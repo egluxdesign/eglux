@@ -279,12 +279,10 @@ serve(async (req: Request) => {
       supabase.from("orders").select("id, status, payment_status, total_amount, created_at, customer:customers(name)").order("created_at", { ascending: false }).limit(10),
       // Recent points
       supabase.from("point_transactions").select("id, amount, source, description, created_at").order("created_at", { ascending: false }).limit(5),
-      // Total customers
-      supabase.from("customers").select("*", { count: "exact", head: true }),
-      // New customers
-      supabase.from("customers").select("*", { count: "exact", head: true }).gte("created_at", from),
-      // Customer order counts (for repeat rate)
-      supabase.from("orders").select("customer_id").gte("created_at", from),
+      // ⭐ v4.2 FIX: Total/New/Repeat customers — pakai 1 RPC call (COUNT DISTINCT user_id)
+      // Sebelumnya: 3 separate queries yang count rows di customers table (per-order, duplikat)
+      // Fix: 1 RPC get_customer_insights yang query COUNT(DISTINCT user_id) + repeat across ALL TIME
+      supabase.rpc("get_customer_insights", { p_from: from, p_to: to }),
       // Newsletter subscribers
       supabase.from("newsletter_subscribers").select("*", { count: "exact", head: true }).eq("status", "active"),
       // WA subscribers
@@ -298,7 +296,7 @@ serve(async (req: Request) => {
       // ⭐ Phase 2.1: Active point rewards (marketing center)
       supabase.from("point_rewards").select("id, name, points_cost, is_active").eq("is_active", true).order("points_cost", { ascending: true }).limit(5),
     ]);
-    const [pointsCountRes, pointsBalanceRes, vouchersRes, pendingOrdersRes, pendingClaimsRes, shippingDelaysRes, itemsRes, recentOrdersRes, recentPointsRes, totalCustRes, newCustRes, custOrderCountsRes, newsletterRes, waSubsRes, pageViewsRes, productViewsRes, activeVouchersRes, activeRewardsRes] = parallelResults;
+    const [pointsCountRes, pointsBalanceRes, vouchersRes, pendingOrdersRes, pendingClaimsRes, shippingDelaysRes, itemsRes, recentOrdersRes, recentPointsRes, customerInsightsRes, newsletterRes, waSubsRes, pageViewsRes, productViewsRes, activeVouchersRes, activeRewardsRes] = parallelResults;
     console.log("[get-dashboard-data] parallel batch:", `${Date.now() - tParallel}ms`);
     // Surface per-query errors so they don't silently zero out KPIs
     const errs = parallelResults.map((r: any, i: number) => r?.error ? `[${i}] ${r.error.message}` : null).filter(Boolean);
@@ -338,17 +336,28 @@ serve(async (req: Request) => {
       })),
     ].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()).slice(0, 15);
 
-    // ── 9. Customer Insights (from parallel results — no extra queries) ──
-    const totalCustomers = totalCustRes.count || 0;
-    const newCustomers = newCustRes.count || 0;
-    const customerOrderCounts = custOrderCountsRes.data || [];
-    const uniqueCustomers = new Set(customerOrderCounts.map((c: any) => c.customer_id));
-    const repeatCustomers = (customerOrderCounts || []).reduce((acc: Record<string, number>, c: any) => {
-      acc[c.customer_id] = (acc[c.customer_id] || 0) + 1;
-      return acc;
-    }, {});
-    const repeatCount = Object.values(repeatCustomers).filter((c: number) => c > 1).length;
-    const repeatRate = uniqueCustomers.size > 0 ? Math.round((repeatCount / uniqueCustomers.size) * 100) : 0;
+    // ── 9. Customer Insights (v4.2 FIX: COUNT DISTINCT user_id + repeat across ALL TIME) ──
+    // Sebelumnya:
+    //   - totalCustomers = totalCustRes.count (COUNT rows di customers table — SALAH: duplikat per-order)
+    //   - newCustomers = newCustRes.count (COUNT rows where created_at >= from — SALAH: duplikat)
+    //   - repeatRate = hitung orders within date range, cek customer_id >1 (SALAH: customer_id per-order, jadi gak match)
+    //
+    // ⭐ v4.2 FIX: pakai RPC get_customer_insights yang:
+    //   - total_customers = COUNT(DISTINCT user_id) dari customers table (unique per-user)
+    //   - new_customers = users yang FIRST order (MIN(customers.created_at) per user) jatuh di range
+    //   - repeat_rate = users yang punya >1 order TOTAL (across all time, bukan date range)
+    const customerInsightsData = customerInsightsRes.data || {};
+    const totalCustomers = Number(customerInsightsData.total_customers) || 0;
+    const newCustomers = Number(customerInsightsData.new_customers) || 0;
+    const repeatRate = Number(customerInsightsData.repeat_rate) || 0;
+    // ⭐ Debug log untuk verify (tidak expose ke response)
+    console.log("[get-dashboard-data] customer insights v4.2:", {
+      total_customers: totalCustomers,
+      new_customers: newCustomers,
+      repeat_rate: repeatRate,
+      raw: customerInsightsData,
+    });
+
 
     const aov = paidCount > 0 ? Math.round(totalRevenue / paidCount) : 0;
 
