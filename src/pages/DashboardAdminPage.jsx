@@ -617,7 +617,7 @@ const DashboardAdminPage = () => {
               {isAdmin && canSee('dashboard_revenue') && (
                 <div className="bg-gradient-to-br from-eglux-primary to-gray-800 rounded-xl p-4 text-white relative overflow-hidden col-span-2 lg:col-span-2">
                   <div className="flex items-start justify-between mb-2">
-                    <div className="text-[0.65rem] uppercase tracking-wider text-white/60">💰 Revenue (Shopee-style)</div>
+                    <div className="text-[0.65rem] uppercase tracking-wider text-white/60">💰 Revenue</div>
                     {data.kpis?.trends?.revenue !== null && data.kpis?.trends?.revenue !== undefined && (
                       <span className={`text-[0.6rem] font-bold px-1.5 py-0.5 rounded ${data.kpis.trends.revenue >= 0 ? 'bg-green-500/30 text-green-300' : 'bg-red-500/30 text-red-300'}`}>{formatTrend(data.kpis.trends.revenue)}</span>
                     )}
@@ -677,15 +677,14 @@ const DashboardAdminPage = () => {
                   <div className="text-[0.65rem] text-gray-400 mt-1">{data.kpis?.points_transactions || 0} transactions</div>
                 </div>
               )}
-              {isAdmin && (
+              {/* {isAdmin && (
                 <div className="bg-white border border-gray-200 rounded-xl p-4">
                   <div className="text-[0.65rem] uppercase tracking-wider text-gray-400 mb-1">🎫 Vouchers Used</div>
                   <div className="text-xl font-bold text-eglux-primary">{data.kpis?.vouchers_used || 0}</div>
                   <div className="text-[0.65rem] text-gray-400 mt-1">This period</div>
                 </div>
-              )}
+              )} */}
             </div>
-
             {/* Revenue Chart */}
             <DashboardChartCard
               title="💰 Revenue Trend"

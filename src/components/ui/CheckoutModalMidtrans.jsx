@@ -1067,7 +1067,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
           <div className="min-w-0 pr-2">
             <h3 className="text-[1rem] md:text-[1.1rem] font-bold text-eglux-primary truncate">Checkout</h3>
             <p className="text-[0.72rem] text-gray-500 mt-0.5 flex items-center gap-1 truncate">
-              <ShieldCheck className="w-3 h-3 flex-shrink-0" /> Midtrans · Biteship
+              <ShieldCheck className="w-3 h-3 flex-shrink-0" /> EGLUX
             </p>
           </div>
           <button
@@ -1340,7 +1340,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
             {/* Name */}
             <div>
               <label className="block text-[0.8rem] font-semibold text-eglux-primary uppercase tracking-[0.5px] mb-1.5">
-                Nama Lengkap *
+                Nama Lengkap <span className="text-red-500">*</span>
               </label>
               <input
                 type="text"
@@ -1359,7 +1359,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
             {/* Phone — custom input dengan country selector (default +62, bisa ganti) */}
             <div>
               <label className="block text-[0.8rem] font-semibold text-eglux-primary uppercase tracking-[0.5px] mb-1.5">
-                WhatsApp *
+                WhatsApp <span className="text-red-500">*</span>
               </label>
               <div className="relative" ref={countryDropdownRef}>
                 {/* Country selector button — klik buka dropdown, TIDAK bisa di-backspace */}
@@ -1443,7 +1443,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
               </div>
               <InlineError msg={formErrors.phone} />
               <p className="text-[0.72rem] text-gray-500 mt-1">
-                Klik bendera untuk ganti negara (default Indonesia +62). Ketik nomor tanpa kode negara.
+                {/* Klik bendera untuk ganti negara (default Indonesia +62). Ketik nomor tanpa kode negara. */}
               </p>
             </div>
 
@@ -1452,7 +1452,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
               <label className="block text-[0.8rem] font-semibold text-eglux-primary uppercase tracking-[0.5px] mb-1.5">
                 Email <span className="text-red-500">*</span>
                 <span className="text-gray-400 font-normal normal-case tracking-normal ml-1 text-[0.7rem]">
-                  (untuk notifikasi pembayaran)
+                  {/* (untuk notifikasi pembayaran) */}
                 </span>
               </label>
               <input
@@ -1471,7 +1471,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
               />
               <InlineError msg={formErrors.email} />
               <p className="text-[0.72rem] text-gray-500 mt-1">
-                Email opsional — Midtrans akan kirim e-receipt jika diisi.
+                {/* Email opsional — Midtrans akan kirim e-receipt jika diisi. */}
               </p>
             </div>
           </section>
@@ -1485,7 +1485,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
             {/* Address */}
             <div>
               <label className="block text-[0.8rem] font-semibold text-eglux-primary uppercase tracking-[0.5px] mb-1.5">
-                Alamat Lengkap *
+                Alamat Lengkap <span className="text-red-500">*</span>
               </label>
               <textarea
                 name="address"
@@ -1503,7 +1503,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
             {/* City — react-select searchable dropdown */}
             <div>
               <label className="block text-[0.8rem] font-semibold text-eglux-primary uppercase tracking-[0.5px] mb-1.5">
-                Kota *
+                Kota <span className="text-red-500">*</span>
               </label>
               <Select
                 options={INDONESIAN_CITIES}
@@ -1520,14 +1520,14 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
               />
               <InlineError msg={formErrors.city} />
               <p className="text-[0.72rem] text-gray-500 mt-1">
-                97 kota di Indonesia · ketik untuk cari (misal: "bandung", "jakarta", "surabaya")
+                {/* 97 kota di Indonesia · ketik untuk cari (misal: "bandung", "jakarta", "surabaya") */}
               </p>
             </div>
 
             {/* Postal code */}
             <div>
               <label className="block text-[0.8rem] font-semibold text-eglux-primary uppercase tracking-[0.5px] mb-1.5">
-                Kode Pos *
+                Kode Pos <span className="text-red-500">*</span>
               </label>
               <input
                 type="text"
@@ -1548,7 +1548,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
             {/* Loading area lookup */}
             {areasLoading && (
               <div className="text-[0.78rem] text-gray-500 flex items-center gap-2">
-                <Loader2 className="w-3.5 h-3.5 animate-spin" /> Mencari area Biteship...
+                <Loader2 className="w-3.5 h-3.5 animate-spin" /> Mencari area...
               </div>
             )}
 
@@ -1593,7 +1593,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
             {/* Not found */}
             {showAreaNotFound && (
               <p className="text-[0.78rem] text-red-500">
-                Kode pos tidak ditemukan di Biteship. Periksa kembali.
+                Kode pos tidak ditemukan. Periksa kembali.
               </p>
             )}
           </section>
