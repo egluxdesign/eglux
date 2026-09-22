@@ -22,7 +22,7 @@ import { supabase } from '../lib/supabaseClient';
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const AVATAR_BUCKET = 'avatars';
-const AVATAR_FOLDER = 'preset';  // ⭐ sesuai struktur di Storage: avatars/preset/
+const AVATAR_FOLDER = 'presets';  // ⭐ sesuai struktur di Storage: avatars/preset/
 
 const ProfilePage = () => {
   const { user, profile, refreshProfile, logout } = useAuth();
@@ -115,6 +115,14 @@ const ProfilePage = () => {
       headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
+    // ⭐ FIX: handle non-JSON responses gracefully
+    // Kalau edge function return 500 dengan HTML/text (CORS error, runtime crash, dll),
+    // resp.json() akan throw → frontend crash. Handle dengan text fallback.
+    const contentType = resp.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) {
+      const text = await resp.text();
+      return { success: false, error: `Server returned ${resp.status}: ${text.substring(0, 200)}` };
+    }
     return resp.json();
   }, [getToken]);
 
@@ -203,6 +211,34 @@ const ProfilePage = () => {
       alert('Nama minimal 2 karakter');
       return;
     }
+
+    // ⭐ Client-side phone validation (catch errors before backend)
+    // Backend (update-profile edge function v2) sudah lenient — strip spasi/dash/kurung
+    // Tapi kita cek di frontend dulu biar UX lebih baik (gak tunggu network request)
+    const trimmedPhone = phone.trim();
+    if (trimmedPhone && trimmedPhone !== '') {
+      // Strip semua non-digit + non-leading-plus buat validasi cepat
+      const hasPlus = trimmedPhone.startsWith('+');
+      const digitsOnly = trimmedPhone.replace(/[^\d]/g, '');
+      // Indonesia: 08xxx (min 9 digit) | 62xxx | 8xxx (min 9 digit)
+      // International: +<10-15 digits>
+      const isIndonesian = digitsOnly.startsWith('08') || digitsOnly.startsWith('62') || digitsOnly.startsWith('8');
+      const minDigits = isIndonesian ? 9 : 10;
+      const maxDigits = isIndonesian ? 13 : 15;
+      if (digitsOnly.length < minDigits) {
+        alert(`Nomor WhatsApp terlalu pendek. Minimal ${minDigits} digit (Anda masuk: ${digitsOnly.length} digit).`);
+        return;
+      }
+      if (digitsOnly.length > maxDigits) {
+        alert(`Nomor WhatsApp terlalu panjang. Maksimal ${maxDigits} digit (Anda masuk: ${digitsOnly.length} digit).`);
+        return;
+      }
+      if (!hasPlus && !digitsOnly.match(/^(08|62|8)/)) {
+        alert('Nomor WhatsApp tidak valid. Mulai dengan 08xxx (Indonesia), 62xxx, atau +<country_code>xxx (international).');
+        return;
+      }
+    }
+
     setSavingProfile(true);
     try {
       // Avatar URL langsung dari preset (sudah public URL, gak perlu upload)
@@ -210,7 +246,7 @@ const ProfilePage = () => {
 
       const result = await callApi('update-profile', {
         full_name: fullName.trim(),
-        phone: phone.trim() || null,
+        phone: trimmedPhone || null,         // ⭐ kirim trimmed, backend akan normalize
         address: address.trim() || null,
         city: city.trim() || null,
         postal_code: postalCode.trim() || null,
@@ -221,10 +257,15 @@ const ProfilePage = () => {
         if (refreshProfile) await refreshProfile();
         alert('✅ Profile berhasil diupdate');
       } else {
-        alert('Gagal: ' + (result.error || 'Unknown error'));
+        // ⭐ FIX: better error display — show specific backend message
+        const errorMsg = result.error || 'Unknown error';
+        console.error('[ProfilePage] Update failed:', errorMsg, result);
+        alert(`❌ Gagal update profile:\n\n${errorMsg}\n\nCek DevTools Console untuk detail.`);
       }
-    } catch (e) { alert('Error: ' + e.message); }
-    finally { setSavingProfile(false); }
+    } catch (e) {
+      console.error('[ProfilePage] Network error:', e);
+      alert(`Error koneksi: ${e.message}\n\nCoba lagi atau refresh page.`);
+    } finally { setSavingProfile(false); }
   };
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -439,10 +480,13 @@ const ProfilePage = () => {
                 type="tel"
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
-                placeholder="+628xxx atau 08xxx"
+                placeholder="+628xxx atau 08xxx (boleh pakai spasi/dash)"
+                maxLength={20}
                 className="w-full px-3 py-2.5 text-sm border border-gray-300 rounded-lg outline-none focus:border-eglux-secondary"
               />
-              <p className="text-[0.7rem] text-gray-400 mt-1">Format: +628xxx atau 08xxx</p>
+              <p className="text-[0.65rem] text-gray-400 mt-1">
+                Format: 08xxx, 62xxx, +62xxx, atau +&lt;country_code&gt;xxx. Spasi/dash/kurung otomatis dibersihkan.
+              </p>
             </div>
 
             {/* Address (Alamat Pengiriman) */}
@@ -671,7 +715,7 @@ const ProfilePage = () => {
                 <div className="text-center py-8">
                   <div className="text-4xl mb-3">📁</div>
                   <p className="text-sm text-gray-600 mb-1">Belum ada avatar tersedia.</p>
-                  <p className="text-xs text-gray-400">Upload avatar ke Storage bucket "avatars/preset/".</p>
+                  <p className="text-xs text-gray-400">Upload avatar ke Storage bucket "avatars/presets/".</p>
                 </div>
               ) : (
                 // Grid avatar

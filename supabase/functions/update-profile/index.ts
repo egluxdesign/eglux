@@ -31,25 +31,44 @@ const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
 // Normalize phone ke format E.164 (Indonesia)
+// ⭐ v2: strip ALL non-digit chars (spasi, dash, kurung, titik) sebelum normalize
+// Sebelumnya: phone dengan spasi/dash ("0812 3456 7890") gak ke-handle → validation fail
 function normalizePhone(phone: string): string {
-  const trimmed = phone.trim();
-  if (trimmed.startsWith("08")) {
-    return "+62" + trimmed.slice(1);
+  if (!phone) return "";
+  // ⭐ Bersihin semua karakter non-digit + non-leading-plus
+  // Step 1: Trim whitespace awal/akhir
+  let trimmed = phone.trim();
+
+  // Step 2: Detect kalau ada leading + (international)
+  const hasLeadingPlus = trimmed.startsWith("+");
+
+  // Step 3: Strip SEMUA non-digit chars (spasi, dash, kurung, titik, dll)
+  const digitsOnly = trimmed.replace(/[^\d]/g, "");
+
+  // Step 4: Reconstruct berdasarkan pattern
+  // Indonesia: 08xxx → +628xxx | 62xxx → +62xxx | 8xxx (>=9 digit) → +628xxx
+  // International: +<digits>
+  if (digitsOnly.startsWith("08")) {
+    return "+62" + digitsOnly.slice(1);          // 08xxx → +628xxx
   }
-  if (trimmed.startsWith("62") && !trimmed.startsWith("+62")) {
-    return "+" + trimmed;
+  if (digitsOnly.startsWith("62")) {
+    return "+" + digitsOnly;                      // 62xxx → +62xxx
   }
-  if (trimmed.startsWith("+62")) {
-    return trimmed;
+  if (digitsOnly.startsWith("8") && digitsOnly.length >= 9 && !hasLeadingPlus) {
+    return "+62" + digitsOnly;                    // 8xxx (tanpa 0 atau 62) → +628xxx
   }
-  if (trimmed.startsWith("8") && trimmed.length >= 9) {
-    return "+62" + trimmed;
+  if (hasLeadingPlus) {
+    return "+" + digitsOnly;                      // +<digits>
   }
-  return trimmed;
+  // Fallback: kalau gak match pattern, return digits aja (akan fail validation)
+  return digitsOnly;
 }
 
 function isValidPhone(phone: string): boolean {
+  if (!phone) return false;
   const normalized = normalizePhone(phone);
+  // ⭐ Indonesian phone: +62 + 9-13 digit (total 11-15 digit after +62)
+  // International: + + 10-15 digit total
   return /^\+62\d{9,13}$/.test(normalized) || /^\+\d{10,15}$/.test(normalized);
 }
 
@@ -83,45 +102,32 @@ serve(async (req: Request) => {
         updates.phone = null;
       } else {
         if (typeof phone !== "string" || !isValidPhone(phone)) {
+          const normalized = normalizePhone(phone);
           return json({
-            error: "Nomor WhatsApp tidak valid. Format: +62xxx atau 08xxx (9-13 digit setelah kode negara)",
+            error: `Nomor WhatsApp tidak valid. Format yang diterima: +62xxx atau 08xxx (9-13 digit setelah kode negara).
+            Anda kirim: "${phone}", setelah normalize: "${normalized}"`,
           }, 400);
         }
         updates.phone = normalizePhone(phone);
       }
     }
 
+    // ⛔ SKIP: address, city, postal_code
+    // SQL 024 sudah DROP city + postal_code dari profiles table (sengaja —
+    // data alamat lengkap disimpan di orders table saat checkout, bukan di profile)
+    // address column juga tidak pernah ada di profiles schema.
+    // Frontend mungkin masih kirim field ini (untuk backward compat), tapi kita
+    // ignore supaya gak trigger PostgreSQL error "column does not exist".
+    // Kalau user mau update alamat pengiriman, itu dilakukan saat checkout
+    // (create-order edge function insert ke customers table per-order).
     if (address !== undefined) {
-      if (address === null || address === "") {
-        updates.address = null;
-      } else {
-        if (typeof address !== "string" || address.length > 500) {
-          return json({ error: "Alamat maksimal 500 karakter" }, 400);
-        }
-        updates.address = address.trim();
-      }
+      console.log("[update-profile] Ignoring 'address' field — column doesn't exist in profiles table (stored per-order in customers/orders tables)");
     }
-
     if (city !== undefined) {
-      if (city === null || city === "") {
-        updates.city = null;
-      } else {
-        if (typeof city !== "string" || city.length > 100) {
-          return json({ error: "Kota maksimal 100 karakter" }, 400);
-        }
-        updates.city = city.trim();
-      }
+      console.log("[update-profile] Ignoring 'city' field — column dropped by SQL 024 (stored per-order in orders table)");
     }
-
     if (postal_code !== undefined) {
-      if (postal_code === null || postal_code === "") {
-        updates.postal_code = null;
-      } else {
-        if (typeof postal_code !== "string" || postal_code.length > 10) {
-          return json({ error: "Kode pos maksimal 10 karakter" }, 400);
-        }
-        updates.postal_code = postal_code.trim();
-      }
+      console.log("[update-profile] Ignoring 'postal_code' field — column dropped by SQL 024 (stored per-order in orders table)");
     }
 
     if (avatar_url !== undefined) {
@@ -151,7 +157,7 @@ serve(async (req: Request) => {
       .from("profiles")
       .update(updates)
       .eq("id", userId)
-      .select("id, full_name, email, phone, address, city, postal_code, avatar_url, role")
+      .select("id, full_name, email, phone, avatar_url, role")
       .single();
 
     if (error) {
