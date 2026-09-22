@@ -1003,8 +1003,8 @@ const OrderHistoryPage = () => {
   if (!user) {
     return (
       <>
-        <HeaderProducts onCartOpen={openCart} />
-        <section className="max-w-2xl mx-auto px-4 md:px-6 py-16 text-center">
+        <HeaderProducts onCartOpen={openCart} forceScrolled />
+        <section className="max-w-2xl mx-auto px-4 md:px-6 pt-24 md:pt-28 py-16 text-center">
           <p className="text-gray-500 mb-4">Kamu perlu masuk dulu untuk melihat riwayat pesanan.</p>
           <Link to="/admin" className="text-eglux-secondary font-semibold hover:underline">
             Masuk ke akun
@@ -1017,9 +1017,9 @@ const OrderHistoryPage = () => {
 
   return (
     <>
-      <HeaderProducts onCartOpen={openCart} />
+      <HeaderProducts onCartOpen={openCart} forceScrolled />
 
-      <section className="max-w-2xl mx-auto px-4 md:px-6 py-8">
+      <section className="max-w-2xl mx-auto px-4 md:px-6 pt-24 md:pt-28 pb-8">
         {/* Header dengan back link ke Pesanan Saya */}
         <div className="flex items-center justify-between mb-6 gap-4 flex-wrap">
           <div>
