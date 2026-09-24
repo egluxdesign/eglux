@@ -547,14 +547,14 @@ const AdminReturnsPage = () => {
                               disabled={processing === r.id}
                               className="flex-1 py-2 bg-amber-500 text-white rounded-lg text-xs font-bold hover:bg-amber-600 disabled:opacity-50 cursor-pointer border-none flex items-center justify-center gap-1.5"
                             >
-                              ✏️ Edit Nominal
+                              ✏️ Adjust
                             </button>
                             <button
                               onClick={() => handleSkipCustomerConfirm(r.id, r.refund_amount)}
                               disabled={processing === r.id}
                               className="flex-1 py-2 bg-green-500 text-white rounded-lg text-xs font-bold hover:bg-green-600 disabled:opacity-50 cursor-pointer border-none flex items-center justify-center gap-1.5"
                             >
-                              {processing === r.id ? '⏳' : '✅ Paksa Setujui'}
+                              {processing === r.id ? '⏳' : '✅ Approve'}
                             </button>
                           </div>
 
