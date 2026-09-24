@@ -161,7 +161,7 @@ const RegisterPage = () => {
                 {/* Nama Lengkap */}
                 <div>
                   <label className="block text-[0.8rem] font-semibold text-eglux-primary uppercase tracking-[0.5px] mb-1.5">
-                    Nama Lengkap *
+                    Nama Lengkap <span className="text-red-500">*</span>
                   </label>
                   <input
                     type="text"
@@ -176,7 +176,7 @@ const RegisterPage = () => {
                 {/* WhatsApp — dengan country selector seperti checkout */}
                 <div>
                   <label className="block text-[0.8rem] font-semibold text-eglux-primary uppercase tracking-[0.5px] mb-1.5">
-                    WhatsApp *
+                    WhatsApp <span className="text-red-500">*</span>
                   </label>
                   <div className="relative country-dropdown-register">
                     <button
@@ -240,7 +240,7 @@ const RegisterPage = () => {
                 {/* Email */}
                 <div>
                   <label className="block text-[0.8rem] font-semibold text-eglux-primary uppercase tracking-[0.5px] mb-1.5">
-                    Email *
+                    Email <span className="text-red-500">*</span>
                   </label>
                   <input
                     type="email"
@@ -260,7 +260,7 @@ const RegisterPage = () => {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="block text-[0.8rem] font-semibold text-eglux-primary uppercase tracking-[0.5px] mb-1.5">
-                      Password *
+                      Password <span className="text-red-500">*</span>
                     </label>
                     <div className="relative">
                       <input
@@ -295,7 +295,7 @@ const RegisterPage = () => {
                   </div>
                   <div>
                     <label className="block text-[0.8rem] font-semibold text-eglux-primary uppercase tracking-[0.5px] mb-1.5">
-                      Konfirmasi *
+                      Konfirmasi <span className="text-red-500">*</span>
                     </label>
                     <div className="relative">
                       <input
