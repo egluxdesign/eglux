@@ -232,15 +232,20 @@ const OrderDetailPanel = ({ order: orderProp, onClose, onOrderUpdated }) => {
   const [actionError, setActionError] = useState(null);
 
   // ⭐ Lacak Pesanan: direct ke biteship_waybill_url (kalau ada), fallback ke /track page
-  const handleTrackOrder = () => {
+const handleTrackOrder = () => {
+    // ⭐ Prioritas 1: biteship_waybill_url (URL tracking lengkap dari Biteship)
     if (order.biteship_waybill_url) {
-      // Direct ke Biteship tracking page (gratis, no API call)
       window.open(order.biteship_waybill_url, '_blank', 'noopener,noreferrer');
-    } else {
-      // Fallback: buka track order page (untuk lihat status dari DB)
-      onClose();
-      navigate(`/track?order=${order.id}`);
+      return;
     }
+    // ⭐ Prioritas 2: tracking_number → construct Biteship tracking URL
+    if (order.tracking_number) {
+      window.open(`https://track.biteship.com/${order.tracking_number}`, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    // ⭐ Fallback: buka EGLUX track page
+    onClose();
+    navigate(`/track?order=${order.id}`);
   };
 
   const handleProductClick = (e, productId) => {

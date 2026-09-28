@@ -180,7 +180,7 @@ const TrackOrderPage = () => {
       const { data, error: fetchErr } = await supabase
         .from('orders')
         .select(selectFields)
-        .filter('biteship_waybill_url', 'not.is', 'null')
+        .or('biteship_waybill_url.not.is.null,tracking_number.not.is.null')
         .in('status', TRACKABLE_STATUSES)
         .in('customer_id', ids)
         .order('created_at', { ascending: false })
@@ -193,10 +193,11 @@ const TrackOrderPage = () => {
 
       // ⭐ Defense-in-depth: client-side filter
       const validOrders = (data || []).filter(o =>
-        o.biteship_waybill_url &&
-        o.biteship_waybill_url.trim() !== '' &&
-        o.biteship_waybill_url !== 'null' &&
-        ids.includes(o.customer_id)
+      ids.includes(o.customer_id) &&
+        (
+        (o.biteship_waybill_url && o.biteship_waybill_url.trim() !== '' && o.biteship_waybill_url !== 'null') ||
+        (o.tracking_number && o.tracking_number.trim() !== '')
+        )
       );
 
       setOrders(validOrders);
@@ -253,19 +254,18 @@ const TrackOrderPage = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, customerIds]);
 
-  // ── Auto-expand dari query param ?order=<id> ──
-  useEffect(() => {
-    if (!orders.length) return;
-    const orderId = searchParams.get('order');
-    if (!orderId) return;
-    const match = orders.find(o => o.id === orderId);
-    if (match) {
-      setExpandedOrderId(match.id);
-      searchParams.delete('order');
-      setSearchParams(searchParams, { replace: true });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orders, searchParams]);
+// ⭐ Auto-open detail dari query param ?order=<id>
+useEffect(() => {
+  if (!orders.length) return;
+  const orderId = searchParams.get('order');
+  if (!orderId) return;
+  if (expandedOrderId === orderId) return;
+  const match = orders.find(o => o.id === orderId);
+  if (match) {
+    setExpandedOrderId(orderId);
+  }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [orders, searchParams, expandedOrderId, setSearchParams]);
 
   const handleToggleExpand = (orderId) => {
     setExpandedOrderId(prev => prev === orderId ? null : orderId);
