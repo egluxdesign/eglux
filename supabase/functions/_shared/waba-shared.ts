@@ -541,7 +541,7 @@ ${itemsSummary}${moreItemsNote}
 Total: ${formatRupiah(order.total_amount)}
 Pengiriman: ${template_params["4"]} (${template_params["5"]})
 
-Resi & update status akan kami kirim via WA. Untuk pertanyaan, balas pesan ini ya.
+Harap kembali ke aplikasi EGLUX untuk melihat detail pesanan.
 
 — Tim EGLUX`;
 
