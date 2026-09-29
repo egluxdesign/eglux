@@ -334,9 +334,8 @@ const ReturnPolicyPage = () => {
                 <p className="text-[0.8rem] text-gray-600 leading-relaxed">
                   Produk dikirim balik ke EGLUX, setelah diterima dan diverifikasi
                   admin (1-2 hari kerja), refund proporsional diproses sesuai harga
-                  item yang rusak. Customer bayar ongkir kirim balik (atau seller
-                  tanggung, tergantung keputusan admin). Cocok untuk kasus salah kirim
-                  atau barang kurang yang butuh verifikasi fisik.
+                  item yang rusak. Customer menanggung biaya ongkir kirim balik
+                  secara penuh.
                 </p>
               </div>
               <div className="border border-gray-100 rounded-lg p-4">
@@ -348,7 +347,7 @@ const ReturnPolicyPage = () => {
                   EGLUX kirim produk pengganti untuk item yang rusak (atau beda dengan
                   hitung price difference kalau customer mau switch varian). Customer
                   kirim balik item rusak. Ongkir kirim balik + kirim produk baru
-                  ditanggung sesuai keputusan admin.
+                  ditanggung Customer secara penuh.
                 </p>
               </div>
               <div className="border border-gray-100 rounded-lg p-4">

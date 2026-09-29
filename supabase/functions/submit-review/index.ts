@@ -103,6 +103,7 @@ serve(async (req: Request) => {
       .select("id, order_id")
       .eq("order_id", order_id)
       .eq("product_id", product_id)
+      .limit(1)
       .maybeSingle();
 
     if (orderItemErr || !orderItem) {
