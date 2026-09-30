@@ -196,8 +196,7 @@ serve(async (req: Request) => {
       items: items.map((it: any) => ({
         name: (
           (it.variant?.sku ? it.variant.sku + " " : "") +
-          (it.variant_name_snapshot || "") +
-          " x" + Math.max(1, Number(it.quantity) || 1)
+          (it.variant_name_snapshot || "")
         ).slice(0, 50),
         sku: it.variant?.sku || "",
         value: Math.round(Number(it.unit_price_snapshot) || 0),
@@ -206,7 +205,7 @@ serve(async (req: Request) => {
       })),
 
       // Note (customer note untuk kurir — tampil di resi)
-      note: order.notes || "",
+      note: orders.notes || "",
 
       // Metadata (optional)
       metadata: {
