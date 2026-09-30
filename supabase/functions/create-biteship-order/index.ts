@@ -194,8 +194,8 @@ serve(async (req: Request) => {
       // Items (REQUIRED)
       items: items.map((it: any) => ({
         name: (
-          it.product_name_snapshot +
-          (it.variant_name_snapshot ? " - " + it.variant_name_snapshot : "")
+          (it.variant_name_snapshot ? it.variant_name_snapshot + " - " : "") +
+          it.product_name_snapshot
         ).slice(0, 100),
         sku: it.variant?.sku || "",
         value: Math.round(Number(it.unit_price_snapshot) || 0),
