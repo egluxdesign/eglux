@@ -65,6 +65,7 @@ serve(async (req: Request) => {
         status, payment_status, midtrans_transaction_status,
         biteship_order_id, tracking_number,
         customer:customers(name, phone, email, address),
+        notes,
         items:order_items(product_name_snapshot, variant_name_snapshot, unit_price_snapshot, quantity, weight_gram, variant:product_variants(sku))
       `)
       .eq("id", order_id)
@@ -203,10 +204,13 @@ serve(async (req: Request) => {
         quantity: Math.max(1, Number(it.quantity) || 1),
       })),
 
+      // Note (customer note untuk kurir — tampil di resi)
+      note: order.notes || "",
+
       // Metadata (optional)
       metadata: {
         order_id: order.id,
-        platform: "eglux",
+        platform: "eglux.co.id",
       },
       reference_id: order.id,  // internal order id for idempotency
     };
