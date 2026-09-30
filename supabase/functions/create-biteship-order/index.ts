@@ -195,9 +195,10 @@ serve(async (req: Request) => {
       // Items (REQUIRED)
       items: items.map((it: any) => ({
         name: (
-          (it.variant_name_snapshot ? it.variant_name_snapshot + " - " : "") +
-          it.product_name_snapshot
-        ).slice(0, 100),
+          (it.variant?.sku ? it.variant.sku + " " : "") +
+          (it.variant_name_snapshot || "") +
+          " x" + Math.max(1, Number(it.quantity) || 1)
+        ).slice(0, 50),
         sku: it.variant?.sku || "",
         value: Math.round(Number(it.unit_price_snapshot) || 0),
         weight: Math.max(1, Number(it.weight_gram) || 500),
