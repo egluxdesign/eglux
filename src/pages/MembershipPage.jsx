@@ -20,7 +20,7 @@ import { supabase } from '../lib/supabaseClient';
 import '/src/assets/styles/eglux-design-system.css';
 
 // ⭐ WhatsApp Group invite link — update kalau link berubah
-const WA_GROUP_LINK = 'https://chat.whatsapp.com/JjbuZvAkRSA4yPL0E3aDRQ?s=qs&p=i&ilr=2';
+const WA_GROUP_LINK = 'https://bit.ly/eglux-id';
 
 const MembershipPage = () => {
   const { openCart } = useCartActions();

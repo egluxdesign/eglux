@@ -93,6 +93,6 @@ export const faqs = [
 ];
 
 export const whatsappGroupUrl =
-  "https://chat.whatsapp.com/JjbuZvAkRSA4yPL0E3aDRQ?s=qs&p=i&ilr=2";
+  "https://bit.ly/eglux-id";
 
 export const qrImagePath = "img/qr-grupWhatsapp-affiliate.png";

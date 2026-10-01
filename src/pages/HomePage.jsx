@@ -76,7 +76,7 @@ function filterProducts(products, filterValue, subValue = null) {
   return categoryFiltered;
 }
 
-const WA_GROUP_LINK = 'https://chat.whatsapp.com/JjbuZvAkRSA4yPL0E3aDRQ?s=qs&p=i&ilr=2';
+const WA_GROUP_LINK = 'https://bit.ly/eglux-id';
 
 const HomePage = () => {
   const { openCart, handleAddToCart } = useCartActions();

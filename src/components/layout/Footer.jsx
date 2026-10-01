@@ -160,7 +160,7 @@ const Footer = () => {
 
       // ⭐ Auto-redirect ke WA group setelah 1.5 detik
       setTimeout(() => {
-        window.open('https://chat.whatsapp.com/JjbuZvAkRSA4yPL0E3aDRQ?s=qs&p=i&ilr=2', '_blank', 'noopener,noreferrer');
+        window.open('https://bit.ly/eglux-id', '_blank', 'noopener,noreferrer');
       }, 1500);
     } catch (e) {
       const msg = e.message?.includes('Failed to fetch')
