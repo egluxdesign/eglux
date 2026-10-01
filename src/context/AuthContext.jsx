@@ -204,6 +204,32 @@ export const AuthProvider = ({ children }) => {
         // ⭐ Gak ada await di sini — fetch jalan di background, register langsung return
       }
 
+            // ⭐ Auto-merge newsletter by phone (kalau customer dari WA group)
+      // Cek apakah nomor HP sudah ada di newsletter_subscribers (dari WA group)
+      // Kalau ada → UPDATE: ganti placeholder email → real email, set user_id, update name
+      // Kalau gak ada → INSERT baru
+      // Fire-and-forget — non-blocking
+      supabase.rpc('link_newsletter_by_phone', {
+        p_phone: phone,
+        p_email: email,
+        p_name: fullName,
+        p_user_id: data.user?.id,
+        p_marketing_email_opt_in: newsletterOptIn.email || false,
+        p_marketing_wa_opt_in: newsletterOptIn.wa || false,
+        p_source: 'register'
+      }).then(({ data: mergeResult, error: mergeErr }) => {
+        if (mergeErr) {
+          console.warn('[AuthContext] Newsletter link error (non-blocking):', mergeErr?.message);
+        } else if (mergeResult?.action === 'merged') {
+          console.log('[AuthContext] ✓ Newsletter MERGED by phone:', mergeResult);
+          // Customer dari WA group → data lama di-update dengan email real + user_id
+        } else {
+          console.log('[AuthContext] Newsletter inserted new:', mergeResult);
+        }
+      }).catch(err => {
+        console.warn('[AuthContext] Newsletter link exception (non-blocking):', err?.message);
+      });
+
       // ⭐ NEW: Auto-add +20 register bonus points (fire-and-forget, non-blocking)
       // Pakai anon key + apikey header (sama seperti newsletter subscribe)
       const anonKey2 = import.meta.env.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_KEY;
