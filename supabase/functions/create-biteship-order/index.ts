@@ -208,6 +208,7 @@ serve(async (req: Request) => {
       // Biteship support multiple note fields — set semua supaya pasti ke-baca
       destination_note: order.notes || "",
       origin_note: order.notes || "",
+      order_note: order.notes || "",
 
       // Metadata (optional)
       metadata: {
