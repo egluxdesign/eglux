@@ -206,7 +206,7 @@ serve(async (req: Request) => {
 
       // Note (customer note untuk kurir — tampil di resi)
       // Biteship support multiple note fields — set semua supaya pasti ke-baca
-      note: order.notes || "",
+      destination_note: order.notes || "",
       origin_note: order.notes || "",
 
       // Metadata (optional)
