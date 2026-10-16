@@ -1,12 +1,23 @@
 // supabase/functions/_shared/waba-shared.ts
 // ============================================================================
-// Shared helpers untuk WABA (WhatsApp Business API) functions.
+// Shared helpers untuk WABA (WhatsApp Business API) functions — v5.0
 // ============================================================================
 // Dipakai oleh:
 //   - send-waba-test/index.ts
-//   - send-waba-live/index.ts
+//   - send-waba-live/index.ts (v4.1 — handle 3 events)
 //   - admin-resend-waba/index.ts
 //   - cron-retry-failed-waba/index.ts
+//   - midtrans-webhook/index.ts (v3.3 — call send-waba-live untuk shipping_update)
+//   - submit-return-request/index.ts (v3.2 — call send-waba-live untuk retur_status)
+//
+// ⭐ v5.0 CHANGES:
+//   - SUPPORTED_EVENTS: tambah "shipping_update" + "retur_status" (sebelumnya cuma "payment_success")
+//   - TEMPLATE_NAMES: tambah 2 mapping (shipping_update + retur_status templates)
+//   - OrderData: tambah field `tracking_number` (untuk shipping_update)
+//   - fetchOrderData: select tracking_number dari orders table
+//   - validateRequest: handle event-specific fields (tracking_number, retur_reference, status_text, additional_info)
+//   - New builder: buildShippingUpdateMessage(order) — 5 params
+//   - New builder: buildReturStatusMessage(order, returRef, status, info) — 5 params
 //
 // Berisi:
 //   - Constants: CORS_HEADERS, SUPPORTED_EVENTS, TEMPLATE_NAMES, MAX_RETRY_ATTEMPTS
@@ -14,9 +25,9 @@
 //   - Helpers: jsonResponse, normalizePhoneForMeta, formatRupiah, shortOrderId
 //   - DB: fetchOrderData, saveWabaMessage, updateWabaMessageStatus, fetchWabaMessage
 //   - Retry: fetchMessagesForRetry, isRetryable, updateRetryTracking
-//   - Meta API: sendToMeta
+//   - Provider APIs: sendToMeta (legacy Skenario A), sendToQiscus (active Skenario B)
 //   - Validation: validateRequest
-//   - Build: buildPaymentSuccessMessage
+//   - Builders: buildPaymentSuccessMessage, buildShippingUpdateMessage, buildReturStatusMessage
 // ============================================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -31,17 +42,32 @@ export const CORS_HEADERS = {
     "authorization, x-client-info, apikey, content-type",
 };
 
-export const SUPPORTED_EVENTS = ["payment_success"] as const;
+// ⭐ v5.0: 3 events sekarang (sebelumnya cuma 1)
+export const SUPPORTED_EVENTS = [
+  "payment_success",
+  "shipping_update",
+  "retur_status",
+] as const;
 export type SupportedEvent = (typeof SUPPORTED_EVENTS)[number];
 
+// ⭐ v5.0: 3 template names mapping ke Qiscus-approved templates
+// PENTING: Nama template HARUS match persis dengan yang di Qiscus Dashboard
+// (case-sensitive, exact spelling). Kalau gak match, Qiscus API akan reject.
+//
+// Template names yang approved di Qiscus Dashboard (per 16 Okt 2026):
+//   - "payment_notification"   (untuk event payment_success)
+//   - "shipping_update"         (untuk event shipping_update)
+//   - "retur_status"            (untuk event retur_status)
 export const TEMPLATE_NAMES: Record<SupportedEvent, string> = {
-  payment_success: "eglux_payment_success",
+  payment_success: "payment_notification",
+  shipping_update: "shipping_update",
+  retur_status: "retur_status",
 };
 
 // Max retry attempts untuk failed WABA messages (cron auto-retry)
 export const MAX_RETRY_ATTEMPTS = 3;
 
-// Error codes yang eligible untuk retry (Meta Cloud API docs)
+// Error codes yang eligible untuk retry (Meta Cloud API docs — Qiscus pakai Meta codes juga)
 export const RETRYABLE_ERROR_CODES = [
   "131047",      // Recipient phone number not in allowed list (dev mode)
   "131052",      // Message undeliverable (temporary)
@@ -73,6 +99,8 @@ export interface OrderData {
   courier_code: string | null;
   courier_service: string | null;
   courier_duration: string | null;
+  // ⭐ v5.0: tracking_number dari orders table (untuk shipping_update event)
+  tracking_number: string | null;
   items: Array<{
     name: string;
     variant: string | null;
@@ -112,7 +140,7 @@ export function jsonResponse(obj: unknown, status = 200): Response {
 }
 
 /**
- * Normalize phone ke E.164 tanpa "+" (format Meta Cloud API).
+ * Normalize phone ke E.164 tanpa "+" (format Meta Cloud API / Qiscus).
  * Input: "+6281234567890", "081234567890", "6281234567890", "81234567890"
  * Output: "6281234567890"
  */
@@ -138,6 +166,7 @@ export function shortOrderId(uuid: string): string {
 
 /**
  * Fetch order + customer + items dari Supabase.
+ * ⭐ v5.0: select tracking_number juga (untuk shipping_update event)
  */
 export async function fetchOrderData(
   supabaseUrl: string,
@@ -151,6 +180,7 @@ export async function fetchOrderData(
     .select(`
       id, total_amount, subtotal, shipping_cost,
       payment_method, courier_code, courier_service, courier_duration,
+      tracking_number,
       customer:customers(name, phone, email),
       items:order_items(product_name_snapshot, variant_name_snapshot, unit_price_snapshot, quantity)
     `)
@@ -178,6 +208,8 @@ export async function fetchOrderData(
     courier_code: order.courier_code || null,
     courier_service: order.courier_service || null,
     courier_duration: order.courier_duration || null,
+    // ⭐ v5.0: tracking_number (string nullable)
+    tracking_number: order.tracking_number || null,
     items: items.map((it: any) => ({
       name: it.product_name_snapshot || "",
       variant: it.variant_name_snapshot || null,
@@ -298,7 +330,6 @@ export async function fetchWabaMessage(
 
 /**
  * Fetch all WABA messages yang eligible untuk retry.
- * Conditions: status='failed' + retry_count < MAX + next_retry_at IS NULL atau <= NOW
  */
 export async function fetchMessagesForRetry(
   supabaseUrl: string,
@@ -334,11 +365,6 @@ export function isRetryable(errorCode: string | null): boolean {
 
 /**
  * Update retry tracking: increment retry_count + set next_retry_at (exponential backoff).
- *
- * Backoff schedule:
- *   Attempt 1 failed → wait 5 min  → retry (attempt 2)
- *   Attempt 2 failed → wait 30 min → retry (attempt 3)
- *   Attempt 3 failed → give up (max attempts reached)
  */
 export async function updateRetryTracking(
   supabaseUrl: string,
@@ -354,7 +380,6 @@ export async function updateRetryTracking(
 ): Promise<void> {
   const supabase = createClient(supabaseUrl, serviceRoleKey);
 
-  // Fetch current message untuk dapat retry_count
   const message = await fetchWabaMessage(supabaseUrl, serviceRoleKey, messageId);
   if (!message) {
     console.error("[waba-shared] updateRetryTracking: message not found");
@@ -364,7 +389,6 @@ export async function updateRetryTracking(
   const newRetryCount = message.retry_count + 1;
   const isMaxReached = newRetryCount >= MAX_RETRY_ATTEMPTS;
 
-  // Exponential backoff: 5min, 30min (atau null kalau max reached)
   const backoffMs = newRetryCount === 1 ? 5 * 60 * 1000 : 30 * 60 * 1000;
   const nextRetryAt = isMaxReached || data.status === "sent"
     ? null
@@ -397,17 +421,18 @@ export async function updateRetryTracking(
 }
 
 // ============================================================================
-// Meta Cloud API
+// Provider API: Meta Cloud API (Skenario A — Legacy, kept for reference)
 // ============================================================================
 
 /**
- * Send message ke Meta Cloud API.
- * Returns: { success, message_id?, error_code?, error_message?, response? }
+ * Send message ke Meta Cloud API (Skenario A).
+ * DEPRECATED: EGLUX pakai Qiscus Omnichannel API (Skenario B → sendToQiscus).
+ * Function ini tetap dipertahankan untuk fallback kalau balik ke Skenario A.
  */
 export async function sendToMeta(
   metaGraphUrl: string,
   accessToken: string,
-  phoneNumber: string, // E.164 tanpa + (e.g., "6281234567890")
+  phoneNumber: string,
   templateName: string,
   templateParams: Record<string, string>,
   templateLanguage: string = "id",
@@ -474,20 +499,159 @@ export async function sendToMeta(
 }
 
 // ============================================================================
+// Provider API: Qiscus Omnichannel API (Skenario B — Active)
+// ============================================================================
+// Reference:
+//   - https://documentation.qiscus.com/omnichannel-chat/whatsapp-business-api
+//   - https://support.qiscus.com/hc/en-us/articles/1732590664439
+// ============================================================================
+
+/**
+ * Send message ke Qiscus Omnichannel API (Skenario B).
+ */
+export async function sendToQiscus(
+  qiscusApiUrl: string,
+  appId: string,
+  secretKey: string,
+  phoneNumber: string,
+  templateName: string,
+  templateNamespace: string,
+  templateParams: Record<string, string>,
+  templateLanguage: string = "id",
+): Promise<{
+  success: boolean;
+  message_id?: string;
+  error_code?: string;
+  error_message?: string;
+  response?: unknown;
+}> {
+  const payload = {
+    to: phoneNumber,
+    type: "template",
+    template: {
+      namespace: templateNamespace,
+      name: templateName,
+      language: {
+        policy: "deterministic",
+        code: templateLanguage,
+      },
+      components: [
+        {
+          type: "body",
+          parameters: Object.entries(templateParams).map(([, value]) => ({
+            type: "text",
+            text: String(value ?? ""),
+          })),
+        },
+      ],
+    },
+  };
+
+  try {
+    const resp = await fetch(qiscusApiUrl, {
+      method: "POST",
+      headers: {
+        "Qiscus-App-Id": appId,
+        "Qiscus-Secret-Key": secretKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+
+    let data: any;
+    const contentType = resp.headers.get("content-type") || "";
+    if (contentType.includes("application/json")) {
+      data = await resp.json();
+    } else {
+      const text = await resp.text();
+      try { data = JSON.parse(text); } catch { data = { raw_text: text }; }
+    }
+
+    if (!resp.ok) {
+      const errorMsg =
+        data?.error?.message ||
+        data?.data?.message ||
+        data?.error_message ||
+        data?.error ||
+        data?.message ||
+        `Qiscus API error (HTTP ${resp.status})`;
+      const errorCode =
+        data?.error?.code ||
+        data?.error_code ||
+        data?.status ||
+        String(resp.status);
+
+      return {
+        success: false,
+        error_code: String(errorCode),
+        error_message: String(errorMsg),
+        response: data,
+      };
+    }
+
+    const messageId =
+      data?.data?.message_id ||
+      data?.data?.id ||
+      data?.message_id ||
+      data?.messages?.[0]?.id ||
+      data?.id ||
+      undefined;
+
+    return {
+      success: true,
+      message_id: messageId,
+      response: data,
+    };
+  } catch (e) {
+    return {
+      success: false,
+      error_code: "network_error",
+      error_message: e.message,
+    };
+  }
+}
+
+// ============================================================================
 // Validation
 // ============================================================================
 
+/**
+ * ⭐ v5.0: Validate request body untuk 3 events.
+ *
+ * payment_success: butuh order_id saja
+ * shipping_update: butuh order_id + optional tracking_number (kalau gak ada, ambil dari DB)
+ * retur_status: butuh order_id + retur_reference + status_text + optional additional_info
+ */
 export function validateRequest(body: unknown): {
   valid: boolean;
   error?: string;
   order_id?: string;
   event?: SupportedEvent;
+  // ⭐ v5.0: event-specific fields
+  tracking_number?: string;          // untuk shipping_update (optional — fallback ke DB)
+  retur_reference?: string;          // untuk retur_status
+  status_text?: string;              // untuk retur_status
+  additional_info?: string;           // untuk retur_status
 } {
   if (!body || typeof body !== "object") {
     return { valid: false, error: "Request body required" };
   }
 
-  const { order_id, event } = body as { order_id: string; event?: string };
+  const {
+    order_id,
+    event,
+    tracking_number,
+    retur_reference,
+    status_text,
+    additional_info,
+  } = body as {
+    order_id?: string;
+    event?: string;
+    tracking_number?: string;
+    retur_reference?: string;
+    status_text?: string;
+    additional_info?: string;
+  };
 
   if (!order_id || typeof order_id !== "string") {
     return { valid: false, error: "order_id is required (string)" };
@@ -502,7 +666,27 @@ export function validateRequest(body: unknown): {
     };
   }
 
-  return { valid: true, order_id, event: finalEvent };
+  // Event-specific validation
+  if (finalEvent === "retur_status") {
+    if (!retur_reference || typeof retur_reference !== "string") {
+      return { valid: false, error: "retur_reference is required for retur_status event" };
+    }
+    if (!status_text || typeof status_text !== "string") {
+      return { valid: false, error: "status_text is required for retur_status event" };
+    }
+  }
+  // shipping_update: tracking_number optional (akan fallback ke DB kalau kosong)
+  // payment_success: tidak butuh field tambahan
+
+  return {
+    valid: true,
+    order_id,
+    event: finalEvent,
+    tracking_number: tracking_number || undefined,
+    retur_reference: retur_reference || undefined,
+    status_text: status_text || undefined,
+    additional_info: additional_info || "Tidak ada info tambahan",
+  };
 }
 
 // ============================================================================
@@ -510,19 +694,17 @@ export function validateRequest(body: unknown): {
 // ============================================================================
 
 /**
- * Build WABA message dari order data (template: eglux_payment_success).
+ * Build WABA message untuk payment_success event.
+ * Template: payment_notification (5 body variables)
+ *
+ * Variables:
+ *   {{1}} = customer_name
+ *   {{2}} = short_order_id
+ *   {{3}} = total_amount (formatRupiah)
+ *   {{4}} = courier_service (e.g., "JNE REG")
+ *   {{5}} = courier_duration (e.g., "3-5 hari kerja")
  */
 export function buildPaymentSuccessMessage(order: OrderData) {
-  const itemsSummary = order.items
-    .slice(0, 3)
-    .map((it) => `• ${it.name}${it.variant ? ` (${it.variant})` : ""} × ${it.quantity}`)
-    .join("\n");
-
-  const moreItemsNote =
-    order.items.length > 3
-      ? `\n• ...dan ${order.items.length - 3} item lainnya`
-      : "";
-
   const template_params: Record<string, string> = {
     "1": order.customer_name,
     "2": order.short_order_id,
@@ -533,10 +715,9 @@ export function buildPaymentSuccessMessage(order: OrderData) {
     "5": order.courier_duration || "3-5 hari kerja",
   };
 
-  const body = `Halo ${order.customer_name}, terima kasih sudah berbelanja di EGLUX! ✨
+  const body = `Halo ${order.customer_name}, terima kasih sudah berbelanja di EGLUX!
 
-Pesanan #${order.short_order_id} sudah kami terima dengan rincian:
-${itemsSummary}${moreItemsNote}
+Pesanan #${order.short_order_id} sudah kami terima.
 
 Total: ${formatRupiah(order.total_amount)}
 Pengiriman: ${template_params["4"]} (${template_params["5"]})
@@ -547,6 +728,92 @@ Harap kembali ke aplikasi EGLUX untuk melihat detail pesanan.
 
   return {
     template_name: TEMPLATE_NAMES.payment_success,
+    template_params,
+    body,
+  };
+}
+
+/**
+ * ⭐ v5.0: Build WABA message untuk shipping_update event.
+ * Template: shipping_update (5 body variables)
+ *
+ * Variables:
+ *   {{1}} = customer_name
+ *   {{2}} = short_order_id
+ *   {{3}} = courier_service (e.g., "JNE REG")
+ *   {{4}} = tracking_number
+ *   {{5}} = courier_duration (e.g., "3-5 hari kerja")
+ *
+ * Note: {{4}} dipake 2x di template body (No. Resi display + URL tracking).
+ */
+export function buildShippingUpdateMessage(
+  order: OrderData,
+  trackingNumberOverride?: string,
+) {
+  const trackingNumber = trackingNumberOverride || order.tracking_number || "(belum tersedia)";
+
+  const template_params: Record<string, string> = {
+    "1": order.customer_name,
+    "2": order.short_order_id,
+    "3": order.courier_service
+      ? `${order.courier_code?.toUpperCase() || ""} ${order.courier_service}`.trim()
+      : "Standard",
+    "4": trackingNumber,
+    "5": order.courier_duration || "3-5 hari kerja",
+  };
+
+  const body = `Halo ${order.customer_name}, kabar baik! Pesanan #${order.short_order_id} sudah dikirim via ${template_params["3"]}.
+
+No. Resi: ${trackingNumber}
+Estimasi sampai: ${template_params["5"]}
+
+Lacak real-time di: https://track.biteship.com/${trackingNumber}
+
+— Tim EGLUX`;
+
+  return {
+    template_name: TEMPLATE_NAMES.shipping_update,
+    template_params,
+    body,
+  };
+}
+
+/**
+ * ⭐ v5.0: Build WABA message untuk retur_status event.
+ * Template: retur_status (5 body variables)
+ *
+ * Variables:
+ *   {{1}} = customer_name
+ *   {{2}} = retur_reference (e.g., "RET-0001")
+ *   {{3}} = short_order_id
+ *   {{4}} = status_text (e.g., "Disetujui", "Ditolak", "Refund diproses", "Refund selesai")
+ *   {{5}} = additional_info (default: "Tidak ada info tambahan")
+ */
+export function buildReturStatusMessage(
+  order: OrderData,
+  returReference: string,
+  statusText: string,
+  additionalInfo: string = "Tidak ada info tambahan",
+) {
+  const template_params: Record<string, string> = {
+    "1": order.customer_name,
+    "2": returReference,
+    "3": order.short_order_id,
+    "4": statusText,
+    "5": additionalInfo || "Tidak ada info tambahan",
+  };
+
+  const body = `Halo ${order.customer_name}, update untuk retur #${returReference} pada pesanan #${order.short_order_id}.
+
+Status: ${statusText}
+Info: ${template_params["5"]}
+
+Lihat detail lengkap di aplikasi EGLUX.
+
+— Tim EGLUX`;
+
+  return {
+    template_name: TEMPLATE_NAMES.retur_status,
     template_params,
     body,
   };

@@ -1,7 +1,12 @@
 // supabase/functions/submit-return-request/index.ts
 // ============================================================================
-// submit-return-request v3.1 FULL REWRITE — Customer + Admin return/refund actions
+// submit-return-request v3.2 — Customer + Admin return/refund actions
 // ============================================================================
+//
+// ⭐ v3.2 CHANGES (dari v3.1):
+//   - Tambah trigger WA notifikasi `retur_status` di action approve, reject, complete
+//   - Pakai helper `triggerReturStatusNotif()` (fire-and-forget)
+//   - Kalau WA gagal, action tetap sukses (cron retry handle WA yang failed)
 //
 // Edge function ini handle SEMUA action terkait return/refund:
 //   - Customer: submit return baru, cancel, confirm_refund
@@ -165,6 +170,49 @@ serve(async (req: Request) => {
         return json({ error: "Return tidak ditemukan" }, 404);
       }
 
+      // ⭐ v3.2: Helper function untuk trigger WA retur_status notif (fire-and-forget)
+      // Dipanggil di action: approve, reject, complete
+      // Generate retur_reference short code untuk customer-friendly display
+      const triggerReturStatusNotif = async (
+        statusText: string,
+        additionalInfo: string,
+      ) => {
+        try {
+          // Format: RET-XXXXXXXX (8 char hex dari return_id UUID)
+          const returReference = `RET-${String(ret.id || "")
+            .replace(/-/g, "")
+            .slice(0, 8)
+            .toUpperCase()}`;
+
+          const { data: wabaResult, error: wabaError } = await supabase.functions.invoke(
+            "send-waba-live",
+            {
+              body: {
+                order_id: ret.order_id,
+                event: "retur_status",
+                retur_reference: returReference,
+                status_text: statusText,
+                additional_info: additionalInfo,
+              },
+            }
+          );
+
+          if (wabaError) {
+            console.warn("[submit-return] WA notif failed:", wabaError.message);
+          } else if (wabaResult?.success) {
+            console.log(
+              "[submit-return] ✓ WA notif sent:",
+              wabaResult.qiscus_message_id,
+              "status:", statusText
+            );
+          } else {
+            console.warn("[submit-return] WA notif error:", wabaResult?.error);
+          }
+        } catch (e) {
+          console.warn("[submit-return] WA notif invoke error:", e);
+        }
+      };
+
       // ═══════════════════════════════════════════════════════════════
       // APPROVE — Final approve dengan resolution type
       // ═══════════════════════════════════════════════════════════════
@@ -279,6 +327,16 @@ serve(async (req: Request) => {
           return json({ error: "Gagal approve", details: updErr.message }, 500);
         }
 
+        // ⭐ v3.2: Trigger WA retur_status notification (approve)
+        // Status: "Disetujui". Info berisi resolution + amount.
+        await triggerReturStatusNotif(
+          "Disetujui",
+          `Resolusi: ${adminResolution.replace("_", " ")}. ` +
+          (lockedRefundAmount
+            ? `Refund Rp ${lockedRefundAmount.toLocaleString("id-ID")} akan diproses sesuai resolution.`
+            : "Tidak ada refund (exchange / barang pengganti).")
+        );
+
         // ⭐ Auto-complete for partial_refund (no shipping back needed)
         if (adminResolution === "partial_refund") {
           await supabase.from("order_returns").update({
@@ -388,6 +446,14 @@ serve(async (req: Request) => {
           resolved_at: new Date().toISOString(),
         }).eq("id", return_id);
         if (updErr) return json({ error: "Gagal reject" }, 500);
+
+        // ⭐ v3.2: Trigger WA retur_status notification (reject)
+        // Status: "Ditolak". Info berisi alasan penolakan dari admin_notes.
+        await triggerReturStatusNotif(
+          "Ditolak",
+          `Alasan: ${body.admin_notes.trim()}`
+        );
+
         return json({ success: true, message: "Return ditolak. Customer akan dihubungi." });
       }
 
@@ -447,6 +513,17 @@ serve(async (req: Request) => {
           }).eq("id", ret.order_id);
         }
         // exchange → orders stays 'completed' (no money out)
+
+        // ⭐ v3.2: Trigger WA retur_status notification (complete)
+        // Status: "Selesai". Info berisi resolution summary + amount.
+        await triggerReturStatusNotif(
+          "Selesai",
+          adminRes === "exchange"
+            ? "Exchange selesai. Barang pengganti akan dikirim ke customer."
+            : adminRes === "partial_refund"
+            ? `Partial refund selesai. Refund Rp ${actualRefundAmount.toLocaleString("id-ID")} diproses ke rekening asli customer.`
+            : `Full refund selesai. Refund Rp ${actualRefundAmount.toLocaleString("id-ID")} diproses ke rekening asli customer.`
+        );
 
         return json({
           success: true,
