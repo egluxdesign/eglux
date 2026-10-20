@@ -1,36 +1,29 @@
 // supabase/functions/biteship-webhook/index.ts
 // ============================================================================
-// Biteship Webhook Handler v3.2 (DEEP DIVE FIX — robust waybill_url fetching)
+// Biteship Webhook Handler v3.3 (DEEP DIVE FIX + TRACKINGS ENDPOINT)
 // ============================================================================
 //
-// ⭐ v3.2 CHANGES (dari v3.1):
-//   - FIX: fetchBiteshipOrderDetail() sekarang check MULTIPLE field paths buat
-//     extract waybill_url (bukan cuma `data.waybill_url` yang sering NULL):
-//       1. data.waybill_url (top-level)
-//       2. data.courier?.waybill_url (nested di courier object — sering ada di sini)
-//       3. Construct dari data.courier?.waybill_id:
-//          https://track.biteship.com/{waybill_id}?environment={env}
-//       4. Call POST /v1/orders/{id}/generate_waybill buat force-generate
-//       5. Re-extract dari generate_waybill response (nested + construct)
-//   - ADD: Verbose logging — log full Biteship API response buat debug visibility
-//   - ADD: Construct URL pakai env-aware (development/production based on
-//     BITESHIP_IS_PRODUCTION env var)
-//   - KEEP: WA shipping_updatesv2 trigger saat status=allocated/picking/picked
-//   - KEEP: Idempotency check buat hindari double-WA
-//   - KEEP: Auth fix (fetch + Authorization eksplisit)
+// ⭐ v3.3 CHANGES (dari v3.2):
+//   - ADD: fetchBiteshipTrackingDetail() — call GET /v1/trackings/{biteship_order_id}
+//     sebagai fallback kalau GET /v1/orders/{id} gak return waybill_url.
+//     Trackings endpoint sering return waybill_url yang gak ada di orders endpoint.
+//   - FIX: Authorization header pakai RAW API key (tanpa "Bearer " prefix).
+//     Pattern ini match dengan existing functions (get-biteship-tracking,
+//     generate-biteship-waybill) yang sudah proven work.
+//   - ADD: Verbose logging buat trackings endpoint — buat debug visibility
 //
-// Receive POST dari Biteship saat:
-//   - order.status    → status order berubah
-//   - order.waybill_id → waybill URL available
-//   - order.price      → price info
+// ⭐ v3.2 (previous):
+//   - Multiple fallback strategies buat extract waybill_url
+//   - Construct URL dari waybill_id
+//   - Call generate_waybill endpoint
 //
-// Setup:
-//   1. Set webhook URL di Biteship dashboard:
-//        https://mbuwpjxpxvnsxjusrnlk.supabase.co/functions/v1/biteship-webhook
-//   2. Set env var BITESHIP_API_KEY (sudah required by create-biteship-order)
-//   3. Set env var BITESHIP_IS_PRODUCTION (true kalau pakai Biteship production,
-//      false/empty kalau pakai sandbox)
-//   4. (Optional) Set BITESHIP_WEBHOOK_SECRET untuk strict security
+// DEEP DIVE FALLBACK STRATEGY (v3.3):
+//   1. GET /v1/orders/{biteship_order_id} → top-level + nested courier.waybill_url
+//   2. GET /v1/trackings/{biteship_order_id} → alternative endpoint (NEW v3.3)
+//   3. Construct URL dari courier.waybill_id: https://track.biteship.com/{waybill_id}?environment={env}
+//   4. POST /v1/orders/{id}/generate_waybill → force-generate
+//   5. Re-extract dari generate_waybill response (nested + construct)
+//   6. Final fallback: https://biteship.com/waybill/{biteship_order_id}.pdf
 // ============================================================================
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
@@ -58,9 +51,6 @@ function json(obj: unknown, status = 200) {
   });
 }
 
-/**
- * Map Biteship status ke EGLUX internal order status.
- */
 function mapBiteshipStatusToEglux(biteshipStatus: string | null | undefined): string | null {
   if (!biteshipStatus) return null;
   const normalized = String(biteshipStatus)
@@ -102,7 +92,7 @@ function isUUID(str: string): boolean {
 }
 
 /**
- * ⭐ v3.2 NEW: Construct waybill_url dari waybill_id kalau API gak return waybill_url
+ * Construct waybill_url dari waybill_id
  * Format: https://track.biteship.com/{waybill_id}?environment={env}
  */
 function constructWaybillUrlFromId(waybillId: string): string {
@@ -110,14 +100,73 @@ function constructWaybillUrlFromId(waybillId: string): string {
 }
 
 /**
- * ⭐ v3.2 DEEP DIVE FIX: Fetch order detail dari Biteship API dengan
- * multiple fallback strategies buat extract waybill_url.
+ * ⭐ v3.3 NEW: GET /v1/trackings/{biteship_order_id} — alternative endpoint
+ * untuk extract waybill_url. Trackings endpoint sering return waybill_url
+ * yang gak ada di orders endpoint.
  *
- * Strategy:
- *   1. GET /v1/orders/{id} — extract dari top-level + nested courier
- *   2. Construct URL dari waybill_id kalau waybill_url masih NULL
- *   3. POST /v1/orders/{id}/generate_waybill — force-generate waybill
- *   4. Re-extract dari generate_waybill response (top-level + nested + construct)
+ * Note: Authorization pakai RAW API key (no "Bearer " prefix) — match pattern
+ * existing functions (get-biteship-tracking, generate-biteship-waybill).
+ */
+async function fetchBiteshipTrackingDetail(biteshipOrderId: string): Promise<{
+  waybill_url: string | null;
+  waybill_id: string | null;
+  tracking_number: string | null;
+  courier_link: string | null;
+  courier_name: string | null;
+  courier_service: string | null;
+  biteship_status: string | null;
+  raw: any;
+} | null> {
+  if (!BITESHIP_API_KEY) {
+    console.warn("[biteship-webhook] BITESHIP_API_KEY not set — cannot fetch tracking detail");
+    return null;
+  }
+
+  try {
+    console.log(`[biteship-webhook] Fetching Biteship TRACKING detail for: ${biteshipOrderId}`);
+    const resp = await fetch(`${BITESHIP_API_URL}/trackings/${biteshipOrderId}`, {
+      method: "GET",
+      headers: {
+        // ⭐ v3.3: RAW API key (no "Bearer " prefix) — match existing pattern
+        Authorization: BITESHIP_API_KEY,
+        Accept: "application/json",
+      },
+    });
+
+    if (!resp.ok) {
+      console.warn(`[biteship-webhook] Trackings API GET /trackings/${biteshipOrderId} returned HTTP ${resp.status}`);
+      return null;
+    }
+
+    const data = await resp.json();
+    console.log(`[biteship-webhook] 📋 Trackings API response (truncated 1500 chars):`,
+      JSON.stringify(data).substring(0, 1500));
+    console.log(`[biteship-webhook] 📦 Trackings top-level keys:`, Object.keys(data || {}));
+
+    // Extract from trackings response — multiple field paths
+    const courier = data?.courier || {};
+
+    return {
+      // waybill_url: top-level + nested courier.waybill_url
+      waybill_url: data?.waybill_url || courier.waybill_url || null,
+      // waybill_id: nested courier.waybill_id + top-level
+      waybill_id: courier.waybill_id || data?.waybill_id || null,
+      // tracking_id
+      tracking_number: data?.tracking_id || courier.tracking_id || null,
+      courier_link: courier.link || null,
+      courier_name: courier.name || null,
+      courier_service: courier.service || null,
+      biteship_status: data?.status || null,
+      raw: data,
+    };
+  } catch (err) {
+    console.warn(`[biteship-webhook] Trackings API fetch error:`, err?.message);
+    return null;
+  }
+}
+
+/**
+ * ⭐ v3.3: Comprehensive waybill_url fetcher with multiple fallback strategies
  */
 async function fetchBiteshipOrderDetail(biteshipOrderId: string): Promise<{
   waybill_url: string | null;
@@ -128,7 +177,8 @@ async function fetchBiteshipOrderDetail(biteshipOrderId: string): Promise<{
   courier_service: string | null;
   biteship_status: string | null;
   pickup_code: string | null;
-  raw: any;
+  raw_order: any;
+  raw_tracking: any;
   waybill_url_source: string;
   generate_attempted: boolean;
   generate_error: string | null;
@@ -146,80 +196,115 @@ async function fetchBiteshipOrderDetail(biteshipOrderId: string): Promise<{
   let courierService: string | null = null;
   let biteshipStatus: string | null = null;
   let pickupCode: string | null = null;
-  let rawDetail: any = null;
+  let rawOrder: any = null;
+  let rawTracking: any = null;
   let waybillUrlSource = "none";
   let generateAttempted = false;
   let generateError: string | null = null;
 
   // ── Step 1: GET /v1/orders/{id} ──
   try {
-    console.log(`[biteship-webhook] Fetching Biteship order detail for: ${biteshipOrderId}`);
+    console.log(`[biteship-webhook] Step 1: GET /v1/orders/${biteshipOrderId}`);
     const resp = await fetch(`${BITESHIP_API_URL}/orders/${biteshipOrderId}`, {
       method: "GET",
       headers: {
-        Authorization: `Bearer ${BITESHIP_API_KEY}`,
+        // ⭐ v3.3: RAW API key (match existing pattern)
+        Authorization: BITESHIP_API_KEY,
         Accept: "application/json",
       },
     });
 
     if (!resp.ok) {
-      console.warn(`[biteship-webhook] Biteship API GET /orders/${biteshipOrderId} returned HTTP ${resp.status}`);
-      return null;
-    }
+      console.warn(`[biteship-webhook] Orders API returned HTTP ${resp.status}`);
+    } else {
+      rawOrder = await resp.json();
 
-    rawDetail = await resp.json();
+      console.log(`[biteship-webhook] 📋 Orders API response (truncated 1500 chars):`,
+        JSON.stringify(rawOrder).substring(0, 1500));
+      console.log(`[biteship-webhook] 📦 Orders top-level keys:`, Object.keys(rawOrder || {}));
+      console.log(`[biteship-webhook] 📦 Orders courier keys:`, rawOrder?.courier ? Object.keys(rawOrder.courier) : "(no courier)");
 
-    // ⭐ v3.2: Verbose logging buat debug — lihat semua field yang Biteship kasih
-    console.log(`[biteship-webhook] 📋 Full Biteship API response (truncated 1500 chars):`,
-      JSON.stringify(rawDetail).substring(0, 1500));
-    console.log(`[biteship-webhook] 📦 Top-level keys:`, Object.keys(rawDetail || {}));
-    console.log(`[biteship-webhook] 📦 courier keys:`, rawDetail?.courier ? Object.keys(rawDetail.courier) : "(no courier)");
+      // Extract fields
+      const courier = rawOrder?.courier || {};
+      waybillUrl = rawOrder?.waybill_url || courier.waybill_url || null;
+      waybillUrlSource = waybillUrl ? "orders_api" : "none";
 
-    // Extract fields dari multiple paths
-    const courier = rawDetail?.courier || {};
+      waybillId = courier.waybill_id || rawOrder?.waybill_id || null;
+      trackingNumber = rawOrder?.tracking_id || courier.tracking_id || null;
+      courierLink = courier.link || null;
+      courierName = courier.name || null;
+      courierService = courier.service || null;
+      biteshipStatus = rawOrder?.status || null;
+      pickupCode = rawOrder?.pickup_code || null;
 
-    // waybill_url (check top-level dulu, lalu nested courier.waybill_url)
-    waybillUrl = rawDetail?.waybill_url || courier.waybill_url || null;
-    waybillUrlSource = waybillUrl ? "api_top_or_nested" : "none";
+      console.log(`[biteship-webhook] After Step 1 (Orders API):`, {
+        waybill_url: waybillUrl || "(null)",
+        waybill_id: waybillId || "(null)",
+        tracking_id: trackingNumber || "(null)",
+        courier_link: courierLink ? "(present)" : "(null)",
+        courier_name: courierName || "(null)",
+        biteship_status: biteshipStatus || "(null)",
+      });
 
-    // waybill_id (check nested courier.waybill_id dulu, lalu top-level)
-    waybillId = courier.waybill_id || rawDetail?.waybill_id || null;
-
-    // tracking_id (AWB number)
-    trackingNumber = rawDetail?.tracking_id || courier.tracking_id || null;
-
-    // courier info
-    courierLink = courier.link || null;
-    courierName = courier.name || null;
-    courierService = courier.service || null;
-
-    // other fields
-    biteshipStatus = rawDetail?.status || null;
-    pickupCode = rawDetail?.pickup_code || null;
-
-    console.log(`[biteship-webhook] After step 1 (GET):`, {
-      waybill_url: waybillUrl ? "(present)" : "(null)",
-      waybill_id: waybillId || "(null)",
-      tracking_id: trackingNumber || "(null)",
-      courier_link: courierLink ? "(present)" : "(null)",
-      courier_name: courierName || "(null)",
-      biteship_status: biteshipStatus || "(null)",
-    });
-
-    // ⭐ v3.2 Step 2: Construct URL dari waybill_id kalau waybill_url masih NULL
-    if (!waybillUrl && waybillId) {
-      waybillUrl = constructWaybillUrlFromId(waybillId);
-      waybillUrlSource = "constructed_from_waybill_id";
-      console.log(`[biteship-webhook] ✓ Constructed waybill_url from waybill_id: ${waybillUrl}`);
+      // Construct dari waybill_id kalau waybill_url masih NULL
+      if (!waybillUrl && waybillId) {
+        waybillUrl = constructWaybillUrlFromId(waybillId);
+        waybillUrlSource = "constructed_from_orders_waybill_id";
+        console.log(`[biteship-webhook] ✓ Constructed waybill_url from orders waybill_id: ${waybillUrl}`);
+      }
     }
   } catch (err) {
-    console.warn(`[biteship-webhook] Biteship API GET fetch error:`, err?.message);
-    return null;
+    console.warn(`[biteship-webhook] Orders API fetch error:`, err?.message);
   }
 
-  // ⭐ v3.2 Step 3: Kalau waybill_url masih NULL → call generate_waybill endpoint
+  // ── Step 2: GET /v1/trackings/{biteship_order_id} (NEW v3.3) ──
   if (!waybillUrl) {
-    console.log(`[biteship-webhook] waybill_url still NULL after GET — calling generate_waybill endpoint...`);
+    console.log(`[biteship-webhook] Step 2: waybill_url still NULL — calling trackings endpoint...`);
+    const trackingResult = await fetchBiteshipTrackingDetail(biteshipOrderId);
+    if (trackingResult) {
+      rawTracking = trackingResult.raw;
+
+      // Extract from trackings response (same field paths)
+      if (trackingResult.waybill_url) {
+        waybillUrl = trackingResult.waybill_url;
+        waybillUrlSource = "trackings_api";
+        console.log(`[biteship-webhook] ✓ Got waybill_url from trackings API: ${waybillUrl}`);
+      }
+
+      // Update waybill_id kalau belum ada
+      if (!waybillId && trackingResult.waybill_id) {
+        waybillId = trackingResult.waybill_id;
+      }
+
+      // Update other fields kalau belum ada
+      if (!trackingNumber && trackingResult.tracking_number) {
+        trackingNumber = trackingResult.tracking_number;
+      }
+      if (!courierLink && trackingResult.courier_link) {
+        courierLink = trackingResult.courier_link;
+      }
+      if (!courierName && trackingResult.courier_name) {
+        courierName = trackingResult.courier_name;
+      }
+      if (!courierService && trackingResult.courier_service) {
+        courierService = trackingResult.courier_service;
+      }
+      if (!biteshipStatus && trackingResult.biteship_status) {
+        biteshipStatus = trackingResult.biteship_status;
+      }
+
+      // Construct dari waybill_id kalau waybill_url masih NULL (tapi waybill_id dari trackings)
+      if (!waybillUrl && waybillId) {
+        waybillUrl = constructWaybillUrlFromId(waybillId);
+        waybillUrlSource = "constructed_from_trackings_waybill_id";
+        console.log(`[biteship-webhook] ✓ Constructed waybill_url from trackings waybill_id: ${waybillUrl}`);
+      }
+    }
+  }
+
+  // ── Step 3: POST /v1/orders/{id}/generate_waybill (force-generate) ──
+  if (!waybillUrl) {
+    console.log(`[biteship-webhook] Step 3: waybill_url still NULL — calling generate_waybill endpoint...`);
     generateAttempted = true;
 
     try {
@@ -228,7 +313,7 @@ async function fetchBiteshipOrderDetail(biteshipOrderId: string): Promise<{
         {
           method: "POST",
           headers: {
-            Authorization: `Bearer ${BITESHIP_API_KEY}`,
+            Authorization: BITESHIP_API_KEY,  // RAW key
             "Content-Type": "application/json",
             Accept: "application/json",
           },
@@ -243,10 +328,8 @@ async function fetchBiteshipOrderDetail(biteshipOrderId: string): Promise<{
         JSON.stringify(genData).substring(0, 800));
 
       if (genResp.ok && genData) {
-        // Extract dari generate_waybill response
         const genCourier = genData.courier || {};
 
-        // waybill_url (top-level + nested)
         if (genData.waybill_url) {
           waybillUrl = genData.waybill_url;
           waybillUrlSource = "generate_waybill_api";
@@ -255,26 +338,25 @@ async function fetchBiteshipOrderDetail(biteshipOrderId: string): Promise<{
           waybillUrlSource = "generate_waybill_courier";
         }
 
-        // waybill_id (top-level + nested)
         if (!waybillId) {
           waybillId = genCourier.waybill_id || genData.waybill_id || null;
         }
 
-        // ⭐ v3.2 Step 4: Construct URL dari waybill_id kalau waybill_url masih NULL
+        // Construct dari waybill_id kalau waybill_url masih NULL
         if (!waybillUrl && waybillId) {
           waybillUrl = constructWaybillUrlFromId(waybillId);
           waybillUrlSource = "constructed_from_generate_waybill_id";
           console.log(`[biteship-webhook] ✓ Constructed waybill_url from generate_waybill waybill_id: ${waybillUrl}`);
         }
 
-        // Update courier info kalau ada di generate_waybill response
+        // Update other fields
         if (!courierName) courierName = genCourier.name || null;
         if (!courierService) courierService = genCourier.service || null;
         if (!courierLink) courierLink = genCourier.link || null;
         if (!trackingNumber) trackingNumber = genData.tracking_id || genCourier.tracking_id || null;
 
         console.log(`[biteship-webhook] After generate_waybill:`, {
-          waybill_url: waybillUrl ? "(present)" : "(null)",
+          waybill_url: waybillUrl || "(null)",
           waybill_id: waybillId || "(null)",
           waybill_url_source: waybillUrlSource,
         });
@@ -288,9 +370,7 @@ async function fetchBiteshipOrderDetail(biteshipOrderId: string): Promise<{
     }
   }
 
-  // ⭐ v3.2 Final fallback: kalau waybill_url MASIH NULL, construct dari biteship_order_id (PDF link)
-  // Pattern: https://biteship.com/waybill/{biteship_order_id}.pdf
-  // Ini bukan customer tracking URL, tapi minimal ada URL untuk waybill PDF
+  // ── Step 4: Final fallback (kalau semua cara gagal) ──
   if (!waybillUrl) {
     waybillUrl = `https://biteship.com/waybill/${biteshipOrderId}.pdf`;
     waybillUrlSource = "fallback_pdf_constructed";
@@ -306,7 +386,8 @@ async function fetchBiteshipOrderDetail(biteshipOrderId: string): Promise<{
     courier_service: courierService,
     biteship_status: biteshipStatus,
     pickup_code: pickupCode,
-    raw: rawDetail,
+    raw_order: rawOrder,
+    raw_tracking: rawTracking,
     waybill_url_source: waybillUrlSource,
     generate_attempted: generateAttempted,
     generate_error: generateError,
@@ -483,20 +564,18 @@ serve(async (req: Request) => {
   if (courierService) updatePayload.courier_service = courierService;
   if (courierLink) updatePayload.courier_link = courierLink;
 
-  // ⭐ v3.2 DEEP DIVE FIX: Fetch Biteship order detail kalau waybill_url atau courier info NULL
-  // Sekarang pakai fetchBiteshipOrderDetail yang lebih robust (multiple fallback strategies)
+  // ⭐ v3.3: Fetch Biteship order detail kalau waybill_url atau courier info NULL
+  // Sekarang pakai multiple fallback strategies (orders + trackings + generate_waybill + construct)
   let fetchedWaybillUrl: string | null = waybillUrl;
   let fetchedTrackingNumber: string | null = null;
-  let fetchDetailResult: any = null;
   let waybillUrlSource = waybillUrl ? "webhook_body" : "none";
   let generateAttempted = false;
   let generateError: string | null = null;
 
   if (!waybillUrl || !courierLink) {
-    console.log("[biteship-webhook] waybill_url/courier_link missing in webhook body — fetching from Biteship API with deep dive fallback...");
+    console.log("[biteship-webhook] waybill_url/courier_link missing — fetching from Biteship API (deep dive with trackings endpoint)...");
     const orderDetail = await fetchBiteshipOrderDetail(biteshipOrderId);
     if (orderDetail) {
-      fetchDetailResult = orderDetail;
       waybillUrlSource = orderDetail.waybill_url_source;
       generateAttempted = orderDetail.generate_attempted;
       generateError = orderDetail.generate_error;
@@ -504,7 +583,7 @@ serve(async (req: Request) => {
       if (!waybillUrl && orderDetail.waybill_url) {
         fetchedWaybillUrl = orderDetail.waybill_url;
         updatePayload.biteship_waybill_url = orderDetail.waybill_url;
-        console.log(`[biteship-webhook] ✓ Fetched waybill_url from Biteship API (source: ${waybillUrlSource}):`, orderDetail.waybill_url);
+        console.log(`[biteship-webhook] ✓ Fetched waybill_url (source: ${waybillUrlSource}):`, orderDetail.waybill_url);
       }
       if (!courierLink && orderDetail.courier_link) {
         updatePayload.courier_link = orderDetail.courier_link;
@@ -564,8 +643,7 @@ serve(async (req: Request) => {
   });
 
   // ============================================================================
-  // ⭐ v3.2: Trigger WA shipping_update saat shipment started
-  // WAYBILL_URL yang dikirim = biteship_waybill_url dari DB (bukan fallback)
+  // Trigger WA shipping_update saat shipment started
   // ============================================================================
   let waShippingResult: { success: boolean; data?: any; error?: string; skipped?: boolean; skip_reason?: string } | null = null;
 
@@ -573,7 +651,6 @@ serve(async (req: Request) => {
     console.log(`[biteship-webhook] 📦 Shipment started (status=${biteshipStatus}). Triggering WA shipping_update...`);
 
     const trackingNumber = updatedOrder.tracking_number || fetchedTrackingNumber || undefined;
-    // ⭐ v3.2: prioritas waybill_url dari DB (sudah di-fetch dengan robust logic)
     const finalWaybillUrl = updatedOrder.biteship_waybill_url || fetchedWaybillUrl || undefined;
 
     console.log(`[biteship-webhook] WA shipping_update details:`, {
