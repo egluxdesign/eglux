@@ -1,28 +1,25 @@
 // supabase/functions/midtrans-webhook/index.ts
 // ============================================================================
-// Midtrans Webhook Notification Handler v3.4.2
+// Midtrans Webhook Notification Handler v3.4.2 (CORRECT FLOW)
 // ============================================================================
 //
-// ⭐ v3.4.2 CHANGES (dari v3.4.1):
-//   - REMOVE: shipping_update WA trigger dari midtrans-webhook (sebelumnya
-//     langsung ke-trigger saat Biteship create, BARELY 5 detik setelah payment
-//     sukses — customer dapat 2 WA bersamaan yang confusing)
-//   - Sekarang shipping_update WA CUMA di-trigger dari biteship-webhook,
-//     saat Biteship notify status berubah ke "allocated" / "picking" / "picked"
-//     (courier assigned / on the way to pickup / picked up).
-//   - payment_notification WA tetap di-trigger di sini (saat payment sukses) ✅
+// ⭐ v3.4.2 — CORRECT FLOW (user request):
+//   - Payment success → kirim HANYA payment_notification WA + email (NO shipping_update)
+//   - shipping_update WA di-trigger oleh biteship-webhook v3.1 saat Biteship
+//     webhook fires status=allocated/picking/picked (BUKAN saat payment success)
+//   - Auth fix: pakai fetch + Authorization eksplisit (proven pattern dari v3.4.1)
 //
-// ⭐ v3.4.1 (previous):
-//   - FIX AUTH BUG: Ganti supabase.functions.invoke → fetch dengan Authorization
-//     header eksplisit
-//
-// NOTIFICATION FLOW (v3.4.2):
-//   1. Payment settlement → trigger email (payment_success)
-//   2. Payment settlement → trigger WA payment_notification (di sini)
-//   3. Auto-create Biteship order (gets tracking_number, stored in DB)
-//   4. ⏳ WAIT for Biteship webhook notify status="allocated" / "picking" / "picked"
-//      → biteship-webhook akan trigger WA shipping_update (DI FILE LAIN)
+// FLOW:
+//   1. Payment settlement → update orders (paid status)
+//   2. Trigger email payment_success (via fetch + Authorization)
+//   3. Trigger WA payment_notification (via fetch + Authorization)
+//   4. Create Biteship order → simpan tracking_number + waybill_url di DB
+//      (TIDAK trigger WA shipping_update di sini — nanti di-trigger dari biteship-webhook)
 //   5. Add loyalty points
+//
+// Setup:
+//   1. Set Notification URL di Midtrans dashboard:
+//        https://mbuwpjxpxvnsxjusrnlk.supabase.co/functions/v1/midtrans-webhook
 // ============================================================================
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
@@ -51,7 +48,7 @@ function json(obj: unknown, status = 200) {
   });
 }
 
-// ⭐ Helper: invoke send-waba-live pakai fetch + Authorization eksplisit
+// ⭐ Helper: trigger WA via fetch dengan Authorization eksplisit
 async function triggerWabaNotification(
   event: "payment_success" | "shipping_update" | "retur_status",
   order_id: string,
@@ -60,13 +57,16 @@ async function triggerWabaNotification(
 ): Promise<{ success: boolean; data?: any; error?: string; httpStatus?: number }> {
   const requestBody: any = { order_id, event, ...extra_body };
 
-  console.log(`[${context}] Triggering send-waba-live (${event})...`, { order_id });
+  console.log(`[${context}] Triggering send-waba-live (${event})...`, {
+    order_id,
+    extra_keys: extra_body ? Object.keys(extra_body) : [],
+  });
 
   try {
     const response = await fetch(`${SUPABASE_URL}/functions/v1/send-waba-live`, {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,  // ⭐ EKSPLISIT
         "Content-Type": "application/json",
       },
       body: JSON.stringify(requestBody),
@@ -79,12 +79,21 @@ async function triggerWabaNotification(
     try {
       result = JSON.parse(responseText);
     } catch (parseErr) {
-      result = { success: false, error: `HTTP ${response.status}: ${responseText.substring(0, 100)}` };
+      console.error(`[${context}] send-waba-live (${event}) returned non-JSON:`, responseText.substring(0, 200));
+      result = {
+        success: false,
+        error: `HTTP ${response.status}: ${responseText.substring(0, 100)}`,
+      };
     }
 
     if (!response.ok) {
       console.warn(`[${context}] ✗ send-waba-live (${event}) HTTP ${response.status}:`, result?.error || result);
-      return { success: false, data: result, error: result?.error || `HTTP ${response.status}`, httpStatus: response.status };
+      return {
+        success: false,
+        data: result,
+        error: result?.error || `HTTP ${response.status}`,
+        httpStatus: response.status,
+      };
     }
 
     if (result?.success) {
@@ -237,7 +246,9 @@ serve(async (req: Request) => {
   }
 
   // ============================================================================
-  // ONLY IF PAYMENT SUCCESS → trigger email + WA + Biteship + loyalty points
+  // ONLY IF PAYMENT SUCCESS → trigger email + payment_notification WA + Biteship + loyalty points
+  // NOTE: shipping_update WA TIDAK di-trigger di sini — akan di-trigger dari biteship-webhook
+  // saat Biteship notify status=allocated/picking/picked
   // ============================================================================
   if (paymentStatus !== "paid") {
     console.log(`[midtrans-webhook] Payment not paid (${paymentStatus}) — skip email/WA/Biteship`);
@@ -303,7 +314,9 @@ serve(async (req: Request) => {
   }
 
   // ============================================================================
-  // ⭐ v3.4.2 STEP 2: Trigger WA payment_notification SAJA (no shipping_update)
+  // STEP 2: Trigger WA payment_notification SAJA (NO shipping_update)
+  // ⭐ v3.4.2: shipping_update WA pindah ke biteship-webhook, di-fire saat
+  //    Biteship notify status berubah ke allocated/picking/picked
   // ============================================================================
   const paymentNotifResult = await triggerWabaNotification(
     "payment_success",
@@ -312,9 +325,8 @@ serve(async (req: Request) => {
   );
 
   // ============================================================================
-  // STEP 3: Auto-create Biteship order (cuma create + store tracking_number, NO WA)
-  // ⭐ v3.4.2: shipping_update WA pindah ke biteship-webhook, di-fire saat
-  //    Biteship notify status berubah ke allocated/picking/picked
+  // STEP 3: Create Biteship order (cuma create + store tracking_number, NO WA trigger)
+  // shipping_update WA akan di-trigger oleh biteship-webhook saat Biteship notify status
   // ============================================================================
   console.log("[midtrans-webhook] Payment success → trigger create-biteship-order (no WA trigger here)");
 
@@ -339,13 +351,14 @@ serve(async (req: Request) => {
     if (biteshipResult?.already_exists) {
       console.log("[midtrans-webhook] ✓ Biteship order already exists:", biteshipResult.biteship_order_id);
     } else if (biteshipResult?.success !== false && biteshipResult?.biteship_order_id) {
-      console.log("[midtrans-webhook] ✓ Biteship order created:", biteshipResult.biteship_order_id, "tracking:", biteshipResult.tracking_number);
+      console.log("[midtrans-webhook] ✓ Biteship order created:", biteshipResult.biteship_order_id, "tracking:", biteshipResult.tracking_number, "waybill_url:", biteshipResult.waybill_url ? "(present)" : "(null)");
     } else {
       console.warn("[midtrans-webhook] create-biteship-order failed:", biteshipResult?.error || biteshipResult);
     }
 
-    // ⭐ v3.4.2: NO shipping_update WA trigger here. Biteship-webhook will handle it
-    // when Biteship notifies status change (allocated/picking/picked).
+    // ⭐ v3.4.2: NO shipping_update WA trigger here.
+    // Biteship-webhook v3.1 akan trigger WA shipping_updatesv2 saat Biteship
+    // notify status berubah ke allocated/picking/picked.
   } catch (e) {
     console.warn("[midtrans-webhook] create-biteship-order fetch error:", e.message);
   }
@@ -430,7 +443,7 @@ serve(async (req: Request) => {
   // ============================================================================
   return json({
     success: true,
-    message: "Payment success notification processed. shipping_update WA akan di-trigger oleh biteship-webhook saat Biteship notify status allocated/picking/picked.",
+    message: "Payment success notification processed. Only payment_notification WA sent. shipping_updatesv2 WA akan di-trigger oleh biteship-webhook saat Biteship notify status allocated/picking/picked.",
     order_id,
     payment_status: paymentStatus,
     email_status: emailStatus,
