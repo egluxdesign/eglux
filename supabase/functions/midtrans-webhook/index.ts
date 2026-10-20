@@ -1,55 +1,29 @@
 // supabase/functions/midtrans-webhook/index.ts
 // ============================================================================
-// Midtrans Webhook Notification Handler v3.4 (Skenario B - Qiscus API)
+// Midtrans Webhook Notification Handler v3.4.1 (PATCHED AUTH FIX)
 // ============================================================================
 //
+// ⭐ v3.4.1 PATCH (dari v3.4):
+//   - FIX BUG: Ganti supabase.functions.invoke → fetch dengan Authorization
+//     header eksplisit. Sebelumnya, send-waba-live ngereturn 401
+//     "Missing Authorization header" karena supabase.functions.invoke
+//     gak selalu set Authorization header dengan benar di edge function
+//     context. Fix ini memastikan Authorization: Bearer <SERVICE_ROLE_KEY>
+//     selalu dikirim → auth.ts service_role bypass jalan → send-waba-live
+//     bisa lanjut ke saveWabaMessage() → row muncul di waba_messages.
+//
 // ⭐ v3.4 CHANGES (dari v3.3):
-//   - Tambah trigger WA `payment_notification` (event="payment_success") setelah
-//     email notification sukses. Sebelumnya customer cuma dapet email, gak dapet
-//     WA notif untuk payment sukses. Sekarang dapet KEDUANYA (email + WA).
-//   - Pattern: email + WA fire paralel, non-blocking. Kalau WA gagal, cron retry handle.
+//   - Tambah trigger WA payment_notification (event="payment_success")
 //
 // ⭐ v3.3 CHANGES (dari v3.2):
-//   - After create-biteship-order returns tracking_number → trigger send-waba-live
-//     dengan event="shipping_update" + tracking_number
-//   - Fire-and-forget pattern: WA failure gak fail webhook (cron retry handle)
+//   - After Biteship create → trigger send-waba-live (shipping_update)
 //
-// Receive POST dari Midtrans saat status transaksi berubah:
-//   - Payment success (capture / settlement)
-//   - Payment pending (VA created, waiting for customer to pay)
-//   - Payment expired / denied / cancelled
-//
-// Update orders table dengan field lengkap:
-//   - midtrans_transaction_id     (wamid.xxx)
-//   - midtrans_transaction_status (capture, settlement, pending, expire, deny, cancel)
-//   - midtrans_payment_type       (credit_card, qris, gopay, bca_va, dst.)
-//   - midtrans_settlement_time    (timestamp — hanya saat settlement)
-//   - midtrans_fraud_status       (accept, deny, challenge — credit card only)
-//   - midtrans_payment_code       (VA number / retail code)
-//   - midtrans_pdf_url            (URL PDF instruksi pembayaran)
-//   - payment_status              (paid, unpaid, failed — internal EGLUX status)
-//   - status                      (pending → paid → shipping → completed)
-//
-// NOTIFICATION FLOW (v3.4):
-//   1. Payment settlement → trigger email (payment_success event)
-//   2. Payment settlement → trigger WA payment_notification (parallel with email)
+// NOTIFICATION FLOW (v3.4.1):
+//   1. Payment settlement → trigger email (payment_success)
+//   2. Payment settlement → trigger WA payment_notification (FETCH with Authorization)
 //   3. Auto-create Biteship order (gets tracking_number)
-//   4. After Biteship create → trigger WA shipping_update (with tracking_number)
+//   4. After Biteship create → trigger WA shipping_update (FETCH with Authorization)
 //   5. Add loyalty points
-//
-// Setup:
-//   1. Set Notification URL di Midtrans dashboard:
-//        Settings → Configuration → Payment Notification URL
-//        Value: https://<project-ref>.supabase.co/functions/v1/midtrans-webhook
-//   2. (Optional) Set env var MIDTRANS_NOTIFICATION_SECRET kalau pakai
-//      custom header verification. Default: verify via status_code + order lookup.
-//
-// Security:
-//   - Midtrans kirim signature di header `X-Hub-Signature-256` (HMAC SHA512).
-//     Format signature: SHA512(<order_id>+<status_code>+<gross_amount>+<server_key>)
-//   - Function ini verify signature sebelum process body. Kalau gak match → 401.
-//   - Defense in depth: tetap cross-check dengan Midtrans GET /v2/{order_id}/status
-//     supaya kalau signature leak, data tetap verified via API.
 // ============================================================================
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
@@ -59,7 +33,6 @@ import { createHash } from "node:crypto";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
-// Midtrans Server Key (untuk verify via Status API)
 const MIDTRANS_SERVER_KEY = Deno.env.get("MIDTRANS_SERVER_KEY")!;
 const MIDTRANS_IS_PRODUCTION = Deno.env.get("MIDTRANS_IS_PRODUCTION") === "true";
 const MIDTRANS_BASE_URL = MIDTRANS_IS_PRODUCTION
@@ -79,8 +52,71 @@ function json(obj: unknown, status = 200) {
   });
 }
 
+// ⭐ v3.4.1 NEW: Helper untuk invoke send-waba-live pakai fetch + Authorization eksplisit
+// Pattern ini dijamin work karena auth.ts detect service_role bypass dari Authorization header
+async function triggerWabaNotification(
+  event: "payment_success" | "shipping_update",
+  order_id: string,
+  tracking_number?: string,
+  context: string = "midtrans-webhook"
+): Promise<{ success: boolean; data?: any; error?: string; httpStatus?: number }> {
+  const requestBody: any = { order_id, event };
+  if (tracking_number) {
+    requestBody.tracking_number = tracking_number;
+  }
+
+  console.log(`[${context}] Triggering send-waba-live (${event})...`, { order_id, tracking_number: tracking_number || "(none)" });
+
+  try {
+    const response = await fetch(`${SUPABASE_URL}/functions/v1/send-waba-live`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,  // ⭐ EKSPLISIT
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(requestBody),
+    });
+
+    console.log(`[${context}] send-waba-live (${event}) HTTP status:`, response.status);
+
+    // Parse response — handle non-JSON gracefully
+    const responseText = await response.text();
+    let result: any;
+    try {
+      result = JSON.parse(responseText);
+    } catch (parseErr) {
+      console.error(`[${context}] send-waba-live (${event}) returned non-JSON:`, responseText.substring(0, 200));
+      result = {
+        success: false,
+        error: `HTTP ${response.status}: ${responseText.substring(0, 100)}`,
+      };
+    }
+
+    if (!response.ok) {
+      console.warn(`[${context}] ✗ send-waba-live (${event}) HTTP ${response.status}:`, result?.error || result);
+      return {
+        success: false,
+        data: result,
+        error: result?.error || `HTTP ${response.status}`,
+        httpStatus: response.status,
+      };
+    }
+
+    if (result?.success) {
+      console.log(`[${context}] ✓ WA ${event} sent:`, result.qiscus_message_id);
+    } else {
+      console.warn(`[${context}] send-waba-live (${event}) returned non-success:`, result?.error);
+    }
+
+    return { success: !!result?.success, data: result, httpStatus: response.status };
+  } catch (err) {
+    console.error(`[${context}] send-waba-live (${event}) invoke error:`, err?.message);
+    return { success: false, error: err?.message };
+  }
+}
+
 // ============================================================================
-// HMAC Signature Verification (Midtrans)
+// Midtrans Signature Verification
 // ============================================================================
 function verifyMidtransSignature(
   orderId: string,
@@ -121,7 +157,6 @@ serve(async (req: Request) => {
     payment_type: body?.payment_type,
   });
 
-  // ── Extract fields ──
   const {
     order_id,
     transaction_status: txStatus,
@@ -134,21 +169,15 @@ serve(async (req: Request) => {
     fraud_status: fraudStatus,
     payment_code: paymentCode,
     pdf_url: pdfUrl,
-    transaction_status: tsRaw,
   } = body;
 
   if (!order_id || !txStatus) {
     return json({ error: "Missing required fields: order_id, transaction_status" }, 400);
   }
 
-  // ── Verify signature ──
+  // Verify signature
   if (MIDTRANS_SERVER_KEY && signatureKey) {
-    const isValid = verifyMidtransSignature(
-      order_id,
-      statusCode || "",
-      grossAmount || "0",
-      signatureKey,
-    );
+    const isValid = verifyMidtransSignature(order_id, statusCode || "", grossAmount || "0", signatureKey);
     if (!isValid) {
       console.error("[midtrans-webhook] Signature verification FAILED");
       return json({ error: "Invalid signature" }, 401);
@@ -158,7 +187,7 @@ serve(async (req: Request) => {
 
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-  // ── Map Midtrans transaction_status ke EGLUX payment_status ──
+  // Map Midtrans transaction_status ke EGLUX payment_status
   let paymentStatus: string;
   let orderStatus: string;
   if (txStatus === "capture" || txStatus === "settlement") {
@@ -177,7 +206,7 @@ serve(async (req: Request) => {
 
   console.log(`[midtrans-webhook] Mapped status: ${txStatus} → payment_status=${paymentStatus}, order_status=${orderStatus}`);
 
-  // ── Update orders table dengan data Midtrans lengkap ──
+  // Update orders table
   const updateData: any = {
     midtrans_transaction_id: midtransTxId || null,
     midtrans_transaction_status: txStatus,
@@ -205,8 +234,7 @@ serve(async (req: Request) => {
 
   console.log("[midtrans-webhook] ✓ Order updated:", order_id, "→ payment_status:", paymentStatus);
 
-  // ── Defense in depth: cross-check dengan Midtrans Status API ──
-  // Kalau status settlement tapi gross_amount mismatch → bisa reject
+  // Cross-check dengan Midtrans Status API
   if (MIDTRANS_SERVER_KEY && (txStatus === "settlement" || txStatus === "capture")) {
     try {
       const auth = btoa(`${MIDTRANS_SERVER_KEY}:`);
@@ -240,8 +268,6 @@ serve(async (req: Request) => {
   // STEP 1: Send email notification (payment_success event)
   // ============================================================================
   let emailStatus = "email_sent";
-  let emailErrorDetail = "";
-
   try {
     console.log("[midtrans-webhook] Triggering send-email-notification...");
     const emailResp = await fetch(`${SUPABASE_URL}/functions/v1/send-email-notification`, {
@@ -250,10 +276,7 @@ serve(async (req: Request) => {
         "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        event: "payment_success",
-        order_id,
-      }),
+      body: JSON.stringify({ event: "payment_success", order_id }),
     });
 
     const responseText = await emailResp.text();
@@ -261,7 +284,6 @@ serve(async (req: Request) => {
     try {
       emailResult = JSON.parse(responseText);
     } catch (parseErr) {
-      console.error("[midtrans-webhook] send-email-notification returned non-JSON:", emailResp.status, responseText.substring(0, 200));
       emailResult = { success: false, error: `HTTP ${emailResp.status}: ${responseText.substring(0, 100)}` };
     }
 
@@ -271,20 +293,9 @@ serve(async (req: Request) => {
     } else if (emailResult.success && emailResult.skipped) {
       emailStatus = "email_skipped";
       console.log(`[midtrans-webhook] ℹ️ Email skipped: ${emailResult.reason || 'duplicate'}`);
-    } else if (emailResult.skipped) {
-      emailStatus = "email_skipped";
-      emailErrorDetail = emailResult.reason || "Customer has no email";
-      console.warn(`[midtrans-webhook] ⚠️ Email skipped (no email): ${emailErrorDetail}`);
     } else {
       emailStatus = "email_failed";
-      emailErrorDetail = emailResult.error
-        || emailResult.error_detail
-        || emailResult.reason
-        || emailResult.message
-        || (emailResult.step ? `Failed at step: ${emailResult.step}` : null)
-        || `Unknown error (HTTP ${emailResp.status})`;
-      console.error(`[midtrans-webhook] ✗ Email FAILED: ${emailErrorDetail}`);
-      console.error(`[midtrans-webhook] Full send-email response:`, JSON.stringify(emailResult));
+      console.error(`[midtrans-webhook] ✗ Email FAILED:`, emailResult.error || emailResult);
     }
 
     await supabase.from("orders").update({
@@ -294,7 +305,6 @@ serve(async (req: Request) => {
     }).eq("id", order_id);
   } catch (e) {
     emailStatus = "email_failed";
-    emailErrorDetail = e.message;
     console.error("[midtrans-webhook] Email notification exception:", e.message);
     try {
       await supabase.from("orders").update({
@@ -308,106 +318,69 @@ serve(async (req: Request) => {
   }
 
   // ============================================================================
-  // ⭐ v3.4 STEP 2: Trigger WA payment_notification (parallel with email, non-blocking)
+  // ⭐ v3.4.1 STEP 2: Trigger WA payment_notification (FETCH with explicit Authorization)
   // ============================================================================
-  try {
-    console.log("[midtrans-webhook] Triggering send-waba-live (payment_notification)...");
-    const { data: wabaResult, error: wabaError } = await supabase.functions.invoke(
-      "send-waba-live",
-      {
-        body: {
-          order_id,
-          event: "payment_success",
-        },
-      }
-    );
-
-    if (wabaError) {
-      console.warn("[midtrans-webhook] send-waba-live (payment_notification) failed:", wabaError.message);
-    } else if (wabaResult?.success) {
-      console.log(
-        "[midtrans-webhook] ✓ WA payment_notification sent:",
-        wabaResult.qiscus_message_id
-      );
-    } else {
-      console.warn(
-        "[midtrans-webhook] send-waba-live (payment_notification) returned error:",
-        wabaResult?.error
-      );
-    }
-  } catch (wabaEx) {
-    console.warn("[midtrans-webhook] send-waba-live (payment_notification) invoke error:", wabaEx);
-  }
+  const paymentNotifResult = await triggerWabaNotification(
+    "payment_success",
+    order_id,
+    undefined,  // tracking_number tidak diperlukan untuk payment_notification
+    "midtrans-webhook"
+  );
 
   // ============================================================================
-  // STEP 3: Auto-create Biteship order (setelah payment sukses)
+  // STEP 3: Auto-create Biteship order
   // ============================================================================
   console.log("[midtrans-webhook] Payment success → trigger create-biteship-order");
+  let biteshipTrackingNumber: string | undefined;
 
   try {
-    const { data: biteshipResult, error: biteshipError } = await supabase.functions.invoke(
-      "create-biteship-order",
-      { body: { order_id } }
-    );
+    // create-biteship-order juga pakai fetch dengan Authorization eksplisit (ganti dari invoke)
+    const biteshipResp = await fetch(`${SUPABASE_URL}/functions/v1/create-biteship-order`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ order_id }),
+    });
 
-    if (biteshipError) {
-      console.warn(
-        "[midtrans-webhook] create-biteship-order failed:",
-        biteshipError.message,
-        "— order dapat di-retry manual via POST /functions/v1/create-biteship-order"
-      );
-    } else if (biteshipResult?.already_exists) {
-      console.log(
-        "[midtrans-webhook] ✓ Biteship order already exists:",
-        biteshipResult.biteship_order_id
-      );
+    const responseText = await biteshipResp.text();
+    let biteshipResult;
+    try {
+      biteshipResult = JSON.parse(responseText);
+    } catch (parseErr) {
+      biteshipResult = { success: false, error: `HTTP ${biteshipResp.status}: ${responseText.substring(0, 100)}` };
+    }
+
+    if (biteshipResult?.already_exists) {
+      console.log("[midtrans-webhook] ✓ Biteship order already exists:", biteshipResult.biteship_order_id);
+      biteshipTrackingNumber = biteshipResult?.tracking_number;
+    } else if (biteshipResult?.success !== false && biteshipResult?.biteship_order_id) {
+      console.log("[midtrans-webhook] ✓ Biteship order created:", biteshipResult.biteship_order_id, "tracking:", biteshipResult.tracking_number);
+      biteshipTrackingNumber = biteshipResult.tracking_number;
     } else {
-      console.log(
-        "[midtrans-webhook] ✓ Biteship order created:",
-        biteshipResult?.biteship_order_id,
-        "tracking:",
-        biteshipResult?.tracking_number
-      );
-
-      // ⭐ v3.3: Trigger WA shipping_update notification (Skenario B - Qiscus API)
-      if (biteshipResult?.tracking_number) {
-        try {
-          console.log("[midtrans-webhook] Triggering send-waba-live (shipping_update)...");
-          const { data: wabaResult, error: wabaError } = await supabase.functions.invoke(
-            "send-waba-live",
-            {
-              body: {
-                order_id,
-                event: "shipping_update",
-                tracking_number: biteshipResult.tracking_number,
-              },
-            }
-          );
-
-          if (wabaError) {
-            console.warn("[midtrans-webhook] send-waba-live (shipping_update) failed:", wabaError.message);
-          } else if (wabaResult?.success) {
-            console.log(
-              "[midtrans-webhook] ✓ WA shipping_update sent:",
-              wabaResult.qiscus_message_id
-            );
-          } else {
-            console.warn(
-              "[midtrans-webhook] send-waba-live (shipping_update) returned error:",
-              wabaResult?.error
-            );
-          }
-        } catch (wabaEx) {
-          console.warn("[midtrans-webhook] send-waba-live (shipping_update) invoke error:", wabaEx);
-        }
-      }
+      console.warn("[midtrans-webhook] create-biteship-order failed:", biteshipResult?.error || biteshipResult);
     }
   } catch (e) {
-    console.warn("[midtrans-webhook] create-biteship-order invoke error:", e);
+    console.warn("[midtrans-webhook] create-biteship-order fetch error:", e.message);
   }
 
   // ============================================================================
-  // STEP 4: Create admin notification (payment success)
+  // ⭐ v3.4.1 STEP 4: After Biteship create → trigger WA shipping_update
+  // ============================================================================
+  if (biteshipTrackingNumber) {
+    await triggerWabaNotification(
+      "shipping_update",
+      order_id,
+      biteshipTrackingNumber,
+      "midtrans-webhook"
+    );
+  } else {
+    console.warn("[midtrans-webhook] No tracking_number from Biteship — skip shipping_update WA");
+  }
+
+  // ============================================================================
+  // STEP 5: Create admin notification
   // ============================================================================
   try {
     const { data: orderData } = await supabase
@@ -434,15 +407,12 @@ serve(async (req: Request) => {
   }
 
   // ============================================================================
-  // STEP 5: Auto-add loyalty points (1 poin = Rp 1.000, round down)
+  // STEP 6: Auto-add loyalty points
   // ============================================================================
   try {
     const { data: pointsOrder } = await supabase
       .from("orders")
-      .select(`
-        id, total_amount,
-        customer:customers(user_id)
-      `)
+      .select(`id, total_amount, customer:customers(user_id)`)
       .eq("id", order_id)
       .single();
 
@@ -452,7 +422,6 @@ serve(async (req: Request) => {
     if (userId && totalAmount > 0) {
       const points = Math.floor(totalAmount / 1000);
       if (points > 0) {
-        // Cek apakah poin sudah di-add sebelumnya (idempotent)
         const { data: existingTxn } = await supabase
           .from("point_transactions")
           .select("id")
@@ -476,14 +445,10 @@ serve(async (req: Request) => {
           if (pointsErr) {
             console.warn("[midtrans-webhook] Points add failed:", pointsErr.message);
           } else {
-            console.log(`[midtrans-webhook] ✓ Added ${points} points to user ${userId.slice(0, 8)} (order ${totalAmount})`);
+            console.log(`[midtrans-webhook] ✓ Added ${points} points to user ${userId.slice(0, 8)}`);
           }
         }
-      } else {
-        console.warn("[midtrans-webhook] Cannot add points — total_amount < 1000");
       }
-    } else {
-      console.warn("[midtrans-webhook] Cannot add points — no user_id or total_amount=0");
     }
   } catch (pointsErr) {
     console.warn("[midtrans-webhook] Points add error (non-blocking):", pointsErr?.message);
@@ -498,6 +463,14 @@ serve(async (req: Request) => {
     order_id,
     payment_status: paymentStatus,
     email_status: emailStatus,
+    wa_payment_notification: {
+      success: paymentNotifResult.success,
+      error: paymentNotifResult.error,
+    },
+    wa_shipping_update: {
+      tracking_number: biteshipTrackingNumber || null,
+      triggered: !!biteshipTrackingNumber,
+    },
     steps_executed: [
       "update_order",
       "send_email",
