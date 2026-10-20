@@ -1,28 +1,27 @@
 // supabase/functions/midtrans-webhook/index.ts
 // ============================================================================
-// Midtrans Webhook Notification Handler v3.4.1 (PATCHED AUTH FIX)
+// Midtrans Webhook Notification Handler v3.4.2
 // ============================================================================
 //
-// ⭐ v3.4.1 PATCH (dari v3.4):
-//   - FIX BUG: Ganti supabase.functions.invoke → fetch dengan Authorization
-//     header eksplisit. Sebelumnya, send-waba-live ngereturn 401
-//     "Missing Authorization header" karena supabase.functions.invoke
-//     gak selalu set Authorization header dengan benar di edge function
-//     context. Fix ini memastikan Authorization: Bearer <SERVICE_ROLE_KEY>
-//     selalu dikirim → auth.ts service_role bypass jalan → send-waba-live
-//     bisa lanjut ke saveWabaMessage() → row muncul di waba_messages.
+// ⭐ v3.4.2 CHANGES (dari v3.4.1):
+//   - REMOVE: shipping_update WA trigger dari midtrans-webhook (sebelumnya
+//     langsung ke-trigger saat Biteship create, BARELY 5 detik setelah payment
+//     sukses — customer dapat 2 WA bersamaan yang confusing)
+//   - Sekarang shipping_update WA CUMA di-trigger dari biteship-webhook,
+//     saat Biteship notify status berubah ke "allocated" / "picking" / "picked"
+//     (courier assigned / on the way to pickup / picked up).
+//   - payment_notification WA tetap di-trigger di sini (saat payment sukses) ✅
 //
-// ⭐ v3.4 CHANGES (dari v3.3):
-//   - Tambah trigger WA payment_notification (event="payment_success")
+// ⭐ v3.4.1 (previous):
+//   - FIX AUTH BUG: Ganti supabase.functions.invoke → fetch dengan Authorization
+//     header eksplisit
 //
-// ⭐ v3.3 CHANGES (dari v3.2):
-//   - After Biteship create → trigger send-waba-live (shipping_update)
-//
-// NOTIFICATION FLOW (v3.4.1):
+// NOTIFICATION FLOW (v3.4.2):
 //   1. Payment settlement → trigger email (payment_success)
-//   2. Payment settlement → trigger WA payment_notification (FETCH with Authorization)
-//   3. Auto-create Biteship order (gets tracking_number)
-//   4. After Biteship create → trigger WA shipping_update (FETCH with Authorization)
+//   2. Payment settlement → trigger WA payment_notification (di sini)
+//   3. Auto-create Biteship order (gets tracking_number, stored in DB)
+//   4. ⏳ WAIT for Biteship webhook notify status="allocated" / "picking" / "picked"
+//      → biteship-webhook akan trigger WA shipping_update (DI FILE LAIN)
 //   5. Add loyalty points
 // ============================================================================
 
@@ -52,26 +51,22 @@ function json(obj: unknown, status = 200) {
   });
 }
 
-// ⭐ v3.4.1 NEW: Helper untuk invoke send-waba-live pakai fetch + Authorization eksplisit
-// Pattern ini dijamin work karena auth.ts detect service_role bypass dari Authorization header
+// ⭐ Helper: invoke send-waba-live pakai fetch + Authorization eksplisit
 async function triggerWabaNotification(
-  event: "payment_success" | "shipping_update",
+  event: "payment_success" | "shipping_update" | "retur_status",
   order_id: string,
-  tracking_number?: string,
-  context: string = "midtrans-webhook"
+  context: string = "midtrans-webhook",
+  extra_body?: Record<string, any>
 ): Promise<{ success: boolean; data?: any; error?: string; httpStatus?: number }> {
-  const requestBody: any = { order_id, event };
-  if (tracking_number) {
-    requestBody.tracking_number = tracking_number;
-  }
+  const requestBody: any = { order_id, event, ...extra_body };
 
-  console.log(`[${context}] Triggering send-waba-live (${event})...`, { order_id, tracking_number: tracking_number || "(none)" });
+  console.log(`[${context}] Triggering send-waba-live (${event})...`, { order_id });
 
   try {
     const response = await fetch(`${SUPABASE_URL}/functions/v1/send-waba-live`, {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,  // ⭐ EKSPLISIT
+        "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify(requestBody),
@@ -79,27 +74,17 @@ async function triggerWabaNotification(
 
     console.log(`[${context}] send-waba-live (${event}) HTTP status:`, response.status);
 
-    // Parse response — handle non-JSON gracefully
     const responseText = await response.text();
     let result: any;
     try {
       result = JSON.parse(responseText);
     } catch (parseErr) {
-      console.error(`[${context}] send-waba-live (${event}) returned non-JSON:`, responseText.substring(0, 200));
-      result = {
-        success: false,
-        error: `HTTP ${response.status}: ${responseText.substring(0, 100)}`,
-      };
+      result = { success: false, error: `HTTP ${response.status}: ${responseText.substring(0, 100)}` };
     }
 
     if (!response.ok) {
       console.warn(`[${context}] ✗ send-waba-live (${event}) HTTP ${response.status}:`, result?.error || result);
-      return {
-        success: false,
-        data: result,
-        error: result?.error || `HTTP ${response.status}`,
-        httpStatus: response.status,
-      };
+      return { success: false, data: result, error: result?.error || `HTTP ${response.status}`, httpStatus: response.status };
     }
 
     if (result?.success) {
@@ -318,23 +303,22 @@ serve(async (req: Request) => {
   }
 
   // ============================================================================
-  // ⭐ v3.4.1 STEP 2: Trigger WA payment_notification (FETCH with explicit Authorization)
+  // ⭐ v3.4.2 STEP 2: Trigger WA payment_notification SAJA (no shipping_update)
   // ============================================================================
   const paymentNotifResult = await triggerWabaNotification(
     "payment_success",
     order_id,
-    undefined,  // tracking_number tidak diperlukan untuk payment_notification
     "midtrans-webhook"
   );
 
   // ============================================================================
-  // STEP 3: Auto-create Biteship order
+  // STEP 3: Auto-create Biteship order (cuma create + store tracking_number, NO WA)
+  // ⭐ v3.4.2: shipping_update WA pindah ke biteship-webhook, di-fire saat
+  //    Biteship notify status berubah ke allocated/picking/picked
   // ============================================================================
-  console.log("[midtrans-webhook] Payment success → trigger create-biteship-order");
-  let biteshipTrackingNumber: string | undefined;
+  console.log("[midtrans-webhook] Payment success → trigger create-biteship-order (no WA trigger here)");
 
   try {
-    // create-biteship-order juga pakai fetch dengan Authorization eksplisit (ganti dari invoke)
     const biteshipResp = await fetch(`${SUPABASE_URL}/functions/v1/create-biteship-order`, {
       method: "POST",
       headers: {
@@ -354,33 +338,20 @@ serve(async (req: Request) => {
 
     if (biteshipResult?.already_exists) {
       console.log("[midtrans-webhook] ✓ Biteship order already exists:", biteshipResult.biteship_order_id);
-      biteshipTrackingNumber = biteshipResult?.tracking_number;
     } else if (biteshipResult?.success !== false && biteshipResult?.biteship_order_id) {
       console.log("[midtrans-webhook] ✓ Biteship order created:", biteshipResult.biteship_order_id, "tracking:", biteshipResult.tracking_number);
-      biteshipTrackingNumber = biteshipResult.tracking_number;
     } else {
       console.warn("[midtrans-webhook] create-biteship-order failed:", biteshipResult?.error || biteshipResult);
     }
+
+    // ⭐ v3.4.2: NO shipping_update WA trigger here. Biteship-webhook will handle it
+    // when Biteship notifies status change (allocated/picking/picked).
   } catch (e) {
     console.warn("[midtrans-webhook] create-biteship-order fetch error:", e.message);
   }
 
   // ============================================================================
-  // ⭐ v3.4.1 STEP 4: After Biteship create → trigger WA shipping_update
-  // ============================================================================
-  if (biteshipTrackingNumber) {
-    await triggerWabaNotification(
-      "shipping_update",
-      order_id,
-      biteshipTrackingNumber,
-      "midtrans-webhook"
-    );
-  } else {
-    console.warn("[midtrans-webhook] No tracking_number from Biteship — skip shipping_update WA");
-  }
-
-  // ============================================================================
-  // STEP 5: Create admin notification
+  // STEP 4: Create admin notification
   // ============================================================================
   try {
     const { data: orderData } = await supabase
@@ -407,7 +378,7 @@ serve(async (req: Request) => {
   }
 
   // ============================================================================
-  // STEP 6: Auto-add loyalty points
+  // STEP 5: Auto-add loyalty points
   // ============================================================================
   try {
     const { data: pointsOrder } = await supabase
@@ -459,7 +430,7 @@ serve(async (req: Request) => {
   // ============================================================================
   return json({
     success: true,
-    message: "Payment success notification fully processed",
+    message: "Payment success notification processed. shipping_update WA akan di-trigger oleh biteship-webhook saat Biteship notify status allocated/picking/picked.",
     order_id,
     payment_status: paymentStatus,
     email_status: emailStatus,
@@ -468,15 +439,14 @@ serve(async (req: Request) => {
       error: paymentNotifResult.error,
     },
     wa_shipping_update: {
-      tracking_number: biteshipTrackingNumber || null,
-      triggered: !!biteshipTrackingNumber,
+      triggered: false,
+      reason: "Moved to biteship-webhook — fires when Biteship notifies status allocated/picking/picked",
     },
     steps_executed: [
       "update_order",
       "send_email",
       "send_wa_payment_notification",
       "create_biteship_order",
-      "send_wa_shipping_update",
       "create_admin_notification",
       "add_loyalty_points",
     ],
