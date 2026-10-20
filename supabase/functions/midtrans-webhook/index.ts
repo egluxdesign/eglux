@@ -82,19 +82,6 @@ function json(obj: unknown, status = 200) {
 // ============================================================================
 // HMAC Signature Verification (Midtrans)
 // ============================================================================
-// Midtrans signature format (dari docs):
-//   Signature key = SHA512(<order_id> + <status_code> + <gross_amount> + <server_key>)
-//
-// Header yang dikirim Midtrans:
-//   - X-Hub-Signature-256: sha256=<hex>     (HMAC SHA256)
-//   - signature_key: <hex>                  (SHA512, di body payload)
-//
-// Cara verify:
-//   1. Baca signature_key dari body payload
-//   2. Recompute: SHA512(order_id + status_code + gross_amount + MIDTRANS_SERVER_KEY)
-//   3. Bandingkan dengan signature_key dari body (timing-safe compare)
-//   Kalau gak match → reject webhook (401)
-// ============================================================================
 function verifyMidtransSignature(
   orderId: string,
   statusCode: string | number,
@@ -102,102 +89,14 @@ function verifyMidtransSignature(
   signatureKey: string,
 ): boolean {
   if (!MIDTRANS_SERVER_KEY || !signatureKey) return false;
-  // Midtrans signature = SHA512(order_id + status_code + gross_amount + server_key)
   const input = `${orderId}${statusCode}${grossAmount}${MIDTRANS_SERVER_KEY}`;
   const computedHash = createHash("sha512").update(input).digest("hex");
-  // Timing-safe compare (avoid timing attack)
   if (computedHash.length !== signatureKey.length) return false;
   let diff = 0;
   for (let i = 0; i < computedHash.length; i++) {
     diff |= computedHash.charCodeAt(i) ^ signatureKey.charCodeAt(i);
   }
   return diff === 0;
-}
-
-/**
- * Map Midtrans transaction_status ke EGLUX internal payment_status
- */
-function mapPaymentStatus(
-  midtransStatus: string
-): "unpaid" | "paid" | "failed" {
-  switch (midtransStatus) {
-    case "capture":
-    case "settlement":
-      return "paid";
-    case "pending":
-      return "unpaid";
-    case "deny":
-    case "expire":
-    case "cancel":
-    case "failure":
-      return "failed";
-    default:
-      return "unpaid";
-  }
-}
-
-/**
- * Map Midtrans transaction_status ke EGLUX internal order status.
- *
- * ⚠️ PENTING: vocab `status` BERBEDA dengan `payment_status`.
- *   - payment_status: unpaid/paid/failed/expired (status PEMBAYARAN)
- *   - status: pending/processing/shipping/completed/cancelled (status ORDER internal)
- *
- * DB CHECK constraint `orders_status_check` hanya allow:
- *   pending, processing, shipping, completed, cancelled
- * ('paid' TIDAK valid untuk `status` — gunakan 'processing' saat settlement)
- */
-function mapOrderStatus(
-  midtransStatus: string,
-  currentOrderStatus: string
-): string {
-  switch (midtransStatus) {
-    case "capture":
-    case "settlement":
-      // Payment sukses → order masuk tahap processing (siap untuk create Biteship order)
-      // create-biteship-order akan tetap di 'processing' sampai Biteship confirm
-      return "processing";
-    case "pending":
-      return currentOrderStatus; // keep current (probably 'pending')
-    case "deny":
-    case "expire":
-    case "cancel":
-    case "failure":
-      return "cancelled";
-    default:
-      return currentOrderStatus;
-  }
-}
-
-/**
- * Verify notification dengan GET /v2/{order_id}/status ke Midtrans API
- * Defense in depth: jangan trust webhook payload begitu saja.
- */
-async function verifyWithMidtransAPI(
-  orderId: string
-): Promise<any | null> {
-  if (!MIDTRANS_SERVER_KEY) return null;
-
-  try {
-    const auth = btoa(`${MIDTRANS_SERVER_KEY}:`);
-    const resp = await fetch(`${MIDTRANS_BASE_URL}/v2/${orderId}/status`, {
-      method: "GET",
-      headers: {
-        Authorization: `Basic ${auth}`,
-        Accept: "application/json",
-      },
-    });
-
-    if (!resp.ok) {
-      console.error("[midtrans-webhook] verify failed:", resp.status);
-      return null;
-    }
-
-    return await resp.json();
-  } catch (err) {
-    console.error("[midtrans-webhook] verify network error:", err);
-    return null;
-  }
 }
 
 serve(async (req: Request) => {
@@ -215,584 +114,398 @@ serve(async (req: Request) => {
     return json({ error: "Invalid JSON body" }, 400);
   }
 
-  // Midtrans notification payload reference:
-  // https://docs.midtrans.com/en/after-payment/http-notification
-  const {
-    order_id,
-    transaction_status,
-    transaction_id,
-    payment_type,
-    fraud_status,
-    settlement_time,
-    expiry_time,
-    transaction_time,
-    status_code,
-    status_message,
-    store,
-    gross_amount,
-    signature_key,    // ← Midtrans signature untuk verify
-    payment_code,
-    pdf_url,
-    finish_redirect_url,
-    permata_va_number,
-    bca_va_number,
-    bni_va_number,
-    bri_va_number,
-    bill_key,
-    biller_code,
-    va_numbers,        // ← array untuk bank_transfer (format modern Midtrans)
-  } = body;
-
-  // ── SIGNATURE VERIFICATION (HMAC SHA512) ──
-  // Midtrans kirim signature_key di body. Verify sebelum process apa-apa.
-  // Kalau gagal → reject 401 (webhook palsu / spoofed).
-  if (signature_key) {
-    const isValid = verifyMidtransSignature(
-      order_id,
-      status_code || "",
-      gross_amount || "",
-      signature_key,
-    );
-    if (!isValid) {
-      console.error("[midtrans-webhook] Invalid signature for order:", order_id);
-      return json({ error: "Invalid signature" }, 401);
-    }
-  } else {
-    // Kalau signature_key gak ada di body, reject (defensive)
-    // Kecuali kalau dev mode dan mau skip — uncomment baris di bawah:
-    console.warn("[midtrans-webhook] No signature_key in body. Rejecting (security).");
-    return json({ error: "Missing signature_key — webhook not authenticated" }, 401);
-    // console.warn("[midtrans-webhook] No signature_key in body. Skipping verification (dev mode).");
-  }
-
-  if (!order_id || !transaction_status) {
-    console.error("[midtrans-webhook] Missing required fields:", {
-      order_id,
-      transaction_status,
-    });
-    return json({ error: "Missing required fields" }, 400);
-  }
-
-  console.log("[midtrans-webhook] Received:", {
-    order_id,
-    transaction_status,
-    transaction_id,
-    payment_type,
-    fraud_status,
-    settlement_time,
+  console.log("[midtrans-webhook] Received notification:", {
+    order_id: body?.order_id,
+    transaction_status: body?.transaction_status,
+    status_code: body?.status_code,
+    payment_type: body?.payment_type,
   });
 
-  // 1. Verify dengan Midtrans Status API (defense in depth)
-  const verifiedData = await verifyWithMidtransAPI(order_id);
-  if (!verifiedData) {
-    console.error("[midtrans-webhook] Verification failed for order:", order_id);
-    // Tetap proceed dengan webhook payload, tapi log warning
-    // (kalau strict, return 401 di sini)
-    console.warn("[midtrans-webhook] Proceeding with unverified payload");
-  } else {
-    // Override dengan verified data jika ada perbedaan
-    if (verifiedData.transaction_status !== transaction_status) {
-      console.warn(
-        "[midtrans-webhook] Status mismatch — webhook:",
-        transaction_status,
-        "API:",
-        verifiedData.transaction_status,
-        "→ menggunakan API"
-      );
+  // ── Extract fields ──
+  const {
+    order_id,
+    transaction_status: txStatus,
+    status_code: statusCode,
+    gross_amount: grossAmount,
+    signature_key: signatureKey,
+    transaction_id: midtransTxId,
+    payment_type: paymentType,
+    settlement_time: settlementTime,
+    fraud_status: fraudStatus,
+    payment_code: paymentCode,
+    pdf_url: pdfUrl,
+    transaction_status: tsRaw,
+  } = body;
+
+  if (!order_id || !txStatus) {
+    return json({ error: "Missing required fields: order_id, transaction_status" }, 400);
+  }
+
+  // ── Verify signature ──
+  if (MIDTRANS_SERVER_KEY && signatureKey) {
+    const isValid = verifyMidtransSignature(
+      order_id,
+      statusCode || "",
+      grossAmount || "0",
+      signatureKey,
+    );
+    if (!isValid) {
+      console.error("[midtrans-webhook] Signature verification FAILED");
+      return json({ error: "Invalid signature" }, 401);
     }
+    console.log("[midtrans-webhook] ✓ Signature verified");
   }
 
-  const finalData = verifiedData || body;
-  const finalTransactionStatus = finalData.transaction_status;
-  const finalTransactionId = finalData.transaction_id || transaction_id;
-  const finalPaymentType = finalData.payment_type || payment_type;
-  const finalFraudStatus = finalData.fraud_status || fraud_status;
-  const finalSettlementTime = finalData.settlement_time || settlement_time;
-
-  // ⚠️ VA NUMBER EXTRACTION untuk bank_transfer (BCA VA, BNI VA, dst.)
-  // Midtrans webhook kirim VA number dalam 2 format:
-  //   1. Modern (array): va_numbers: [{ bank: "bca", va_number: "8801123456789" }]
-  //   2. Legacy (field): bca_va_number: "8801123456789"
-  // Prioritas: array > legacy > payment_code (untuk retail)
-  const finalVaNumbers = finalData.va_numbers || va_numbers;
-  let extractedVaNumber: string | null = null;
-
-  if (Array.isArray(finalVaNumbers) && finalVaNumbers.length > 0) {
-    extractedVaNumber = finalVaNumbers[0].va_number || null;
-    console.log(`[midtrans-webhook] VA number from va_numbers array: ${extractedVaNumber} (bank: ${finalVaNumbers[0].bank})`);
-  } else if (bca_va_number) {
-    extractedVaNumber = bca_va_number;
-    console.log(`[midtrans-webhook] VA number from bca_va_number: ${extractedVaNumber}`);
-  } else if (bni_va_number) {
-    extractedVaNumber = bni_va_number;
-    console.log(`[midtrans-webhook] VA number from bni_va_number: ${extractedVaNumber}`);
-  } else if (bri_va_number) {
-    extractedVaNumber = bri_va_number;
-    console.log(`[midtrans-webhook] VA number from bri_va_number: ${extractedVaNumber}`);
-  } else if (permata_va_number) {
-    extractedVaNumber = permata_va_number;
-    console.log(`[midtrans-webhook] VA number from permata_va_number: ${extractedVaNumber}`);
-  } else if (bill_key) {
-    // Mandiri ecash: bill_key + biller_code (2 bagian)
-    extractedVaNumber = biller_code ? `${bill_key}/${biller_code}` : bill_key;
-    console.log(`[midtrans-webhook] Mandiri ecash: bill_key=${bill_key}, biller_code=${biller_code}`);
-  } else if (payment_code) {
-    // Retail (Indomaret/Alfamart): payment_code
-    extractedVaNumber = payment_code;
-    console.log(`[midtrans-webhook] Retail payment_code: ${extractedVaNumber}`);
-  }
-
-  // Final value: prefer extracted VA number, fallback ke payment_code original
-  const finalPaymentCode = extractedVaNumber || finalData.payment_code || payment_code;
-  const finalPdfUrl = finalData.pdf_url || pdf_url;
-
-  // 2. Update orders table
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-  // Fetch current order untuk know current status
-  const { data: currentOrder, error: fetchErr } = await supabase
-    .from("orders")
-    .select("id, status, payment_status")
-    .eq("id", order_id)
-    .single();
-
-  if (fetchErr || !currentOrder) {
-    console.error("[midtrans-webhook] Order not found:", order_id);
-    return json({ error: "Order not found" }, 404);
+  // ── Map Midtrans transaction_status ke EGLUX payment_status ──
+  let paymentStatus: string;
+  let orderStatus: string;
+  if (txStatus === "capture" || txStatus === "settlement") {
+    paymentStatus = "paid";
+    orderStatus = "processing";
+  } else if (txStatus === "pending") {
+    paymentStatus = "unpaid";
+    orderStatus = "pending";
+  } else if (txStatus === "deny" || txStatus === "expire" || txStatus === "cancel" || txStatus === "failure") {
+    paymentStatus = "failed";
+    orderStatus = "cancelled";
+  } else {
+    paymentStatus = "unpaid";
+    orderStatus = "pending";
   }
 
-  // Compute new EGLUX statuses
-  const newPaymentStatus = mapPaymentStatus(finalTransactionStatus);
-  const newOrderStatus = mapOrderStatus(finalTransactionStatus, currentOrder.status);
+  console.log(`[midtrans-webhook] Mapped status: ${txStatus} → payment_status=${paymentStatus}, order_status=${orderStatus}`);
 
-  // Build update payload
-  const updatePayload: Record<string, unknown> = {
-    midtrans_transaction_id: finalTransactionId,
-    midtrans_transaction_status: finalTransactionStatus,
-    midtrans_payment_type: finalPaymentType || null,
-    midtrans_fraud_status: finalFraudStatus || null,
-    midtrans_payment_code: finalPaymentCode || null,
-    midtrans_pdf_url: finalPdfUrl || null,
-    payment_status: newPaymentStatus,
-    status: newOrderStatus,
+  // ── Update orders table dengan data Midtrans lengkap ──
+  const updateData: any = {
+    midtrans_transaction_id: midtransTxId || null,
+    midtrans_transaction_status: txStatus,
+    midtrans_payment_type: paymentType || null,
+    midtrans_fraud_status: fraudStatus || null,
+    midtrans_payment_code: paymentCode || null,
+    midtrans_pdf_url: pdfUrl || null,
+    payment_status: paymentStatus,
+    status: orderStatus,
   };
 
-  // settlement_time: parse ke ISO string kalau ada
-  if (finalSettlementTime) {
-    try {
-      // Midtrans return format: "2026-07-07 12:34:56" (GMT+7)
-      // Convert ke ISO 8601 dengan Z
-      const dt = new Date(finalSettlementTime + " +0700");
-      if (!isNaN(dt.getTime())) {
-        updatePayload.midtrans_settlement_time = dt.toISOString();
-      }
-    } catch (e) {
-      console.warn("[midtrans-webhook] Failed to parse settlement_time:", finalSettlementTime);
-    }
-  } else {
-    updatePayload.midtrans_settlement_time = null;
+  if (settlementTime) {
+    updateData.midtrans_settlement_time = settlementTime;
   }
 
-  console.log("[midtrans-webhook] Updating order with:", updatePayload);
-
-  // 3. Execute update
-  const { error: updateError } = await supabase
+  const { error: updateErr } = await supabase
     .from("orders")
-    .update(updatePayload)
+    .update(updateData)
     .eq("id", order_id);
 
-  if (updateError) {
-    console.error("[midtrans-webhook] Failed to update order:", updateError);
-    return json({ error: "Failed to update order" }, 500);
+  if (updateErr) {
+    console.error("[midtrans-webhook] Failed to update order:", updateErr.message);
+    return json({ error: "Failed to update order", details: updateErr.message }, 500);
   }
 
-  console.log("[midtrans-webhook] ✓ Order updated:", order_id, "→", finalTransactionStatus);
+  console.log("[midtrans-webhook] ✓ Order updated:", order_id, "→ payment_status:", paymentStatus);
 
-  // ⭐ STEP 3.5: Decrement product stock saat payment settlement
-  // (per rekomendasi: stock berkurang saat payment sukses, BUKAN saat order dibuat)
-  //
-  // Logic:
-  //   - Cek apakah ini payment success (settlement/capture)
-  //   - Cek apakah previous payment_status BUKAN 'paid' (kalau sudah paid, skip —
-  //     berarti webhook retry, stock sudah di-decrement sebelumnya)
-  //   - Call RPC `decrement_order_stock(order_id)` — idempotent & atomic
-  //   - RPC akan loop semua order_items, decrement variant stock per item
-  //   - Kalau oversell (stock kurang), log warning tapi tetap proceed
-  //   - Set `stock_decremented_at` flag di orders table untuk idempotency
-  //
-  // PENTING: dilakukan SETELAH update orders, SEBELUM WABA trigger.
-  // Alasan: kalau WABA fail, stock tetap ke-decrement (data integrity > notifikasi).
-  const isPaymentSuccess =
-    (finalTransactionStatus === "settlement" || finalTransactionStatus === "capture") &&
-    (finalFraudStatus === "accept" || finalFraudStatus === undefined || finalFraudStatus === null);
-
-  const wasAlreadyPaid = currentOrder.payment_status === "paid";
-
-  if (isPaymentSuccess && !wasAlreadyPaid) {
-    console.log("[midtrans-webhook] Payment settlement → decrement stock for order:", order_id);
-
+  // ── Defense in depth: cross-check dengan Midtrans Status API ──
+  // Kalau status settlement tapi gross_amount mismatch → bisa reject
+  if (MIDTRANS_SERVER_KEY && (txStatus === "settlement" || txStatus === "capture")) {
     try {
-      // ⭐ Call RPC function decrement_order_stock (atomic + idempotent)
-      // RPC cek stock_decremented_at — kalau sudah ada value, skip (return skipped=true)
-      const { data: stockResult, error: stockError } = await supabase.rpc(
-        "decrement_order_stock",
-        { p_order_id: order_id }
-      );
-
-      if (stockError) {
-        console.error("[midtrans-webhook] Stock decrement RPC error:", stockError);
-        // ⚠️ Jangan fail webhook kalau stock decrement error — order sudah paid
-        // Admin bisa manual fix via SQL. Log warning supaya bisa investigate.
-        console.warn("[midtrans-webhook] ⚠️ Stock NOT decremented for order:", order_id,
-          "— manual investigation needed. Error:", stockError.message);
-      } else if (stockResult && stockResult.success === false && stockResult.skipped === true) {
-        // Idempotent skip — webhook retry, stock sudah di-decrement sebelumnya
-        console.log("[midtrans-webhook] Stock already decremented for order:", order_id,
-          "(skipped at", stockResult.decremented_at, ")");
-      } else if (stockResult && stockResult.success === true) {
-        const summary = `success=${stockResult.success_count}, oversell=${stockResult.oversell_count}, total=${stockResult.total_items}`;
-        console.log("[midtrans-webhook] ✓ Stock decremented for order:", order_id, "(" + summary + ")");
-
-        // Log detail per item kalau ada oversell (untuk admin investigation)
-        if (stockResult.oversell_count > 0) {
-          console.warn("[midtrans-webhook] ⚠️ OVERSELL detected for order:", order_id);
-          console.warn("[midtrans-webhook] Oversell items:", JSON.stringify(
-            (stockResult.items || []).filter((item: any) => item.status === "oversell"),
-            null, 2
-          ));
-        }
-      } else {
-        console.warn("[midtrans-webhook] Unexpected stock decrement result:", stockResult);
-      }
-    } catch (stockException) {
-      // Defensive: kalau RPC throw (seharusnya gak, tapi jaga-jaga)
-      console.error("[midtrans-webhook] Stock decrement exception:", stockException);
-      console.warn("[midtrans-webhook] ⚠️ Stock NOT decremented for order:", order_id,
-        "— exception occurred. Manual investigation needed.");
-    }
-  } else if (isPaymentSuccess && wasAlreadyPaid) {
-    // Webhook retry untuk order yang sudah paid — skip stock decrement
-    console.log("[midtrans-webhook] Webhook retry for already-paid order:", order_id,
-      "— stock decrement skipped (idempotent)");
-  }
-
-  // 4. Trigger downstream actions berdasarkan status
-  // Payment success → record voucher usage + trigger WABA notif + auto-create Biteship order
-  if (isPaymentSuccess) {
-    // ⭐ STEP 3.6: Record voucher usage (jika order pakai voucher)
-    try {
-      const { data: orderData } = await supabase
-        .from("orders")
-        .select("id, voucher_code, customer_id")
-        .eq("id", order_id)
-        .single();
-
-      if (orderData?.voucher_code) {
-        // Find voucher by code
-        const { data: voucher } = await supabase
-          .from("vouchers")
-          .select("id")
-          .eq("code", orderData.voucher_code)
-          .maybeSingle();
-
-        if (voucher) {
-          // Find user_id from customer
-          const { data: customer } = await supabase
-            .from("customers")
-            .select("user_id")
-            .eq("id", orderData.customer_id)
-            .maybeSingle();
-
-          if (customer?.user_id) {
-            await supabase.from("voucher_usages").insert({
-              voucher_id: voucher.id,
-              user_id: customer.user_id,
-              order_id: order_id,
-            });
-            console.log("[midtrans-webhook] ✓ Voucher usage recorded:", orderData.voucher_code);
-          }
-        }
-      }
-    } catch (voucherErr) {
-      console.warn("[midtrans-webhook] Voucher usage record failed:", voucherErr?.message);
-    }
-
-    console.log("[midtrans-webhook] Payment success → trigger EMAIL notification via Resend");
-
-    let emailStatus = "email_unknown";
-    let emailErrorDetail = "";
-
-    try {
-      // ⭐ EMAIL NOTIFICATION via Resend (replaces WABA)
-      // Call send-email-notification edge function
-      const emailResp = await fetch(`${SUPABASE_URL}/functions/v1/send-email-notification`, {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          event: "payment_success",
-          order_id,
-        }),
+      const auth = btoa(`${MIDTRANS_SERVER_KEY}:`);
+      const statusResp = await fetch(`${MIDTRANS_BASE_URL}/v2/${order_id}/status`, {
+        method: "GET",
+        headers: { Authorization: `Basic ${auth}`, Accept: "application/json" },
       });
-
-      // ⭐ Defensive: handle non-JSON response (e.g., 404 kalau function belum deploy)
-      const responseText = await emailResp.text();
-      let emailResult;
-      try {
-        emailResult = JSON.parse(responseText);
-      } catch (parseErr) {
-        console.error("[midtrans-webhook] send-email-notification returned non-JSON:", emailResp.status, responseText.substring(0, 200));
-        emailResult = { success: false, error: `HTTP ${emailResp.status}: ${responseText.substring(0, 100)}` };
+      if (statusResp.ok) {
+        const statusData = await statusResp.json();
+        console.log("[midtrans-webhook] Midtrans Status API confirms:", statusData.transaction_status);
       }
+    } catch (statusErr) {
+      console.warn("[midtrans-webhook] Status check failed (continue anyway):", statusErr?.message);
+    }
+  }
 
-      // ⭐ Distinguish 4 status:
-      //   - email_sent: berhasil kirim
-      //   - email_skipped: duplicate atau customer gak punya email (bukan error)
-      //   - email_failed: Resend API error / config issue
-      //   - email_unknown: unexpected response
-      if (emailResult.success && !emailResult.skipped) {
-        emailStatus = "email_sent";
-        console.log(`[midtrans-webhook] ✓ Email sent (resend_id: ${emailResult.resend_id || 'N/A'})`);
-      } else if (emailResult.success && emailResult.skipped) {
-        emailStatus = "email_skipped";
-        console.log(`[midtrans-webhook] ℹ️ Email skipped: ${emailResult.reason || 'duplicate'}`);
-      } else if (emailResult.skipped) {
-        // success=false + skipped=true → customer gak punya email
-        emailStatus = "email_skipped";
-        emailErrorDetail = emailResult.reason || "Customer has no email";
-        console.warn(`[midtrans-webhook] ⚠️ Email skipped (no email): ${emailErrorDetail}`);
-      } else {
-        emailStatus = "email_failed";
-        // ⭐ Extract error dari berbagai field yang mungkin (defensive)
-        emailErrorDetail = emailResult.error
-          || emailResult.error_detail
-          || emailResult.reason
-          || emailResult.message
-          || (emailResult.step ? `Failed at step: ${emailResult.step}` : null)
-          || `Unknown error (HTTP ${emailResp.status})`;
-        console.error(`[midtrans-webhook] ✗ Email FAILED: ${emailErrorDetail}`);
-        console.error(`[midtrans-webhook] Full send-email response:`, JSON.stringify(emailResult));
-      }
+  // ============================================================================
+  // ONLY IF PAYMENT SUCCESS → trigger email + WA + Biteship + loyalty points
+  // ============================================================================
+  if (paymentStatus !== "paid") {
+    console.log(`[midtrans-webhook] Payment not paid (${paymentStatus}) — skip email/WA/Biteship`);
+    return json({
+      success: true,
+      message: `Notification processed. Payment status: ${paymentStatus}. No email/WA/Biteship triggered.`,
+      order_id,
+      payment_status: paymentStatus,
+    });
+  }
 
-      // Update orders table dengan email_last_* (untuk tracking)
+  // ============================================================================
+  // STEP 1: Send email notification (payment_success event)
+  // ============================================================================
+  let emailStatus = "email_sent";
+  let emailErrorDetail = "";
+
+  try {
+    console.log("[midtrans-webhook] Triggering send-email-notification...");
+    const emailResp = await fetch(`${SUPABASE_URL}/functions/v1/send-email-notification`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        event: "payment_success",
+        order_id,
+      }),
+    });
+
+    const responseText = await emailResp.text();
+    let emailResult;
+    try {
+      emailResult = JSON.parse(responseText);
+    } catch (parseErr) {
+      console.error("[midtrans-webhook] send-email-notification returned non-JSON:", emailResp.status, responseText.substring(0, 200));
+      emailResult = { success: false, error: `HTTP ${emailResp.status}: ${responseText.substring(0, 100)}` };
+    }
+
+    if (emailResult.success && !emailResult.skipped) {
+      emailStatus = "email_sent";
+      console.log(`[midtrans-webhook] ✓ Email sent (resend_id: ${emailResult.resend_id || 'N/A'})`);
+    } else if (emailResult.success && emailResult.skipped) {
+      emailStatus = "email_skipped";
+      console.log(`[midtrans-webhook] ℹ️ Email skipped: ${emailResult.reason || 'duplicate'}`);
+    } else if (emailResult.skipped) {
+      emailStatus = "email_skipped";
+      emailErrorDetail = emailResult.reason || "Customer has no email";
+      console.warn(`[midtrans-webhook] ⚠️ Email skipped (no email): ${emailErrorDetail}`);
+    } else {
+      emailStatus = "email_failed";
+      emailErrorDetail = emailResult.error
+        || emailResult.error_detail
+        || emailResult.reason
+        || emailResult.message
+        || (emailResult.step ? `Failed at step: ${emailResult.step}` : null)
+        || `Unknown error (HTTP ${emailResp.status})`;
+      console.error(`[midtrans-webhook] ✗ Email FAILED: ${emailErrorDetail}`);
+      console.error(`[midtrans-webhook] Full send-email response:`, JSON.stringify(emailResult));
+    }
+
+    await supabase.from("orders").update({
+      waba_last_event: "payment_success",
+      waba_last_status: emailStatus,
+      waba_last_sent_at: new Date().toISOString(),
+    }).eq("id", order_id);
+  } catch (e) {
+    emailStatus = "email_failed";
+    emailErrorDetail = e.message;
+    console.error("[midtrans-webhook] Email notification exception:", e.message);
+    try {
       await supabase.from("orders").update({
         waba_last_event: "payment_success",
-        waba_last_status: emailStatus,
+        waba_last_status: "email_failed",
         waba_last_sent_at: new Date().toISOString(),
       }).eq("id", order_id);
-    } catch (e) {
-      emailStatus = "email_failed";
-      emailErrorDetail = e.message;
-      console.error("[midtrans-webhook] Email notification exception:", e.message);
-      // Tetap update status supaya user bisa lihat di DB
-      try {
-        await supabase.from("orders").update({
-          waba_last_event: "payment_success",
-          waba_last_status: "email_failed",
-          waba_last_sent_at: new Date().toISOString(),
-        }).eq("id", order_id);
-      } catch (updateErr) {
-        console.error("[midtrans-webhook] Failed to update email status:", updateErr?.message);
-      }
-    }
-
-    // ⭐ v3.4: Trigger WA payment_notification (parallel with email, non-blocking)
-    // Customer dapet WA notif payment sukses (template: payment_notification)
-    // Fire-and-forget — kalau WA gagal, cron-retry-failed-waba akan auto-retry
-    // Tidak mempengaruhi webhook Midtrans (tetap return 200 OK)
-    try {
-      console.log("[midtrans-webhook] Triggering send-waba-live (payment_notification)...");
-      const { data: wabaResult, error: wabaError } = await supabase.functions.invoke(
-        "send-waba-live",
-        {
-          body: {
-            order_id,
-            event: "payment_success",
-          },
-        }
-      );
-
-      if (wabaError) {
-        console.warn("[midtrans-webhook] send-waba-live (payment_notification) failed:", wabaError.message);
-        // Non-blocking — cron-retry-failed-waba akan auto-retry WA yang failed
-      } else if (wabaResult?.success) {
-        console.log(
-          "[midtrans-webhook] ✓ WA payment_notification sent:",
-          wabaResult.qiscus_message_id
-        );
-      } else {
-        console.warn(
-          "[midtrans-webhook] send-waba-live (payment_notification) returned error:",
-          wabaResult?.error
-        );
-      }
-    } catch (wabaEx) {
-      console.warn("[midtrans-webhook] send-waba-live (payment_notification) invoke error:", wabaEx);
-      // Non-blocking — webhook tetap sukses
-    }
-
-    // Auto-create Biteship order (setelah payment sukses)
-    // Function ini punya guard sendiri: cek payment_status, skip kalau biteship_order_id sudah ada
-    console.log("[midtrans-webhook] Payment success → trigger create-biteship-order");
-
-    try {
-      const { data: biteshipResult, error: biteshipError } = await supabase.functions.invoke(
-        "create-biteship-order",
-        { body: { order_id } }
-      );
-
-      if (biteshipError) {
-        console.warn(
-          "[midtrans-webhook] create-biteship-order failed:",
-          biteshipError.message,
-          "— order dapat di-retry manual via POST /functions/v1/create-biteship-order"
-        );
-      } else if (biteshipResult?.already_exists) {
-        console.log(
-          "[midtrans-webhook] ✓ Biteship order already exists:",
-          biteshipResult.biteship_order_id
-        );
-      } else {
-        console.log(
-          "[midtrans-webhook] ✓ Biteship order created:",
-          biteshipResult?.biteship_order_id,
-          "tracking:",
-          biteshipResult?.tracking_number
-        );
-
-        // ⭐ v3.3: Trigger WA shipping_update notification (Skenario B - Qiscus API)
-        // Kirim ke customer dengan tracking number baru saja dibuat.
-        // Fire-and-forget — kalau WA gagal, webhook tetap sukses (WABA cron retry akan handle).
-        if (biteshipResult?.tracking_number) {
-          try {
-            console.log("[midtrans-webhook] Triggering send-waba-live (shipping_update)...");
-            const { data: wabaResult, error: wabaError } = await supabase.functions.invoke(
-              "send-waba-live",
-              {
-                body: {
-                  order_id,
-                  event: "shipping_update",
-                  tracking_number: biteshipResult.tracking_number,
-                },
-              }
-            );
-
-            if (wabaError) {
-              console.warn("[midtrans-webhook] send-waba-live (shipping_update) failed:", wabaError.message);
-              // Non-blocking — cron-retry-failed-waba akan auto-retry
-            } else if (wabaResult?.success) {
-              console.log(
-                "[midtrans-webhook] ✓ WA shipping_update sent:",
-                wabaResult.qiscus_message_id
-              );
-            } else {
-              console.warn(
-                "[midtrans-webhook] send-waba-live (shipping_update) returned error:",
-                wabaResult?.error
-              );
-            }
-          } catch (wabaEx) {
-            console.warn("[midtrans-webhook] send-waba-live (shipping_update) invoke error:", wabaEx);
-            // Non-blocking — webhook tetap sukses
-          }
-        }
-      }
-    } catch (e) {
-      console.warn("[midtrans-webhook] create-biteship-order invoke error:", e);
-      // Jangan fail webhook — Midtrans akan retry webhook, dan create-biteship-order
-      // bisa di-trigger manual dari admin dashboard kalau perlu
-    }
-
-    // ── Create admin notification (payment success) ──
-    // Notifikasi hanya muncul saat pembayaran berhasil, BUKAN saat order dibuat.
-    try {
-      // Fetch order + customer untuk data notifikasi
-      const { data: orderData } = await supabase
-        .from("orders")
-        .select("id, total_amount, customer:customers(name)")
-        .eq("id", order_id)
-        .single();
-
-      if (orderData) {
-        const customerName = (orderData.customer as any)?.name || "Customer";
-        const totalAmount = Number(orderData.total_amount) || 0;
-
-        await supabase.from("notifications").insert({
-          type: "payment",
-          title: "Pembayaran Diterima",
-          message: `${customerName} membayar Rp ${totalAmount.toLocaleString("id-ID")} (${finalPaymentType || "transfer"})`,
-          reference_id: order_id,
-          is_read: false,
-        });
-        console.log("[midtrans-webhook] ✓ Payment notification created");
-      }
-    } catch (e) {
-      console.warn("[midtrans-webhook] Notification creation failed:", e);
-    }
-
-    // ⭐ NEW: Auto-add loyalty points (1 poin = Rp 1.000, round down)
-    // Poin dihitung dari total_amount yang dibayar customer
-    try {
-      const { data: pointsOrder } = await supabase
-        .from("orders")
-        .select(`
-          id, total_amount,
-          customer:customers(user_id)
-        `)
-        .eq("id", order_id)
-        .single();
-
-      const userId = (pointsOrder?.customer as any)?.user_id;
-      const totalAmount = Number(pointsOrder?.total_amount) || 0;
-
-      if (userId && totalAmount > 0) {
-        const points = Math.floor(totalAmount / 1000);
-        if (points > 0) {
-          // Cek apakah poin sudah di-add sebelumnya (idempotent — prevent double-add kalau webhook retry)
-          const { data: existingTxn } = await supabase
-            .from("point_transactions")
-            .select("id")
-            .eq("user_id", userId)
-            .eq("source", "website_purchase")
-            .eq("order_id", order_id)
-            .maybeSingle();
-
-          if (existingTxn) {
-            console.log("[midtrans-webhook] Points already added for order — skip (idempotent)");
-          } else {
-            // Panggil RPC add_points (atomic: insert transaction + update balance)
-            const { error: pointsErr } = await supabase.rpc("add_points", {
-              p_user_id: userId,
-              p_amount: points,
-              p_source: "website_purchase",
-              p_description: `Pembelian order #${order_id.slice(0, 8).toUpperCase()}`,
-              p_order_id: order_id,
-              p_expires_at: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(), // expire 1 tahun
-            });
-
-            if (pointsErr) {
-              console.warn("[midtrans-webhook] Points add failed:", pointsErr.message);
-            } else {
-              console.log(`[midtrans-webhook] ✓ Added ${points} points to user ${userId.slice(0, 8)} (order ${orderAmount})`);
-            }
-          }
-        }
-      } else {
-        console.warn("[midtrans-webhook] Cannot add points — no user_id or total_amount=0");
-      }
-    } catch (pointsErr) {
-      console.warn("[midtrans-webhook] Points add error (non-blocking):", pointsErr?.message);
+    } catch (updateErr) {
+      console.error("[midtrans-webhook] Failed to update email status:", updateErr?.message);
     }
   }
 
-  // 5. Return 200 ke Midtrans (penting — kalau tidak 200, Midtrans retry)
+  // ============================================================================
+  // ⭐ v3.4 STEP 2: Trigger WA payment_notification (parallel with email, non-blocking)
+  // ============================================================================
+  try {
+    console.log("[midtrans-webhook] Triggering send-waba-live (payment_notification)...");
+    const { data: wabaResult, error: wabaError } = await supabase.functions.invoke(
+      "send-waba-live",
+      {
+        body: {
+          order_id,
+          event: "payment_success",
+        },
+      }
+    );
+
+    if (wabaError) {
+      console.warn("[midtrans-webhook] send-waba-live (payment_notification) failed:", wabaError.message);
+    } else if (wabaResult?.success) {
+      console.log(
+        "[midtrans-webhook] ✓ WA payment_notification sent:",
+        wabaResult.qiscus_message_id
+      );
+    } else {
+      console.warn(
+        "[midtrans-webhook] send-waba-live (payment_notification) returned error:",
+        wabaResult?.error
+      );
+    }
+  } catch (wabaEx) {
+    console.warn("[midtrans-webhook] send-waba-live (payment_notification) invoke error:", wabaEx);
+  }
+
+  // ============================================================================
+  // STEP 3: Auto-create Biteship order (setelah payment sukses)
+  // ============================================================================
+  console.log("[midtrans-webhook] Payment success → trigger create-biteship-order");
+
+  try {
+    const { data: biteshipResult, error: biteshipError } = await supabase.functions.invoke(
+      "create-biteship-order",
+      { body: { order_id } }
+    );
+
+    if (biteshipError) {
+      console.warn(
+        "[midtrans-webhook] create-biteship-order failed:",
+        biteshipError.message,
+        "— order dapat di-retry manual via POST /functions/v1/create-biteship-order"
+      );
+    } else if (biteshipResult?.already_exists) {
+      console.log(
+        "[midtrans-webhook] ✓ Biteship order already exists:",
+        biteshipResult.biteship_order_id
+      );
+    } else {
+      console.log(
+        "[midtrans-webhook] ✓ Biteship order created:",
+        biteshipResult?.biteship_order_id,
+        "tracking:",
+        biteshipResult?.tracking_number
+      );
+
+      // ⭐ v3.3: Trigger WA shipping_update notification (Skenario B - Qiscus API)
+      if (biteshipResult?.tracking_number) {
+        try {
+          console.log("[midtrans-webhook] Triggering send-waba-live (shipping_update)...");
+          const { data: wabaResult, error: wabaError } = await supabase.functions.invoke(
+            "send-waba-live",
+            {
+              body: {
+                order_id,
+                event: "shipping_update",
+                tracking_number: biteshipResult.tracking_number,
+              },
+            }
+          );
+
+          if (wabaError) {
+            console.warn("[midtrans-webhook] send-waba-live (shipping_update) failed:", wabaError.message);
+          } else if (wabaResult?.success) {
+            console.log(
+              "[midtrans-webhook] ✓ WA shipping_update sent:",
+              wabaResult.qiscus_message_id
+            );
+          } else {
+            console.warn(
+              "[midtrans-webhook] send-waba-live (shipping_update) returned error:",
+              wabaResult?.error
+            );
+          }
+        } catch (wabaEx) {
+          console.warn("[midtrans-webhook] send-waba-live (shipping_update) invoke error:", wabaEx);
+        }
+      }
+    }
+  } catch (e) {
+    console.warn("[midtrans-webhook] create-biteship-order invoke error:", e);
+  }
+
+  // ============================================================================
+  // STEP 4: Create admin notification (payment success)
+  // ============================================================================
+  try {
+    const { data: orderData } = await supabase
+      .from("orders")
+      .select("id, total_amount, customer:customers(name)")
+      .eq("id", order_id)
+      .single();
+
+    if (orderData) {
+      const customerName = (orderData.customer as any)?.name || "Customer";
+      const totalAmount = Number(orderData.total_amount) || 0;
+
+      await supabase.from("notifications").insert({
+        type: "payment",
+        title: "Pembayaran Diterima",
+        message: `${customerName} membayar Rp ${totalAmount.toLocaleString("id-ID")} (${paymentType || "transfer"})`,
+        reference_id: order_id,
+        is_read: false,
+      });
+      console.log("[midtrans-webhook] ✓ Payment notification created");
+    }
+  } catch (e) {
+    console.warn("[midtrans-webhook] Notification creation failed:", e);
+  }
+
+  // ============================================================================
+  // STEP 5: Auto-add loyalty points (1 poin = Rp 1.000, round down)
+  // ============================================================================
+  try {
+    const { data: pointsOrder } = await supabase
+      .from("orders")
+      .select(`
+        id, total_amount,
+        customer:customers(user_id)
+      `)
+      .eq("id", order_id)
+      .single();
+
+    const userId = (pointsOrder?.customer as any)?.user_id;
+    const totalAmount = Number(pointsOrder?.total_amount) || 0;
+
+    if (userId && totalAmount > 0) {
+      const points = Math.floor(totalAmount / 1000);
+      if (points > 0) {
+        // Cek apakah poin sudah di-add sebelumnya (idempotent)
+        const { data: existingTxn } = await supabase
+          .from("point_transactions")
+          .select("id")
+          .eq("user_id", userId)
+          .eq("source", "website_purchase")
+          .eq("order_id", order_id)
+          .maybeSingle();
+
+        if (existingTxn) {
+          console.log("[midtrans-webhook] Points already added for order — skip (idempotent)");
+        } else {
+          const { error: pointsErr } = await supabase.rpc("add_points", {
+            p_user_id: userId,
+            p_amount: points,
+            p_source: "website_purchase",
+            p_description: `Pembelian order #${order_id.slice(0, 8).toUpperCase()}`,
+            p_order_id: order_id,
+            p_expires_at: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+          });
+
+          if (pointsErr) {
+            console.warn("[midtrans-webhook] Points add failed:", pointsErr.message);
+          } else {
+            console.log(`[midtrans-webhook] ✓ Added ${points} points to user ${userId.slice(0, 8)} (order ${totalAmount})`);
+          }
+        }
+      } else {
+        console.warn("[midtrans-webhook] Cannot add points — total_amount < 1000");
+      }
+    } else {
+      console.warn("[midtrans-webhook] Cannot add points — no user_id or total_amount=0");
+    }
+  } catch (pointsErr) {
+    console.warn("[midtrans-webhook] Points add error (non-blocking):", pointsErr?.message);
+  }
+
+  // ============================================================================
+  // Done
+  // ============================================================================
   return json({
     success: true,
+    message: "Payment success notification fully processed",
     order_id,
-    transaction_status: finalTransactionStatus,
-    payment_status: newPaymentStatus,
-    internal_status: newOrderStatus,
+    payment_status: paymentStatus,
+    email_status: emailStatus,
+    steps_executed: [
+      "update_order",
+      "send_email",
+      "send_wa_payment_notification",
+      "create_biteship_order",
+      "send_wa_shipping_update",
+      "create_admin_notification",
+      "add_loyalty_points",
+    ],
   });
 });

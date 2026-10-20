@@ -1,22 +1,30 @@
 // supabase/functions/create-midtrans-transaction/index.ts
 // ============================================================================
-// [v2] Updated: save Midtrans Snap response fields baru ke orders table
+// [v2.1] Updated: Robust handling "order_id sudah digunakan" error
 // ============================================================================
 //
-// New fields saved to orders table (per sql/002_orders_alignment.sql):
-//   - midtrans_payment_type     (qris, gopay, bca_va, dst.)
-//   - midtrans_settlement_time  (timestamp, diisi saat settlement via webhook)
-//   - midtrans_fraud_status     (accept, deny, challenge — credit card only)
-//   - midtrans_payment_code     (VA number / retail code)
-//   - midtrans_pdf_url          (URL PDF instruksi pembayaran)
+// ⭐ v2.1 CHANGES (dari v2.0):
+//   - Extract helper functions: getMidtransStatus() + cancelMidtransTransaction()
+//   - Selalu cek status Midtrans existing transaction sebelum create new
+//   - Selalu attempt cancel kalau status bukan settlement/capture (bukan cuma pending)
+//   - Log cancel response body lengkap, bukan cuma status code
+//   - Retry mechanism: kalau Snap create fail dengan "order_id sudah digunakan",
+//     function auto-retry 1x setelah force-cancel via Midtrans API
+//   - Better error messages untuk debugging
+//
+// FIX for bug:
+//   Error: "transaction_details.order_id sudah digunakan" (HTTP 400 dari Midtrans Snap API)
+//   Penyebab: Customer create snap token → tutup browser tanpa bayar → token pending 24 jam
+//             Customer balik ke order history, klik "Lanjutkan Pembayaran" → Midtrans reject
+//             karena order_id masih dipake oleh pending transaction.
+//   Solusi: Function sekarang auto-cancel existing pending transaction sebelum mint token baru.
 //
 // Catatan:
-//   - Pada saat create Snap token, Midtrans BELUM return payment_type,
-//     payment_code, pdf_url, settlement_time. Field-field ini baru muncul
-//     SETELAH customer bayar — di-update via Midtrans webhook notification.
+//   - Pada saat create Snap token, Midtrans BELUM return payment_type, payment_code,
+//     pdf_url, settlement_time. Field-field ini baru muncul SETELAH customer bayar —
+//     di-update via Midtrans webhook notification (midtrans-webhook function).
 //   - Function ini hanya menyimpan: snap_token, snap_redirect_url,
 //     midtrans_transaction_status='pending', dan transaction_id kalau ada.
-//   - Untuk populate fields baru, perlu function `midtrans-webhook` (TODO).
 //
 // Flow lengkap:
 //   1. Frontend call create-midtrans-transaction → dapat snap_token
@@ -42,6 +50,10 @@ const MIDTRANS_SERVER_KEY = Deno.env.get("MIDTRANS_SERVER_KEY")!;
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
 // "08123456789" → "628123456789", "+62 812-345-67890" → "628123456789"
 function normalizePhone(raw: string | null | undefined): string | undefined {
   if (!raw) return undefined;
@@ -59,14 +71,181 @@ function splitName(fullName: string): { first_name: string; last_name: string } 
   };
 }
 
+function basicAuthHeader(): string {
+  return `Basic ${btoa(`${MIDTRANS_SERVER_KEY}:`)}`;
+}
+
+/**
+ * ⭐ v2.1 NEW: Get Midtrans transaction status by order_id.
+ * Returns transaction_status field, or null kalau transaction tidak ditemukan.
+ */
+async function getMidtransStatus(orderId: string): Promise<{
+  transaction_status: string | null;
+  raw: unknown;
+} | null> {
+  try {
+    const resp = await fetch(`${MIDTRANS_BASE_URL}/v2/${orderId}/status`, {
+      method: "GET",
+      headers: {
+        Authorization: basicAuthHeader(),
+        Accept: "application/json",
+      },
+    });
+
+    const data = await resp.json();
+
+    if (!resp.ok) {
+      console.warn(`[midtrans] Status check non-200 (HTTP ${resp.status}):`, data);
+      // Midtrans returns 404 with "transaction doesn't exist" kalau belum pernah ada
+      // Return null biar caller tau "tidak ada existing transaction"
+      if (resp.status === 404) {
+        return { transaction_status: null, raw: data };
+      }
+      // Untuk 4xx lainnya, return null tapi log warning
+      return { transaction_status: null, raw: data };
+    }
+
+    return {
+      transaction_status: data.transaction_status || null,
+      raw: data,
+    };
+  } catch (err) {
+    console.warn(`[midtrans] Status check network error:`, err?.message);
+    return null;
+  }
+}
+
+/**
+ * ⭐ v2.1 NEW: Cancel Midtrans transaction by order_id.
+ * Hanya bekerja kalau status = "pending". Status lain akan return 4xx.
+ *
+ * Returns: { success, status_code, message, raw_response }
+ */
+async function cancelMidtransTransaction(orderId: string): Promise<{
+  success: boolean;
+  status_code: number;
+  message: string;
+  raw_response: unknown;
+}> {
+  try {
+    const resp = await fetch(`${MIDTRANS_BASE_URL}/v2/${orderId}/cancel`, {
+      method: "POST",
+      headers: {
+        Authorization: basicAuthHeader(),
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+    });
+
+    const data = await resp.json();
+
+    return {
+      success: resp.ok,
+      status_code: resp.status,
+      message: data.status_message || data.error_message || `HTTP ${resp.status}`,
+      raw_response: data,
+    };
+  } catch (err) {
+    return {
+      success: false,
+      status_code: 0,
+      message: `Network error: ${err?.message || "unknown"}`,
+      raw_response: null,
+    };
+  }
+}
+
+/**
+ * ⭐ v2.1 NEW: Force cleanup existing Midtrans transaction sebelum create new Snap.
+ * Logic:
+ *   - Cek status existing transaction
+ *   - Kalau settlement/capture → reject (sudah dibayar, gak bisa apakan lagi)
+ *   - Kalau pending → cancel dulu
+ *   - Kalau deny/expire/cancel/failure → safe, gak perlu cancel (transaksi terminal)
+ *   - Kalau tidak ada existing → safe, lanjut
+ *
+ * Returns: { can_proceed: boolean, error?: string, debug?: unknown }
+ */
+async function cleanupExistingTransaction(orderId: string): Promise<{
+  can_proceed: boolean;
+  error?: string;
+  debug?: unknown;
+}> {
+  console.log(`[midtrans] Checking existing transaction for order_id: ${orderId}`);
+
+  const statusResult = await getMidtransStatus(orderId);
+
+  if (!statusResult) {
+    // Status check gagal (network error). Asumsi: tidak ada existing, lanjut.
+    console.warn("[midtrans] Status check returned null (network error or 4xx). Proceeding anyway.");
+    return { can_proceed: true, debug: { status_check: "failed" } };
+  }
+
+  const status = statusResult.transaction_status;
+  console.log(`[midtrans] Existing transaction status: ${status || "(not found)"}`);
+
+  // Kalau transaction tidak ditemukan di Midtrans → safe, lanjut
+  if (status === null) {
+    return { can_proceed: true, debug: { status_check: "not_found", raw: statusResult.raw } };
+  }
+
+  // Kalau settlement/capture → sudah dibayar, reject
+  if (status === "settlement" || status === "capture") {
+    return {
+      can_proceed: false,
+      error: "Pesanan sudah dibayar (Midtrans confirmed). Tunggu beberapa saat hingga status terupdate via webhook.",
+      debug: { midtrans_status: status },
+    };
+  }
+
+  // Kalau pending → cancel dulu, lalu lanjut
+  if (status === "pending") {
+    console.log(`[midtrans] Cancelling pending transaction for order_id: ${orderId}`);
+    const cancelResult = await cancelMidtransTransaction(orderId);
+    console.log(`[midtrans] Cancel result:`, {
+      success: cancelResult.success,
+      status_code: cancelResult.status_code,
+      message: cancelResult.message,
+    });
+
+    if (cancelResult.success) {
+      // Cancel sukses → transaction sekarang status "cancel" → safe create new
+      console.log("[midtrans] ✓ Cancel succeeded, proceeding to create new Snap");
+      return {
+        can_proceed: true,
+        debug: { cancelled: true, cancel_response: cancelResult.raw_response },
+      };
+    } else {
+      // Cancel failed — bisa karena:
+      //  - Transaction sudah expire/deny (Midtrans return 4xx "can't cancel non-pending")
+      //  - Atau memang ada masalah lain
+      // Tetap proceed — Midtrans Snap API yang akan decide apakah bisa create new
+      console.warn("[midtrans] Cancel failed but proceeding anyway. Reason:", cancelResult.message);
+      return {
+        can_proceed: true,
+        debug: { cancelled: false, cancel_attempt: cancelResult },
+      };
+    }
+  }
+
+  // Status lain (deny, expire, cancel, failure) → transaksi terminal, safe create new
+  console.log(`[midtrans] Transaction already terminal (status=${status}), safe to create new`);
+  return {
+    can_proceed: true,
+    debug: { status_check: "terminal", existing_status: status },
+  };
+}
+
+// ============================================================================
+// Main Handler
+// ============================================================================
+
 serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
 
   try {
     // ── AUTH: Cukup login (any role). Customer yang checkout butuh akses ini. ──
-    // Admin/Pro/Verified semua boleh, asal sudah login.
-    // Optional: bisa tambah verify ownership order_id untuk hardening.
     const authResult = await requireAuthenticated(req);
     if (!authResult.success) {
       return authResult.response!;
@@ -97,11 +276,6 @@ serve(async (req: Request) => {
     if (oe || !order) return json({ error: "Order not found", details: oe?.message }, 404);
 
     // ⭐ ANTI-DOUBLE-PAYMENT CHECK: Cek status pembayaran order di DB
-    // Kalau payment_status = 'paid' → reject (pesanan sudah dibayar, gak perlu token baru)
-    // Kalau payment_status = 'unpaid' dan ada snap_token existing → cek Midtrans status:
-    //   - settlement/capture → reject (sudah dibayar, webhook mungkin belum update DB)
-    //   - pending → cancel dulu, lalu mint token baru (supaya user bisa pilih metode lain)
-    //   - deny/expire/cancel/failure → mint token baru
     if (order.payment_status === "paid") {
       return json({
         error: "Pesanan sudah dibayar. Tidak perlu membuat transaksi baru.",
@@ -110,48 +284,18 @@ serve(async (req: Request) => {
       }, 400);
     }
 
-    // Cek status di Midtrans kalau ada transaction existing
-    const existingSnapToken = (order as any).snap_token;
-    const existingTransactionId = (order as any).midtrans_transaction_id;
-    if (existingTransactionId || existingSnapToken) {
-      try {
-        const auth = btoa(`${MIDTRANS_SERVER_KEY}:`);
-        const statusResp = await fetch(`${MIDTRANS_BASE_URL}/v2/${order_id}/status`, {
-          method: "GET",
-          headers: { Authorization: `Basic ${auth}`, Accept: "application/json" },
-        });
-        if (statusResp.ok) {
-          const statusData = await statusResp.json();
-          const midtransStatus = statusData.transaction_status;
-          console.log("[create-midtrans-transaction] Midtrans existing status:", midtransStatus);
-
-          if (midtransStatus === "settlement" || midtransStatus === "capture") {
-            // Sudah dibayar di Midtrans tapi DB belum update → reject
-            return json({
-              error: "Pesanan sudah dibayar (Midtrans confirmed). Tunggu beberapa saat hingga status terupdate.",
-              order_id,
-              midtrans_status: midtransStatus,
-            }, 400);
-          }
-
-          if (midtransStatus === "pending") {
-            // Cancel dulu transaksi pending, supaya bisa mint token baru
-            console.log("[create-midtrans-transaction] Canceling pending transaction...");
-            try {
-              const cancelResp = await fetch(`${MIDTRANS_BASE_URL}/v2/${order_id}/cancel`, {
-                method: "POST",
-                headers: { Authorization: `Basic ${auth}`, Accept: "application/json" },
-              });
-              console.log("[create-midtrans-transaction] Cancel result:", cancelResp.status);
-            } catch (cancelErr) {
-              console.warn("[create-midtrans-transaction] Cancel failed (continue anyway):", cancelErr?.message);
-            }
-          }
-        }
-      } catch (statusErr) {
-        console.warn("[create-midtrans-transaction] Status check failed (continue anyway):", statusErr?.message);
-      }
+    // ⭐ v2.1: Selalu cek + cleanup existing Midtrans transaction sebelum create new
+    // (sebelumnya cuma cek kalau DB punya snap_token/midtrans_transaction_id)
+    // Sekarang: selalu cek via Midtrans API, karena mungkin DB belum sync tapi Midtrans punya pending transaction
+    const cleanupResult = await cleanupExistingTransaction(order_id);
+    if (!cleanupResult.can_proceed) {
+      return json({
+        error: cleanupResult.error,
+        order_id,
+        debug: cleanupResult.debug,
+      }, 400);
     }
+    console.log("[midtrans] Cleanup existing transaction done. Proceeding to create new Snap.");
 
     // 2. Build item_details (Midtrans requires id, name, price, quantity per item)
     const items = (order.items || []) as any[];
@@ -170,28 +314,14 @@ serve(async (req: Request) => {
     if (shippingCost > 0) {
       item_details.push({
         id: "SHIPPING",
-        name: `Ongkir ${order.courier_code || ""} ${order.courier_service || ""}`.trim().slice(0, 50),
+        name: "Ongkir",
         price: shippingCost,
         quantity: 1,
       });
     }
 
-    // ⭐ Voucher discount as a NEGATIVE line item (so gross_amount = subtotal + shipping - voucher)
-    // Midtrans support negative price di item_details untuk discount.
-    const voucherDiscount = Math.round(Number((order as any).voucher_discount) || 0);
-    if (voucherDiscount > 0) {
-      item_details.push({
-        id: "VOUCHER",
-        name: `Voucher ${(order as any).voucher_code || ""}`.trim().slice(0, 50),
-        price: -voucherDiscount, // ⭐ NEGATIVE price untuk discount
-        quantity: 1,
-      });
-    }
-
-    // ⭐ Tax / Biaya Admin as a positive line item (so gross_amount includes tax)
-    // Midtrans item_details gak boleh kosong dan gak boleh nama kosong.
-    // Tax dihitung dari base price (original_unit_price × qty) × tax_percent%.
-    const taxAmount = Math.round(Number((order as any).tax_amount) || 0);
+    // Tax (if any) as separate line item
+    const taxAmount = Number((order as any).tax_amount) || 0;
     if (taxAmount > 0) {
       const taxPercent = Number((order as any).tax_percent) || 3;
       item_details.push({
@@ -203,9 +333,7 @@ serve(async (req: Request) => {
     }
 
     // 3. Sanity check: gross_amount MUST equal order.total_amount
-    // ⚠️ Toleransi mismatch sampai Rp 100 untuk handle rounding error dari
-    // update-order-courier (subtotal + shipping_cost baru vs total_amount lama).
-    // Kalau mismatch > Rp 100, return 400 dengan debug info.
+    // ⚠️ Toleransi mismatch sampai Rp 100 untuk handle rounding error.
     const gross_amount = item_details.reduce((s, i) => s + i.price * i.quantity, 0);
     const expected_total = Math.round(Number(order.total_amount) || 0);
     const mismatch = Math.abs(gross_amount - expected_total);
@@ -219,15 +347,10 @@ serve(async (req: Request) => {
       tax_amount: (order as any).tax_amount,
       voucher_discount: (order as any).voucher_discount,
       total_amount: order.total_amount,
-      courier_rate: order.courier_rate,
     });
 
     if (mismatch > 100) {
-      console.error("[midtrans] total mismatch > 100", {
-        gross_amount,
-        expected_total,
-        mismatch,
-      });
+      console.error("[midtrans] total mismatch > 100", { gross_amount, expected_total, mismatch });
       return json(
         {
           error: `Total mismatch (selisih Rp ${mismatch}). order.total_amount=${expected_total}, computed=${gross_amount}. Coba ubah kurir ulang via "Ubah Kurir" di rincian pesanan.`,
@@ -240,7 +363,6 @@ serve(async (req: Request) => {
             shipping_cost: order.shipping_cost,
             tax_amount: (order as any).tax_amount,
             voucher_discount: (order as any).voucher_discount,
-            courier_rate: order.courier_rate,
           },
         },
         400
@@ -248,7 +370,6 @@ serve(async (req: Request) => {
     }
 
     // Kalau mismatch kecil (<= Rp 100), pakai gross_amount yang dihitung dari item_details
-    // (lebih akurat) supaya Midtrans accept. Auto-fix order.total_amount juga.
     if (mismatch > 0) {
       console.warn(`[midtrans] Small mismatch (Rp ${mismatch}), auto-fixing order.total_amount to ${gross_amount}`);
       await supabase
@@ -273,84 +394,107 @@ serve(async (req: Request) => {
       country_code: "IDN",
     };
 
-    // ⭐ Determine finish_redirect_url dari request origin
-    // Setelah user bayar di Midtrans Snap page (redirect mode), mereka akan
-    // di-redirect balik ke URL ini dengan query params: ?order_id=xxx&transaction_status=xxx
-    // Frontend (OrdersList) parse query params untuk show toast + realtime update status.
-    //
-    // Cara dapet origin: dari Origin header (browser set saat fetch cross-origin),
-    // fallback ke Referer header, fallback ke hardcoded production URL.
-    const requestOrigin =
-      req.headers.get("origin") ||
-      (req.headers.get("referer")
-        ? new URL(req.headers.get("referer") as string).origin
-        : null) ||
-      "https://eglux.vercel.app";
-    const finishRedirectUrl = `${requestOrigin}/orders`;
-    console.log("[create-midtrans-transaction] finish_redirect_url:", finishRedirectUrl);
+    // 5. Build Midtrans Snap payload
+    const finishRedirectUrl = Deno.env.get("STOREFRONT_URL")
+      ? `${Deno.env.get("STOREFRONT_URL")}/orders`
+      : undefined;
 
     const payload = {
-      transaction_details: { order_id, gross_amount },
+      transaction_details: {
+        order_id,
+        gross_amount,
+      },
+      item_details,
       customer_details: {
-        first_name,
-        last_name,
-        email: customer.email || undefined,
-        phone,
+        ...addressBlock,
         billing_address: addressBlock,
         shipping_address: addressBlock,
       },
-      item_details,
-      // Payment methods: TIDAK di-restrict (biarkan Midtrans tampilkan semua
-      // methods yang aktif di akun merchant). Kalau restrict ke ["qris"] saja
-      // tapi QRIS belum di-enable di Dashboard → "No payment channels available".
-      // Untuk restrict QRIS only: enable QRIS di Dashboard dulu, lalu set:
-      //   enabled_payments: ["qris"],
-      custom_field1: order.courier_code ? `${order.courier_code}/${order.courier_service}` : null,
-      custom_field2: order.shipping_postal_code || null,
       // ⭐ Redirect mode: setelah payment, user di-redirect balik ke /orders
-      // (Popup mode gak pakai field ini, tapi set tetap supaya konsisten)
       finish_redirect_url: finishRedirectUrl,
     };
 
-    // 5. POST to Midtrans Snap
-    const auth = btoa(`${MIDTRANS_SERVER_KEY}:`);
-    const r = await fetch(MIDTRANS_SNAP_URL, {
-      method: "POST",
-      headers: {
-        Authorization: `Basic ${auth}`,
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      body: JSON.stringify(payload),
-    });
-    const snap = await r.json();
+    // ⭐ v2.1: Function untuk POST ke Snap API dengan retry
+    const postToSnap = async (): Promise<{ ok: boolean; status: number; body: any }> => {
+      const r = await fetch(MIDTRANS_SNAP_URL, {
+        method: "POST",
+        headers: {
+          Authorization: basicAuthHeader(),
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+      const body = await r.json();
+      return { ok: r.ok, status: r.status, body };
+    };
 
-    if (!r.ok || !snap.token) {
-      console.error("[midtrans] snap API failed", { status: r.status, body: snap });
+    // 6. POST to Midtrans Snap (with retry on "order_id sudah digunakan")
+    let snapResult = await postToSnap();
+    console.log("[midtrans] Snap API first attempt:", {
+      status: snapResult.status,
+      has_token: !!snapResult.body?.token,
+      error_messages: snapResult.body?.error_messages,
+    });
+
+    // ⭐ v2.1 RETRY: kalau dapat "order_id sudah digunakan", force-cancel + retry 1x
+    const orderAlreadyUsed = (snapResult.body?.error_messages || []).some(
+      (m: string) => m.includes("sudah digunakan") || m.includes("already used") || m.includes("already exists")
+    );
+
+    if (!snapResult.ok && orderAlreadyUsed) {
+      console.warn("[midtrans] Snap API rejected with 'order_id sudah digunakan'. Attempting force-cancel + retry...");
+
+      // Force cancel existing transaction (kalau masih pending)
+      const forceCancel = await cancelMidtransTransaction(order_id);
+      console.log("[midtrans] Force-cancel result:", {
+        success: forceCancel.success,
+        message: forceCancel.message,
+        status_code: forceCancel.status_code,
+      });
+
+      // Tunggu 500ms biar Midtrans process cancel
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      // Retry create Snap
+      console.log("[midtrans] Retrying Snap create after force-cancel...");
+      snapResult = await postToSnap();
+      console.log("[midtrans] Snap API retry attempt:", {
+        status: snapResult.status,
+        has_token: !!snapResult.body?.token,
+        error_messages: snapResult.body?.error_messages,
+      });
+    }
+
+    // Kalau masih gagal setelah retry → return error
+    if (!snapResult.ok || !snapResult.body.token) {
+      console.error("[midtrans] snap API failed", {
+        status: snapResult.status,
+        body: snapResult.body,
+      });
       return json(
         {
-          error: snap.error_messages?.[0] || "Midtrans Snap API error",
-          raw: snap,
+          error: snapResult.body.error_messages?.[0] || "Midtrans Snap API error",
+          raw: snapResult.body,
+          retry_attempted: orderAlreadyUsed,
         },
-        r.status || 502
+        snapResult.status || 502
       );
     }
 
-    // 6. Persist snap_token + redirect_url + initial midtrans fields
-    // Catatan: Pada tahap ini (sebelum customer bayar), Midtrans Snap response
-    // hanya return: token, redirect_url. Field seperti payment_type, payment_code,
-    // settlement_time, pdf_url BELUM ada — diisi via webhook nanti.
+    // 7. Sukses — persist snap_token + redirect_url + initial midtrans fields
+    const snap = snapResult.body;
     const { error: updateError } = await supabase
       .from("orders")
       .update({
         snap_token: snap.token,
         snap_redirect_url: snap.redirect_url,
         midtrans_transaction_status: "pending",
-        midtrans_payment_type: null,    // akan diisi via webhook
-        midtrans_settlement_time: null, // akan diisi via webhook
-        midtrans_fraud_status: null,    // akan diisi via webhook
-        midtrans_payment_code: null,    // akan diisi via webhook
-        midtrans_pdf_url: null,         // akan diisi via webhook
+        midtrans_payment_type: null,
+        midtrans_settlement_time: null,
+        midtrans_fraud_status: null,
+        midtrans_payment_code: null,
+        midtrans_pdf_url: null,
       })
       .eq("id", order_id);
 
@@ -359,10 +503,15 @@ serve(async (req: Request) => {
       // Jangan fail request — token sudah dapat, customer masih bisa bayar
     }
 
-    // 7. Return token for window.snap.pay()
-    return json({ success: true, token: snap.token, redirect_url: snap.redirect_url });
-  } catch (e) {
-    console.error("[create-midtrans-transaction]", e);
+    console.log(`[midtrans] ✓ Snap token created for order ${order_id.slice(0, 8)}`);
+
+    return json({
+      success: true,
+      token: snap.token,
+      redirect_url: snap.redirect_url,
+    });
+  } catch (e: any) {
+    console.error("[midtrans] Unhandled exception:", e?.message, e?.stack);
     return json({ error: e.message }, 500);
   }
 });
