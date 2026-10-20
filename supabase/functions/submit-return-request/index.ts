@@ -1,12 +1,20 @@
 // supabase/functions/submit-return-request/index.ts
 // ============================================================================
-// submit-return-request v3.2 — Customer + Admin return/refund actions
+// submit-return-request v3.3 — Customer + Admin return/refund actions
 // ============================================================================
 //
-// ⭐ v3.2 CHANGES (dari v3.1):
-//   - Tambah trigger WA notifikasi `retur_status` di action approve, reject, complete
+// ⭐ v3.3 CHANGES (dari v3.2):
+//   - FIX BUG: triggerReturStatusNotif() ganti dari `supabase.functions.invoke`
+//     ke `fetch` + Authorization eksplisit. Sebelumnya, send-waba-live
+//     ngereturn 401 "Missing Authorization header" karena supabase.functions.invoke
+//     gak reliable kirim Authorization header di edge function context.
+//     Pattern ini proven work di midtrans-webhook v3.4.x.
+//   - ADD verbose logging: log HTTP status + response body untuk debug visibility
+//   - KEEP: 3 trigger points (approve, reject, complete) + fire-and-forget pattern
+//
+// v3.2 (sebelumnya):
+//   - Tambah trigger WA retur_status di action approve, reject, complete
 //   - Pakai helper `triggerReturStatusNotif()` (fire-and-forget)
-//   - Kalau WA gagal, action tetap sukses (cron retry handle WA yang failed)
 //
 // Edge function ini handle SEMUA action terkait return/refund:
 //   - Customer: submit return baru, cancel, confirm_refund
@@ -184,21 +192,52 @@ serve(async (req: Request) => {
             .slice(0, 8)
             .toUpperCase()}`;
 
-          const { data: wabaResult, error: wabaError } = await supabase.functions.invoke(
-            "send-waba-live",
+          // ⭐ v3.3 FIX: Pakai fetch + Authorization eksplisit (BUKAN supabase.functions.invoke
+          // yang gak reliable kirim Authorization header di edge function context).
+          // Pattern ini proven work di midtrans-webhook v3.4.x.
+          const requestBody = {
+            order_id: ret.order_id,
+            event: "retur_status" as const,
+            retur_reference: returReference,
+            status_text: statusText,
+            additional_info: additionalInfo,
+          };
+
+          console.log("[submit-return] Triggering send-waba-live (retur_status)...", {
+            order_id: ret.order_id,
+            retur_reference: returReference,
+            status_text: statusText,
+          });
+
+          const wabaResponse = await fetch(
+            `${SUPABASE_URL}/functions/v1/send-waba-live`,
             {
-              body: {
-                order_id: ret.order_id,
-                event: "retur_status",
-                retur_reference: returReference,
-                status_text: statusText,
-                additional_info: additionalInfo,
+              method: "POST",
+              headers: {
+                "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,  // ⭐ EKSPLISIT
+                "Content-Type": "application/json",
               },
+              body: JSON.stringify(requestBody),
             }
           );
 
-          if (wabaError) {
-            console.warn("[submit-return] WA notif failed:", wabaError.message);
+          console.log("[submit-return] send-waba-live HTTP status:", wabaResponse.status);
+
+          // Parse response — handle non-JSON gracefully
+          const responseText = await wabaResponse.text();
+          let wabaResult: any;
+          try {
+            wabaResult = JSON.parse(responseText);
+          } catch (parseErr) {
+            console.warn("[submit-return] send-waba-live returned non-JSON:", responseText.substring(0, 200));
+            wabaResult = {
+              success: false,
+              error: `HTTP ${wabaResponse.status}: ${responseText.substring(0, 100)}`,
+            };
+          }
+
+          if (!wabaResponse.ok) {
+            console.warn("[submit-return] ✗ WA notif failed (HTTP " + wabaResponse.status + "):", wabaResult?.error || wabaResult);
           } else if (wabaResult?.success) {
             console.log(
               "[submit-return] ✓ WA notif sent:",
@@ -206,10 +245,10 @@ serve(async (req: Request) => {
               "status:", statusText
             );
           } else {
-            console.warn("[submit-return] WA notif error:", wabaResult?.error);
+            console.warn("[submit-return] WA notif returned non-success:", wabaResult?.error);
           }
         } catch (e) {
-          console.warn("[submit-return] WA notif invoke error:", e);
+          console.warn("[submit-return] WA notif invoke error:", e?.message);
         }
       };
 
