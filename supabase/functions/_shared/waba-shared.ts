@@ -1,33 +1,20 @@
 // supabase/functions/_shared/waba-shared.ts
 // ============================================================================
-// Shared helpers untuk WABA (WhatsApp Business API) functions — v5.0
+// Shared helpers untuk WABA (WhatsApp Business API) functions — v5.1
 // ============================================================================
-// Dipakai oleh:
-//   - send-waba-test/index.ts
-//   - send-waba-live/index.ts (v4.1 — handle 3 events)
-//   - admin-resend-waba/index.ts
-//   - cron-retry-failed-waba/index.ts
-//   - midtrans-webhook/index.ts (v3.3 — call send-waba-live untuk shipping_update)
-//   - submit-return-request/index.ts (v3.2 — call send-waba-live untuk retur_status)
 //
-// ⭐ v5.0 CHANGES:
-//   - SUPPORTED_EVENTS: tambah "shipping_update" + "retur_status" (sebelumnya cuma "payment_success")
-//   - TEMPLATE_NAMES: tambah 2 mapping (shipping_update + retur_status templates)
-//   - OrderData: tambah field `tracking_number` (untuk shipping_update)
-//   - fetchOrderData: select tracking_number dari orders table
-//   - validateRequest: handle event-specific fields (tracking_number, retur_reference, status_text, additional_info)
-//   - New builder: buildShippingUpdateMessage(order) — 5 params
-//   - New builder: buildReturStatusMessage(order, returRef, status, info) — 5 params
+// ⭐ v5.1 CHANGES (dari v5.0):
+//   - TEMPLATE_NAMES.shipping_update → "shipping_updatesv2" (template baru dengan 6 vars)
+//   - OrderData: tambah field `biteship_waybill_url` (untuk {{6}} di shipping_update)
+//   - fetchOrderData: select `biteship_waybill_url` dari orders table
+//   - buildShippingUpdateMessage: kirim 6 params (waybill_url sebagai {{6}})
+//     + accept waybillUrlOverride parameter + update body text pakai waybill_url
 //
-// Berisi:
-//   - Constants: CORS_HEADERS, SUPPORTED_EVENTS, TEMPLATE_NAMES, MAX_RETRY_ATTEMPTS
-//   - Types: SupportedEvent, OrderData, WabaMessage
-//   - Helpers: jsonResponse, normalizePhoneForMeta, formatRupiah, shortOrderId
-//   - DB: fetchOrderData, saveWabaMessage, updateWabaMessageStatus, fetchWabaMessage
-//   - Retry: fetchMessagesForRetry, isRetryable, updateRetryTracking
-//   - Provider APIs: sendToMeta (legacy Skenario A), sendToQiscus (active Skenario B)
-//   - Validation: validateRequest
-//   - Builders: buildPaymentSuccessMessage, buildShippingUpdateMessage, buildReturStatusMessage
+// v5.0 (sebelumnya):
+//   - SUPPORTED_EVENTS: 3 events (payment_success, shipping_update, retur_status)
+//   - OrderData: tracking_number field
+//   - 3 builders: buildPaymentSuccessMessage, buildShippingUpdateMessage, buildReturStatusMessage
+//   - sendToQiscus (Skenario B - Qiscus Omnichannel API)
 // ============================================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -42,7 +29,6 @@ export const CORS_HEADERS = {
     "authorization, x-client-info, apikey, content-type",
 };
 
-// ⭐ v5.0: 3 events sekarang (sebelumnya cuma 1)
 export const SUPPORTED_EVENTS = [
   "payment_success",
   "shipping_update",
@@ -50,37 +36,22 @@ export const SUPPORTED_EVENTS = [
 ] as const;
 export type SupportedEvent = (typeof SUPPORTED_EVENTS)[number];
 
-// ⭐ v5.0: 3 template names mapping ke Qiscus-approved templates
+// ⭐ v5.1: Template names mapping — shipping_update pakai "shipping_updatesv2"
+// (template baru dengan 6 body variables — waybill_url sebagai {{6}})
 // PENTING: Nama template HARUS match persis dengan yang di Qiscus Dashboard
-// (case-sensitive, exact spelling). Kalau gak match, Qiscus API akan reject.
-//
-// Template names yang approved di Qiscus Dashboard (per 16 Okt 2026):
-//   - "payment_notification"   (untuk event payment_success)
-//   - "shipping_update"         (untuk event shipping_update)
-//   - "retur_status"            (untuk event retur_status)
 export const TEMPLATE_NAMES: Record<SupportedEvent, string> = {
   payment_success: "payment_notification",
-  shipping_update: "shipping_update",
+  shipping_update: "shipping_updatesv2",  // ⭐ v5.1: ganti dari "shipping_update" → "shipping_updatesv2"
   retur_status: "retur_status",
 };
 
-// Max retry attempts untuk failed WABA messages (cron auto-retry)
+// Max retry attempts untuk failed WABA messages
 export const MAX_RETRY_ATTEMPTS = 3;
 
-// Error codes yang eligible untuk retry (Meta Cloud API docs — Qiscus pakai Meta codes juga)
 export const RETRYABLE_ERROR_CODES = [
-  "131047",      // Recipient phone number not in allowed list (dev mode)
-  "131052",      // Message undeliverable (temporary)
-  "131073",      // Recipient cannot receive message (temporary)
-  "131030",      // Re-engagement message
-  "131031",      // Recipient phone number not a WhatsApp user
-  "470",         // Reengagement message
-  "131048",      // Recipient phone number does not exist
-  "131069",      // Too many requests
-  "10",          // Internal error
-  "service_unavailable",
-  "timeout",
-  "rate_limit",
+  "131047", "131052", "131073", "131030", "131031",
+  "470", "131048", "131069", "10",
+  "service_unavailable", "timeout", "rate_limit",
 ];
 
 // ============================================================================
@@ -99,8 +70,9 @@ export interface OrderData {
   courier_code: string | null;
   courier_service: string | null;
   courier_duration: string | null;
-  // ⭐ v5.0: tracking_number dari orders table (untuk shipping_update event)
   tracking_number: string | null;
+  // ⭐ v5.1 NEW: biteship_waybill_url untuk {{6}} di shipping_update template
+  biteship_waybill_url: string | null;
   items: Array<{
     name: string;
     variant: string | null;
@@ -139,11 +111,6 @@ export function jsonResponse(obj: unknown, status = 200): Response {
   });
 }
 
-/**
- * Normalize phone ke E.164 tanpa "+" (format Meta Cloud API / Qiscus).
- * Input: "+6281234567890", "081234567890", "6281234567890", "81234567890"
- * Output: "6281234567890"
- */
 export function normalizePhoneForMeta(raw: string | null | undefined): string | null {
   if (!raw) return null;
   let p = String(raw).replace(/\D/g, "");
@@ -165,8 +132,7 @@ export function shortOrderId(uuid: string): string {
 // ============================================================================
 
 /**
- * Fetch order + customer + items dari Supabase.
- * ⭐ v5.0: select tracking_number juga (untuk shipping_update event)
+ * ⭐ v5.1: select biteship_waybill_url juga (untuk {{6}} di shipping_update)
  */
 export async function fetchOrderData(
   supabaseUrl: string,
@@ -181,6 +147,7 @@ export async function fetchOrderData(
       id, total_amount, subtotal, shipping_cost,
       payment_method, courier_code, courier_service, courier_duration,
       tracking_number,
+      biteship_waybill_url,
       customer:customers(name, phone, email),
       items:order_items(product_name_snapshot, variant_name_snapshot, unit_price_snapshot, quantity)
     `)
@@ -208,8 +175,9 @@ export async function fetchOrderData(
     courier_code: order.courier_code || null,
     courier_service: order.courier_service || null,
     courier_duration: order.courier_duration || null,
-    // ⭐ v5.0: tracking_number (string nullable)
     tracking_number: order.tracking_number || null,
+    // ⭐ v5.1 NEW
+    biteship_waybill_url: order.biteship_waybill_url || null,
     items: items.map((it: any) => ({
       name: it.product_name_snapshot || "",
       variant: it.variant_name_snapshot || null,
@@ -219,9 +187,6 @@ export async function fetchOrderData(
   };
 }
 
-/**
- * Save WABA message ke audit table.
- */
 export async function saveWabaMessage(
   supabaseUrl: string,
   serviceRoleKey: string,
@@ -261,9 +226,6 @@ export async function saveWabaMessage(
   return row?.id || null;
 }
 
-/**
- * Update WABA message status.
- */
 export async function updateWabaMessageStatus(
   supabaseUrl: string,
   serviceRoleKey: string,
@@ -304,9 +266,6 @@ export async function updateWabaMessageStatus(
   }
 }
 
-/**
- * Fetch single WABA message by ID.
- */
 export async function fetchWabaMessage(
   supabaseUrl: string,
   serviceRoleKey: string,
@@ -328,9 +287,6 @@ export async function fetchWabaMessage(
   return data as WabaMessage;
 }
 
-/**
- * Fetch all WABA messages yang eligible untuk retry.
- */
 export async function fetchMessagesForRetry(
   supabaseUrl: string,
   serviceRoleKey: string,
@@ -355,17 +311,11 @@ export async function fetchMessagesForRetry(
   return data as WabaMessage[];
 }
 
-/**
- * Check if error code eligible for retry.
- */
 export function isRetryable(errorCode: string | null): boolean {
   if (!errorCode) return false;
   return RETRYABLE_ERROR_CODES.includes(errorCode);
 }
 
-/**
- * Update retry tracking: increment retry_count + set next_retry_at (exponential backoff).
- */
 export async function updateRetryTracking(
   supabaseUrl: string,
   serviceRoleKey: string,
@@ -421,14 +371,9 @@ export async function updateRetryTracking(
 }
 
 // ============================================================================
-// Provider API: Meta Cloud API (Skenario A — Legacy, kept for reference)
+// Provider API: Meta Cloud API (Skenario A — Legacy)
 // ============================================================================
 
-/**
- * Send message ke Meta Cloud API (Skenario A).
- * DEPRECATED: EGLUX pakai Qiscus Omnichannel API (Skenario B → sendToQiscus).
- * Function ini tetap dipertahankan untuk fallback kalau balik ke Skenario A.
- */
 export async function sendToMeta(
   metaGraphUrl: string,
   accessToken: string,
@@ -501,14 +446,7 @@ export async function sendToMeta(
 // ============================================================================
 // Provider API: Qiscus Omnichannel API (Skenario B — Active)
 // ============================================================================
-// Reference:
-//   - https://documentation.qiscus.com/omnichannel-chat/whatsapp-business-api
-//   - https://support.qiscus.com/hc/en-us/articles/1732590664439
-// ============================================================================
 
-/**
- * Send message ke Qiscus Omnichannel API (Skenario B).
- */
 export async function sendToQiscus(
   qiscusApiUrl: string,
   appId: string,
@@ -616,10 +554,11 @@ export async function sendToQiscus(
 // ============================================================================
 
 /**
- * ⭐ v5.0: Validate request body untuk 3 events.
+ * ⭐ v5.1: validateRequest — handle 3 events + waybill_url (untuk shipping_update)
  *
  * payment_success: butuh order_id saja
- * shipping_update: butuh order_id + optional tracking_number (kalau gak ada, ambil dari DB)
+ * shipping_update: butuh order_id + optional tracking_number + optional waybill_url
+ *                  (kalau gak ada di body, fallback ke DB orders.tracking_number + biteship_waybill_url)
  * retur_status: butuh order_id + retur_reference + status_text + optional additional_info
  */
 export function validateRequest(body: unknown): {
@@ -627,11 +566,11 @@ export function validateRequest(body: unknown): {
   error?: string;
   order_id?: string;
   event?: SupportedEvent;
-  // ⭐ v5.0: event-specific fields
-  tracking_number?: string;          // untuk shipping_update (optional — fallback ke DB)
-  retur_reference?: string;          // untuk retur_status
-  status_text?: string;              // untuk retur_status
-  additional_info?: string;           // untuk retur_status
+  tracking_number?: string;
+  waybill_url?: string;  // ⭐ v5.1 NEW
+  retur_reference?: string;
+  status_text?: string;
+  additional_info?: string;
 } {
   if (!body || typeof body !== "object") {
     return { valid: false, error: "Request body required" };
@@ -641,6 +580,7 @@ export function validateRequest(body: unknown): {
     order_id,
     event,
     tracking_number,
+    waybill_url,  // ⭐ v5.1 NEW
     retur_reference,
     status_text,
     additional_info,
@@ -648,6 +588,7 @@ export function validateRequest(body: unknown): {
     order_id?: string;
     event?: string;
     tracking_number?: string;
+    waybill_url?: string;  // ⭐ v5.1 NEW
     retur_reference?: string;
     status_text?: string;
     additional_info?: string;
@@ -666,7 +607,6 @@ export function validateRequest(body: unknown): {
     };
   }
 
-  // Event-specific validation
   if (finalEvent === "retur_status") {
     if (!retur_reference || typeof retur_reference !== "string") {
       return { valid: false, error: "retur_reference is required for retur_status event" };
@@ -675,14 +615,14 @@ export function validateRequest(body: unknown): {
       return { valid: false, error: "status_text is required for retur_status event" };
     }
   }
-  // shipping_update: tracking_number optional (akan fallback ke DB kalau kosong)
-  // payment_success: tidak butuh field tambahan
+  // shipping_update: tracking_number + waybill_url optional (fallback ke DB)
 
   return {
     valid: true,
     order_id,
     event: finalEvent,
     tracking_number: tracking_number || undefined,
+    waybill_url: waybill_url || undefined,  // ⭐ v5.1 NEW
     retur_reference: retur_reference || undefined,
     status_text: status_text || undefined,
     additional_info: additional_info || "Tidak ada info tambahan",
@@ -696,13 +636,6 @@ export function validateRequest(body: unknown): {
 /**
  * Build WABA message untuk payment_success event.
  * Template: payment_notification (5 body variables)
- *
- * Variables:
- *   {{1}} = customer_name
- *   {{2}} = short_order_id
- *   {{3}} = total_amount (formatRupiah)
- *   {{4}} = courier_service (e.g., "JNE REG")
- *   {{5}} = courier_duration (e.g., "3-5 hari kerja")
  */
 export function buildPaymentSuccessMessage(order: OrderData) {
   const template_params: Record<string, string> = {
@@ -734,8 +667,8 @@ Harap kembali ke aplikasi EGLUX untuk melihat detail pesanan.
 }
 
 /**
- * ⭐ v5.0: Build WABA message untuk shipping_update event.
- * Template: shipping_update (5 body variables)
+ * ⭐ v5.1: Build WABA message untuk shipping_update event.
+ * Template: shipping_updatesv2 (6 body variables — waybill_url sebagai {{6}})
  *
  * Variables:
  *   {{1}} = customer_name
@@ -743,14 +676,23 @@ Harap kembali ke aplikasi EGLUX untuk melihat detail pesanan.
  *   {{3}} = courier_service (e.g., "JNE REG")
  *   {{4}} = tracking_number
  *   {{5}} = courier_duration (e.g., "3-5 hari kerja")
+ *   {{6}} = waybill_url (link lacak realtime — biteship_waybill_url)  ← NEW v5.1
  *
- * Note: {{4}} dipake 2x di template body (No. Resi display + URL tracking).
+ * Override priority:
+ *   1. waybillUrlOverride dari request body (kalau ada)
+ *   2. order.biteship_waybill_url dari DB
+ *   3. Fallback: https://track.biteship.com/{tracking_number} (kalau waybill_url NULL)
  */
 export function buildShippingUpdateMessage(
   order: OrderData,
   trackingNumberOverride?: string,
+  waybillUrlOverride?: string,  // ⭐ v5.1 NEW
 ) {
   const trackingNumber = trackingNumberOverride || order.tracking_number || "(belum tersedia)";
+  // ⭐ v5.1: waybill_url priority: override > DB > fallback
+  const waybillUrl = waybillUrlOverride
+    || order.biteship_waybill_url
+    || `https://track.biteship.com/${trackingNumber}`;
 
   const template_params: Record<string, string> = {
     "1": order.customer_name,
@@ -760,6 +702,7 @@ export function buildShippingUpdateMessage(
       : "Standard",
     "4": trackingNumber,
     "5": order.courier_duration || "3-5 hari kerja",
+    "6": waybillUrl,  // ⭐ v5.1 NEW: waybill_url sebagai {{6}}
   };
 
   const body = `Halo ${order.customer_name}, kabar baik! Pesanan #${order.short_order_id} sudah dikirim via ${template_params["3"]}.
@@ -767,27 +710,20 @@ export function buildShippingUpdateMessage(
 No. Resi: ${trackingNumber}
 Estimasi sampai: ${template_params["5"]}
 
-Lacak real-time di: https://track.biteship.com/${trackingNumber}
+Lacak real-time di: ${waybillUrl}
 
 — Tim EGLUX`;
 
   return {
-    template_name: TEMPLATE_NAMES.shipping_update,
+    template_name: TEMPLATE_NAMES.shipping_update,  // = "shipping_updatesv2"
     template_params,
     body,
   };
 }
 
 /**
- * ⭐ v5.0: Build WABA message untuk retur_status event.
+ * Build WABA message untuk retur_status event.
  * Template: retur_status (5 body variables)
- *
- * Variables:
- *   {{1}} = customer_name
- *   {{2}} = retur_reference (e.g., "RET-0001")
- *   {{3}} = short_order_id
- *   {{4}} = status_text (e.g., "Disetujui", "Ditolak", "Refund diproses", "Refund selesai")
- *   {{5}} = additional_info (default: "Tidak ada info tambahan")
  */
 export function buildReturStatusMessage(
   order: OrderData,

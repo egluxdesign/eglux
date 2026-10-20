@@ -1,47 +1,30 @@
 // supabase/functions/send-waba-live/index.ts
 // ============================================================================
-// WABA Live Mode v4.1 — Qiscus Omnichannel API (Skenario B) + 3 Events
+// WABA Live Mode v4.2 — Qiscus Omnichannel API + 3 Events + waybill_url
 // ============================================================================
 //
-// ⭐ v4.1 CHANGES (dari v4.0):
-//   - Handle 3 events (sebelumnya cuma payment_success):
-//     • payment_success → call buildPaymentSuccessMessage()
-//     • shipping_update → call buildShippingUpdateMessage() + tracking_number
-//     • retur_status → call buildReturStatusMessage() + retur_reference + status_text + additional_info
-//   - validateRequest now returns event-specific fields
+// ⭐ v4.2 CHANGES (dari v4.1):
+//   - For shipping_update event: extract `waybill_url` dari request body
+//     (dari midtrans-webhook atau biteship-webhook), pass ke
+//     buildShippingUpdateMessage() supaya jadi {{6}} di template shipping_updatesv2
+//   - validateRequest sekarang return `waybill_url` field juga
 //
-// Behavior:
-//   1. Fetch order data dari Supabase (service_role)
-//   2. Build message dari template sesuai event
-//   3. Save ke waba_messages dengan status='pending', mode='live'
-//   4. Hit Qiscus Omnichannel API:
-//        POST https://omnichannel.qiscus.com/whatsapp/v1/{APP_ID}/{CHANNEL_ID}/messages
-//        Headers: Qiscus-App-Id, Qiscus-Secret-Key
-//   5. Update status ke 'sent' (sukses) atau 'failed' (error)
-//   6. Return Qiscus API response
-//
-// PREREQUISITES:
-//   1. Qiscus Omnichannel Chat account (Indonesia region)
-//   2. Nomor WA EGLUX sudah terverifikasi & terhubung ke channel Qiscus
-//   3. Submit 3 templates ke Qiscus Dashboard + approved:
-//        - payment_notification   (untuk payment success)
-//        - shipping_update         (untuk shipping update)
-//        - retur_status            (untuk retur status)
-//   4. Set env vars di Supabase Edge Function Secrets:
-//        QISCUS_APP_ID             = <dari Qiscus>
-//        QISCUS_SECRET_KEY         = <dari Qiscus>
-//        QISCUS_CHANNEL_ID         = <dari Qiscus>
-//        QISCUS_TEMPLATE_NAMESPACE = <dari Qiscus, format xxxx_xxxx_xxxx_xxxx_xxxx>
-//        QISCUS_REGION             = id (atau my)
-//        STOREFRONT_URL            = https://eglux.co.id
+// v4.1 (previous): 3 events support (payment_success, shipping_update, retur_status)
 //
 // Cara panggil:
 //   POST /functions/v1/send-waba-live
+//
 //   Body untuk payment_success:
 //     { "order_id": "uuid", "event": "payment_success" }
-//   Body untuk shipping_update:
-//     { "order_id": "uuid", "event": "shipping_update", "tracking_number": "JTR1234567890" }
-//     (tracking_number optional — kalau kosong, ambil dari DB orders.tracking_number)
+//
+//   Body untuk shipping_update (v4.2 — waybill_url optional, kalau gak ada fallback ke DB):
+//     {
+//       "order_id": "uuid",
+//       "event": "shipping_update",
+//       "tracking_number": "JTR1234567890",   ← optional
+//       "waybill_url": "https://track.biteship.com/DIPA3xxdVDuJAqIVapD9ldR2"  ← v4.2 NEW
+//     }
+//
 //   Body untuk retur_status:
 //     {
 //       "order_id": "uuid",
@@ -50,7 +33,8 @@
 //       "status_text": "Disetujui",
 //       "additional_info": "Refund akan diproses 3-5 hari kerja"
 //     }
-//   Headers: Authorization: Bearer <admin-jwt-or-anon-key>
+//
+//   Headers: Authorization: Bearer <admin-jwt-or-service-role>
 // ============================================================================
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
@@ -124,7 +108,7 @@ serve(async (req: Request) => {
     return jsonResponse({ error: "Invalid JSON body" }, 400);
   }
 
-  // Validate — returns event-specific fields
+  // Validate — returns event-specific fields (including waybill_url sekarang)
   const validation = validateRequest(requestBody);
   if (!validation.valid) {
     return jsonResponse({ error: validation.error }, 400);
@@ -134,6 +118,7 @@ serve(async (req: Request) => {
     order_id,
     event,
     tracking_number,
+    waybill_url,  // ⭐ v4.2 NEW
     retur_reference,
     status_text,
     additional_info,
@@ -141,6 +126,7 @@ serve(async (req: Request) => {
 
   console.log(`[waba-live] Received: order_id=${order_id}, event=${event}`, {
     has_tracking_override: !!tracking_number,
+    has_waybill_url_override: !!waybill_url,  // ⭐ v4.2
     has_retur_ref: !!retur_reference,
     has_status: !!status_text,
   });
@@ -168,15 +154,15 @@ serve(async (req: Request) => {
   if (event === "payment_success") {
     message = buildPaymentSuccessMessage(order);
   } else if (event === "shipping_update") {
-    // ⭐ v4.1: shipping_update — butuh tracking_number (dari body override atau DB)
+    // ⭐ v4.2: shipping_update — butuh tracking_number + waybill_url
     if (!tracking_number && !order.tracking_number) {
       return jsonResponse({
         error: "tracking_number is required for shipping_update event. Either pass in body or ensure orders.tracking_number is set in DB.",
       }, 400);
     }
-    message = buildShippingUpdateMessage(order, tracking_number);
+    // ⭐ v4.2: pass waybill_url ke builder (kalau gak ada, builder fallback ke DB)
+    message = buildShippingUpdateMessage(order, tracking_number, waybill_url);
   } else if (event === "retur_status") {
-    // ⭐ v4.1: retur_status — butuh retur_reference + status_text + additional_info
     message = buildReturStatusMessage(
       order,
       retur_reference!,
@@ -184,7 +170,6 @@ serve(async (req: Request) => {
       additional_info,
     );
   } else {
-    // Should never reach here (validateRequest sudah cek SUPPORTED_EVENTS)
     return jsonResponse({ error: `Unsupported event: ${event}` }, 400);
   }
 
@@ -220,9 +205,10 @@ serve(async (req: Request) => {
     template: message.template_name,
     namespace: QISCUS_TEMPLATE_NAMESPACE,
     params_count: Object.keys(message.template_params).length,
+    params_preview: message.template_params,
   });
 
-  // 6. Hit Qiscus Omnichannel API via shared helper
+  // 6. Hit Qiscus Omnichannel API
   const qiscusResult = await sendToQiscus(
     qiscusApiUrl,
     QISCUS_APP_ID!,
@@ -287,6 +273,7 @@ serve(async (req: Request) => {
     qiscus_message_id: qiscusMessageId,
     recipient: `+${order.customer_phone}`,
     template: message.template_name,
+    template_params: message.template_params,
     qiscus_response: qiscusResult.response,
   });
 });
