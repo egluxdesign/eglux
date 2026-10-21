@@ -1780,72 +1780,49 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
             )}
           </section>
 
-          {/* ⭐ v3.0 NEW: Pilih Metode Pembayaran === */}
-          <section className="space-y-3">
+          {/* ⭐ v3.0 NEW: Pilih Metode Pembayaran (card grid) === */}
+          <section className="space-y-2">
             <h4 className="text-[0.78rem] uppercase tracking-[1px] text-[#666] font-semibold flex items-center gap-1.5">
               <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg>
-              Pilih Metode Pembayaran
+              Metode Pembayaran
             </h4>
 
             {paymentLoading ? (
-              <div className="text-[0.82rem] text-gray-500 flex items-center gap-2 py-3">
-                <Loader2 className="w-4 h-4 animate-spin" /> Memuat metode pembayaran...
+              <div className="text-[0.82rem] text-gray-500 flex items-center gap-2 py-2">
+                <Loader2 className="w-4 h-4 animate-spin" /> Memuat...
               </div>
             ) : (
-              <div className="space-y-4">
-                {Object.entries(groupedPaymentMethods).map(([group, methodList]) => (
-                  <div key={group}>
-                    <p className="text-[0.72rem] font-semibold text-gray-500 mb-2">
-                      {GROUP_LABELS[group] || group}
-                    </p>
-                    <div className="space-y-2 max-h-[200px] overflow-y-auto pr-1">
-                      {methodList.map((method) => {
-                        const isSelected = selectedPaymentMethod === method.method_code;
-                        const baseAmount = totalPrice + shippingCostForDisplay + taxAmountForDisplay;
-                        const fee = calculateAdminFee(method, baseAmount);
-                        return (
-                          <label
-                            key={method.method_code}
-                            className={`flex items-center justify-between p-2.5 rounded-lg border cursor-pointer transition-all ${
-                              isSelected
-                                ? 'border-eglux-secondary bg-eglux-accent'
-                                : 'border-[#eee] hover:border-[#ccc]'
-                            } ${isLocked ? 'opacity-60 cursor-not-allowed' : ''}`}
-                          >
-                            <div className="flex items-center gap-2">
-                              <input
-                                type="radio"
-                                name="payment_method"
-                                className="accent-[#c9a96e]"
-                                checked={isSelected}
-                                onChange={() => setSelectedPaymentMethod(method.method_code)}
-                                disabled={isLocked}
-                              />
-                              <div>
-                                <p className="text-[0.82rem] font-semibold text-eglux-primary">
-                                  {method.method_name}
-                                </p>
-                                {method.description && (
-                                  <p className="text-[0.7rem] text-[#999]">{method.description}</p>
-                                )}
-                              </div>
-                            </div>
-                            <div className="text-right">
-                              <p className="text-[0.78rem] font-medium text-eglux-secondary">
-                                {method.fee_type === 'percentage' && `+ ${(Number(method.fee_percentage) * 100).toFixed(1)}%`}
-                                {method.fee_type === 'fixed' && `+ ${rupiah(Number(method.fee_fixed))}`}
-                                {method.fee_type === 'mixed' && `+ ${(Number(method.fee_percentage) * 100).toFixed(1)}% + ${rupiah(Number(method.fee_fixed))}`}
-                              </p>
-                              <p className="text-[0.68rem] text-gray-400">
-                                = {rupiah(fee.adminFee)}
-                              </p>
-                            </div>
-                          </label>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ))}
+              <div className="grid grid-cols-2 gap-2 max-h-[160px] overflow-y-auto">
+                {paymentMethods.filter(m => m.is_active).map((method) => {
+                  const isSelected = selectedPaymentMethod === method.method_code;
+                  const baseAmount = totalPrice + shippingCostForDisplay + taxAmountForDisplay;
+                  const fee = calculateAdminFee(method, baseAmount);
+                  return (
+                    <button
+                      key={method.method_code}
+                      type="button"
+                      onClick={() => setSelectedPaymentMethod(method.method_code)}
+                      disabled={isLocked}
+                      className={`flex flex-col items-center justify-center p-2 rounded-lg border transition-all text-center ${
+                        isSelected
+                          ? 'border-eglux-secondary bg-eglux-accent'
+                          : 'border-[#eee] hover:border-[#ccc]'
+                      } ${isLocked ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
+                    >
+                      <p className="text-[0.72rem] font-medium text-eglux-primary leading-tight">
+                        {method.method_name}
+                      </p>
+                      <p className="text-[0.65rem] text-eglux-secondary mt-0.5">
+                        {method.fee_type === 'percentage' && `+${(Number(method.fee_percentage) * 100).toFixed(1)}%`}
+                        {method.fee_type === 'fixed' && `+${rupiah(Number(method.fee_fixed))}`}
+                        {method.fee_type === 'mixed' && `+${(Number(method.fee_percentage) * 100).toFixed(1)}%`}
+                      </p>
+                      <p className="text-[0.6rem] text-gray-400">
+                        {rupiah(fee.adminFee)}
+                      </p>
+                    </button>
+                  );
+                })}
               </div>
             )}
             {formErrors.payment_method && <InlineError msg={formErrors.payment_method} />}

@@ -1,13 +1,12 @@
 // supabase/functions/create-midtrans-transaction/index.ts
 // ============================================================================
-// Create Midtrans Transaction v3.1
+// Create Midtrans Transaction v3.2
 // ============================================================================
-// ⭐ v3.1 CHANGES (dari v3.0):
-//   - FIX: Don't pass `enabled_payments` — Midtrans methods masih "Activation in progress"
-//     Snap popup shows all available methods (customer picks in popup)
-//     Admin fee still calculated based on checkout form selection
-//   - Strategy B: Works regardless of Midtrans activation status
-//   - Once Midtrans activates methods → switch to Strategy A (uncomment enabled_payments line)
+// ⭐ v3.2 CHANGES (dari v3.1):
+//   - Conditional enabled_payments based on midtrans_status from payment_methods table
+//   - If midtrans_status = 'active' → Snap opens directly with selected method (no selection screen)
+//   - If midtrans_status != 'active' → Snap shows all available methods (customer picks in popup)
+//   - Best of both worlds: works now + auto-upgrades when Midtrans activates methods
 //
 // v3.0 (sebelumnya):
 //   - Accept `payment_method` param + fetch admin fee from payment_methods table
@@ -272,6 +271,10 @@ serve(async (req: Request) => {
       ? `${Deno.env.get("STOREFRONT_URL")}/orders`
       : undefined;
 
+    // ⭐ v3.2: Conditional enabled_payments — only restrict if method is confirmed Active in Midtrans
+    const isMethodActiveInMidtrans = method?.midtrans_status === 'active';
+    console.log("[midtrans] Payment method:", payment_method, "midtrans_status:", method?.midtrans_status, "restrict:", isMethodActiveInMidtrans);
+
     const payload = {
       transaction_details: { order_id, gross_amount },
       item_details,
@@ -280,12 +283,10 @@ serve(async (req: Request) => {
         billing_address: addressBlock,
         shipping_address: addressBlock,
       },
-      // ⭐ v3.1: DON'T pass enabled_payments until Midtrans activates methods
-      // Strategy B: Let Snap show all available methods (customer picks in popup)
-      // Once Midtrans dashboard shows "Active" for a method, we can re-enable:
-      //   enabled_payments: [payment_method],
-      // For now: undefined = Snap shows all activated methods
-      enabled_payments: undefined,
+      // ⭐ v3.2: Only restrict if method is confirmed 'active' in Midtrans dashboard
+      // If active → Snap opens directly with selected method (no selection screen)
+      // If not active → Snap shows all available methods (customer picks in popup)
+      enabled_payments: isMethodActiveInMidtrans ? [payment_method] : undefined,
       finish_redirect_url: finishRedirectUrl,
     };
 
