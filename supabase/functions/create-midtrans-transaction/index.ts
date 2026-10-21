@@ -1,15 +1,18 @@
 // supabase/functions/create-midtrans-transaction/index.ts
 // ============================================================================
-// Create Midtrans Transaction v3.0
+// Create Midtrans Transaction v3.1
 // ============================================================================
-// ⭐ v3.0 CHANGES:
-//   - Accept `payment_method` param (e.g., 'gopay', 'bca_va', 'credit_card')
-//   - Fetch admin fee from `payment_methods` table
+// ⭐ v3.1 CHANGES (dari v3.0):
+//   - FIX: Don't pass `enabled_payments` — Midtrans methods masih "Activation in progress"
+//     Snap popup shows all available methods (customer picks in popup)
+//     Admin fee still calculated based on checkout form selection
+//   - Strategy B: Works regardless of Midtrans activation status
+//   - Once Midtrans activates methods → switch to Strategy A (uncomment enabled_payments line)
+//
+// v3.0 (sebelumnya):
+//   - Accept `payment_method` param + fetch admin fee from payment_methods table
 //   - Calculate admin_fee (base + VAT if not inclusive)
 //   - Update order total with admin_fee
-//   - Pass `enabled_payments: [payment_method]` to Midtrans Snap API
-//   - Customer pays adjusted total (includes admin_fee)
-//   - Snap popup opens directly with selected method (no choice screen)
 //
 // v2.1 (previous): Robust handling "order_id sudah digunakan" error
 // v2.0 (previous): Save Midtrans Snap response fields baru ke orders table
@@ -277,8 +280,12 @@ serve(async (req: Request) => {
         billing_address: addressBlock,
         shipping_address: addressBlock,
       },
-      // ⭐ v3.0: Restrict to selected payment method only
-      enabled_payments: [payment_method],
+      // ⭐ v3.1: DON'T pass enabled_payments until Midtrans activates methods
+      // Strategy B: Let Snap show all available methods (customer picks in popup)
+      // Once Midtrans dashboard shows "Active" for a method, we can re-enable:
+      //   enabled_payments: [payment_method],
+      // For now: undefined = Snap shows all activated methods
+      enabled_payments: undefined,
       finish_redirect_url: finishRedirectUrl,
     };
 
