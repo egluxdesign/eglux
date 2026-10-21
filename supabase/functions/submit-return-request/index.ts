@@ -446,6 +446,42 @@ serve(async (req: Request) => {
         if (!proposedAmount || proposedAmount <= 0) {
           return json({ error: "Nominal refund_amount wajib diisi" }, 400);
         }
+
+        // ⭐ v3.4: Validate refund doesn't exceed max refundable
+        // Policy: admin_fee + shipping_cost NOT refundable
+        // Max refundable = subtotal + tax_amount (EXCLUDE shipping + admin_fee)
+        const { data: orderForRefund } = await supabase
+          .from("orders")
+          .select("subtotal, tax_amount, shipping_cost, admin_fee, total_amount")
+          .eq("id", ret.order_id)
+          .maybeSingle();
+
+        if (orderForRefund) {
+          const maxRefundable = Number(orderForRefund.subtotal) + Number(orderForRefund.tax_amount || 0);
+          const nonRefundable = Number(orderForRefund.shipping_cost || 0) + Number(orderForRefund.admin_fee || 0);
+
+          if (proposedAmount > maxRefundable) {
+            return json({
+              error: `Refund amount (Rp ${proposedAmount.toLocaleString('id-ID')}) exceeds max refundable (Rp ${maxRefundable.toLocaleString('id-ID')}). Shipping cost dan admin fee tidak dapat di-refund.`,
+              debug: {
+                subtotal: orderForRefund.subtotal,
+                tax_amount: orderForRefund.tax_amount,
+                shipping_cost: orderForRefund.shipping_cost,
+                admin_fee: orderForRefund.admin_fee,
+                max_refundable: maxRefundable,
+                non_refundable: nonRefundable,
+                proposed: proposedAmount,
+              },
+            }, 400);
+          }
+
+          console.log("[submit-return] Refund validation passed:", {
+            proposed: proposedAmount,
+            max_refundable: maxRefundable,
+            non_refundable: nonRefundable,
+          });
+        }
+
         // ⭐ Allow dari processing (normal flow) ATAU awaiting_customer_confirmation (re-propose)
         //   ATAU customer_confirmed (re-propose kalau admin mau ubah nominal yang sudah di-confirm)
         if (!["processing", "awaiting_customer_confirmation", "customer_confirmed"].includes(ret.status)) {
