@@ -22,7 +22,7 @@
 //   - orders.shipping_city: VARCHAR(100) (sudah ada)
 // ============================================================================
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useCart, rupiah } from '../../context/CartContext';
 import { useAuth } from '../../context/AuthContext';
@@ -66,6 +66,39 @@ const INITIAL_FORM = {
 };
 
 const generateUUID = () => crypto.randomUUID();
+
+// ⭐ v3.0 NEW: Payment method constants + admin fee calculator
+const GROUP_LABELS = {
+  credit_card: 'Kartu Kredit',
+  bank_transfer: 'Transfer Bank (Virtual Account)',
+  ewallet: 'E-Wallet',
+  qris: 'QRIS',
+  retail: 'Bayar di Gerai',
+  cardless_credit: 'Cicilan Tanpa Kartu',
+};
+
+const VAT_RATE = 0.11;
+
+function calculateAdminFee(method, baseAmount) {
+  let baseFee = 0;
+  if (method.fee_type === 'percentage') {
+    baseFee = Math.floor(baseAmount * Number(method.fee_percentage));
+  } else if (method.fee_type === 'fixed') {
+    baseFee = Number(method.fee_fixed);
+  } else if (method.fee_type === 'mixed') {
+    baseFee = Math.floor(baseAmount * Number(method.fee_percentage)) + Number(method.fee_fixed);
+  }
+  if (method.fee_min_amount && baseFee < Number(method.fee_min_amount)) {
+    baseFee = Number(method.fee_min_amount);
+  }
+  let vatAmount = 0;
+  let adminFee = baseFee;
+  if (!method.fee_vat_inclusive) {
+    vatAmount = Math.floor(baseFee * VAT_RATE);
+    adminFee = baseFee + vatAmount;
+  }
+  return { adminFee, baseFee, vatAmount };
+}
 
 // ===== Email validation =====
 const isEmailValid = (e) => !e || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
@@ -219,6 +252,11 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
   const [shippingOptions, setShippingOptions] = useState([]);
   const [shippingLoading, setShippingLoading] = useState(false);
   const [selectedShipping, setSelectedShipping] = useState(null);
+  
+    // ⭐ v3.0 NEW: Payment method state
+  const [paymentMethods, setPaymentMethods] = useState([]);
+  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState(null);
+  const [paymentLoading, setPaymentLoading] = useState(true);
 
   // ============================================================================
   // AUTH: Pre-fill form dari profile + user_metadata saat user login
@@ -254,7 +292,35 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
       setSelectedCountry(DEFAULT_COUNTRY);
       setCountryDropdownOpen(false);
       setCountrySearch('');
+      // ⭐ v3.0 NEW: Reset payment method
+      setPaymentMethods([]);
+      setSelectedPaymentMethod(null);
+      setPaymentLoading(true);
     }
+  }, [isOpen]);
+
+  // ⭐ v3.0 NEW: Fetch payment methods dari DB
+  useEffect(() => {
+    if (!isOpen) return;
+    async function loadPaymentMethods() {
+      const { data, error } = await supabase
+        .from('payment_methods')
+        .select('*')
+        .eq('is_active', true)
+        .order('display_order', { ascending: true });
+      if (error) {
+        console.error('Failed to load payment methods:', error);
+        setPaymentLoading(false);
+        return;
+      }
+      setPaymentMethods(data || []);
+      if (data?.length > 0) {
+        const defaultMethod = data.find(m => m.is_default) || data[0];
+        setSelectedPaymentMethod(defaultMethod.method_code);
+      }
+      setPaymentLoading(false);
+    }
+    loadPaymentMethods();
   }, [isOpen]);
 
   // Click-outside handler: tutup country dropdown kalau user klik di luar
@@ -518,6 +584,8 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
     if (!/^\d{5}$/.test(form.postal)) errors.postal = 'Kode pos harus 5 digit';
     if (!selectedAreaId) errors.area = 'Pilih area tujuan dari hasil pencarian kode pos';
     if (!selectedShipping) errors.shipping = 'Pilih kurir terlebih dahulu';
+    // ⭐ v3.0 NEW: Validate payment method
+    if (!selectedPaymentMethod) errors.payment_method = 'Pilih metode pembayaran';
     if (!snapReady) errors.system = 'Sistem pembayaran belum siap, coba sesaat lagi';
 
     // ⭐ Stock check (prevent oversell di frontend — Option C dari rekomendasi)
@@ -752,7 +820,12 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
       0
     );
     const taxAmount = Math.round(taxBase * TAX_PERCENT / 100);
-    const grandTotal = totalPrice + shippingCost + taxAmount - voucherDiscount;
+    // ⭐ v3.0 NEW: Calculate admin fee
+    const baseForAdmin = totalPrice + shippingCost + taxAmount;
+    const adminFeeCalc = selectedPaymentMethod
+      ? calculateAdminFee(paymentMethods.find(m => m.method_code === selectedPaymentMethod) || {}, baseForAdmin)
+      : { adminFee: 0 };
+    const grandTotal = totalPrice + shippingCost + taxAmount - voucherDiscount + adminFeeCalc.adminFee;
     const selectedArea = areas.find((a) => String(a.id) === String(selectedAreaId));
 
     const payload = {
@@ -783,6 +856,9 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
         tax_percent: TAX_PERCENT,
         tax_base: taxBase,
         tax_amount: taxAmount,
+        // ⭐ v3.0 NEW: Payment method + admin fee
+        payment_method_selected: selectedPaymentMethod,
+        admin_fee: adminFeeCalc.adminFee,
       },
       items: cart.map((item) => ({
         product_id: item.productId,
@@ -898,7 +974,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
       // ⭐ STEP 2: Mint fresh Snap token via edge function
       const { data, error: fnError } = await supabase.functions.invoke(
         'create-midtrans-transaction',
-        { body: { order_id: currentOrderId } }
+        { body: { order_id: currentOrderId, payment_method: selectedPaymentMethod } }
       );
 
       if (fnError || !data?.token) {
@@ -1038,7 +1114,35 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
     0
   );
   const taxAmountForDisplay = Math.round(taxBaseForDisplay * TAX_PERCENT / 100);
-  const grandTotal = totalPrice + shippingCostForDisplay + taxAmountForDisplay - voucherDiscount;
+  // ⭐ v3.0 NEW: Calculate admin fee for display
+  const adminFee = useMemo(() => {
+    if (!selectedPaymentMethod) return 0;
+    const method = paymentMethods.find(m => m.method_code === selectedPaymentMethod);
+    if (!method) return 0;
+    return calculateAdminFee(method, totalPrice + shippingCostForDisplay + taxAmountForDisplay).adminFee;
+  }, [selectedPaymentMethod, paymentMethods, totalPrice, shippingCostForDisplay, taxAmountForDisplay]);
+
+  const adminFeeBreakdown = useMemo(() => {
+    if (!selectedPaymentMethod) return '';
+    const method = paymentMethods.find(m => m.method_code === selectedPaymentMethod);
+    if (!method) return '';
+    let b = '';
+    if (method.fee_type === 'percentage') b = `${(Number(method.fee_percentage) * 100).toFixed(1)}%`;
+    else if (method.fee_type === 'fixed') b = `Rp ${Number(method.fee_fixed).toLocaleString('id-ID')}`;
+    else if (method.fee_type === 'mixed') b = `${(Number(method.fee_percentage) * 100).toFixed(1)}% + Rp ${Number(method.fee_fixed).toLocaleString('id-ID')}`;
+    if (!method.fee_vat_inclusive) b += ' + PPN 11%';
+    return b;
+  }, [selectedPaymentMethod, paymentMethods]);
+
+  const groupedPaymentMethods = useMemo(() => {
+    return (paymentMethods || []).reduce((acc, m) => {
+      if (!acc[m.method_group]) acc[m.method_group] = [];
+      acc[m.method_group].push(m);
+      return acc;
+    }, {});
+  }, [paymentMethods]);
+
+  const grandTotal = totalPrice + shippingCostForDisplay + taxAmountForDisplay - voucherDiscount + adminFee;
   const isLocked = !!orderId;
   const showAreaDropdown = !areasLoading && areas.length > 1;
   const showAreaAutoSelected = !areasLoading && areas.length === 1 && selectedAreaId;
@@ -1136,7 +1240,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
               // ⭐ Tax (biaya admin 3% dari base price = harga asli sebelum diskon)
               const taxFee = taxAmountForDisplay;
               const taxBase = taxBaseForDisplay;
-              const grandTotalV3 = discountedSubtotal + shippingCost + taxFee - voucherDiscount;
+              const grandTotalV3 = discountedSubtotal + shippingCost + taxFee - voucherDiscount + adminFee;
 
               return (
                 <>
@@ -1189,6 +1293,16 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
                         Biaya Admin &amp; Tax ({TAX_PERCENT}%)
                       </span>
                       <span className="font-medium text-eglux-primary">{rupiah(taxFee)}</span>
+                    </div>
+                  )}
+
+                  {/* ⭐ v3.0 NEW: Admin fee display */}
+                  {adminFee > 0 && (
+                    <div className="flex justify-between mt-1 text-[0.82rem]">
+                      <span className="text-gray-600" title={adminFeeBreakdown}>
+                        Biaya Admin {selectedPaymentMethod ? `(${paymentMethods.find(m => m.method_code === selectedPaymentMethod)?.method_name || ''})` : ''}
+                      </span>
+                      <span className="font-medium text-eglux-primary">{rupiah(adminFee)}</span>
                     </div>
                   )}
 
@@ -1664,6 +1778,77 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
             {!shippingLoading && !selectedShipping && selectedAreaId && shippingOptions.length === 0 && (
               <InlineError msg={formErrors.shipping} />
             )}
+          </section>
+
+          {/* ⭐ v3.0 NEW: Pilih Metode Pembayaran === */}
+          <section className="space-y-3">
+            <h4 className="text-[0.78rem] uppercase tracking-[1px] text-[#666] font-semibold flex items-center gap-1.5">
+              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg>
+              Pilih Metode Pembayaran
+            </h4>
+
+            {paymentLoading ? (
+              <div className="text-[0.82rem] text-gray-500 flex items-center gap-2 py-3">
+                <Loader2 className="w-4 h-4 animate-spin" /> Memuat metode pembayaran...
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {Object.entries(groupedPaymentMethods).map(([group, methodList]) => (
+                  <div key={group}>
+                    <p className="text-[0.72rem] font-semibold text-gray-500 mb-2">
+                      {GROUP_LABELS[group] || group}
+                    </p>
+                    <div className="space-y-2 max-h-[200px] overflow-y-auto pr-1">
+                      {methodList.map((method) => {
+                        const isSelected = selectedPaymentMethod === method.method_code;
+                        const baseAmount = totalPrice + shippingCostForDisplay + taxAmountForDisplay;
+                        const fee = calculateAdminFee(method, baseAmount);
+                        return (
+                          <label
+                            key={method.method_code}
+                            className={`flex items-center justify-between p-2.5 rounded-lg border cursor-pointer transition-all ${
+                              isSelected
+                                ? 'border-eglux-secondary bg-eglux-accent'
+                                : 'border-[#eee] hover:border-[#ccc]'
+                            } ${isLocked ? 'opacity-60 cursor-not-allowed' : ''}`}
+                          >
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="radio"
+                                name="payment_method"
+                                className="accent-[#c9a96e]"
+                                checked={isSelected}
+                                onChange={() => setSelectedPaymentMethod(method.method_code)}
+                                disabled={isLocked}
+                              />
+                              <div>
+                                <p className="text-[0.82rem] font-semibold text-eglux-primary">
+                                  {method.method_name}
+                                </p>
+                                {method.description && (
+                                  <p className="text-[0.7rem] text-[#999]">{method.description}</p>
+                                )}
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <p className="text-[0.78rem] font-medium text-eglux-secondary">
+                                {method.fee_type === 'percentage' && `+ ${(Number(method.fee_percentage) * 100).toFixed(1)}%`}
+                                {method.fee_type === 'fixed' && `+ ${rupiah(Number(method.fee_fixed))}`}
+                                {method.fee_type === 'mixed' && `+ ${(Number(method.fee_percentage) * 100).toFixed(1)}% + ${rupiah(Number(method.fee_fixed))}`}
+                              </p>
+                              <p className="text-[0.68rem] text-gray-400">
+                                = {rupiah(fee.adminFee)}
+                              </p>
+                            </div>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {formErrors.payment_method && <InlineError msg={formErrors.payment_method} />}
           </section>
 
           {/* === Catatan === */}
