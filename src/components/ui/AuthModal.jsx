@@ -12,43 +12,33 @@
 //
 // WhatsApp OTP Flow:
 //   1. User input nomor WA → click "Kirim Kode OTP"
-//      → supabase.functions.invoke('send-waba-otp', { body: { phone } })
-//      → server normalize phone, cek customers table, generate 6-digit OTP,
-//        save ke otp_codes, kirim via Qiscus WABA template
+//      → invokeEdgeFunction('send-waba-otp', { phone }) (raw fetch via helper)
 //   2. User input 6-digit OTP di 6 box terpisah (auto-focus + paste support)
 //   3. User click "Verifikasi & Masuk"
-//      → supabase.functions.invoke('verify-waba-otp', { body: { phone, code } })
-//      → server verify OTP, generate Supabase magic link
+//      → invokeEdgeFunction('verify-waba-otp', { phone, code })
+//      → server verify OTP + generate Supabase magic link
 //      → frontend redirect ke magic link → auto-login + redirect ke /orders
 // ============================================================================
 
 import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
-import { supabase } from '../../lib/supabaseClient';
+import { invokeEdgeFunction } from '../../lib/wabaOtpClient';
 
 // ============================================================================
 // OTPInput — 6 separate input boxes untuk kode OTP
-// ============================================================================
-// Features:
-//   - Auto-focus ke box berikutnya saat 1 digit diisi
-//   - Backspace di empty box → focus ke box sebelumnya
-//   - Paste 6-digit code → auto-fill semua box
-//   - Numeric only (filter non-digit saat paste/type)
 // ============================================================================
 const OTPInput = ({ value, onChange, disabled }) => {
   const refs = useRef([]);
 
   const handleChange = (idx, val) => {
-    // Ambil hanya 1 digit terakhir (kalau user ketik "12" di 1 box, ambil "2")
     const digit = val.replace(/\D/g, '').slice(-1);
-    if (digit === '' && val !== '') return; // ada char non-digit, tolak
+    if (digit === '' && val !== '') return;
 
     const next = [...value];
     next[idx] = digit;
     onChange(next);
 
-    // Auto-focus ke box berikutnya kalau baru diisi
     if (digit && idx < 5) {
       refs.current[idx + 1]?.focus();
     }
@@ -56,7 +46,6 @@ const OTPInput = ({ value, onChange, disabled }) => {
 
   const handleKeyDown = (idx, e) => {
     if (e.key === 'Backspace' && !value[idx] && idx > 0) {
-      // Backspace di box kosong → focus ke box sebelumnya + hapus isinya
       e.preventDefault();
       const next = [...value];
       next[idx - 1] = '';
@@ -80,7 +69,6 @@ const OTPInput = ({ value, onChange, disabled }) => {
     }
     onChange(next);
 
-    // Focus ke box kosong berikutnya atau box terakhir
     const focusIdx = Math.min(pasted.length, 5);
     refs.current[focusIdx]?.focus();
   };
@@ -112,7 +100,7 @@ const OTPInput = ({ value, onChange, disabled }) => {
 };
 
 // ============================================================================
-// AuthModal — Main component
+// AuthModal — main component
 // ============================================================================
 const AuthModal = ({ isOpen, onClose, initialMode = 'login' }) => {
   const { login, register } = useAuth();
@@ -124,7 +112,7 @@ const AuthModal = ({ isOpen, onClose, initialMode = 'login' }) => {
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [info, setInfo] = useState(null); // success/info message (green)
+  const [info, setInfo] = useState(null);
 
   // === Email login / register form fields ===
   const [email, setEmail] = useState('');
@@ -161,7 +149,22 @@ const AuthModal = ({ isOpen, onClose, initialMode = 'login' }) => {
     }
   }, [isOpen, mode]);
 
-  // Reset WA OTP state kalau user switch ke email method atau tutup modal
+  // === Cleanup countdown on close ===
+  useEffect(() => {
+    if (!isOpen && countdownRef.current) {
+      clearInterval(countdownRef.current);
+      countdownRef.current = null;
+    }
+  }, [isOpen]);
+
+  // === Cleanup on unmount ===
+  useEffect(() => {
+    return () => {
+      if (countdownRef.current) clearInterval(countdownRef.current);
+    };
+  }, []);
+
+  // === Reset WA OTP state kalau user switch ke email method atau tutup modal ===
   const resetWhatsAppState = () => {
     setWaPhone('');
     setOtp(['', '', '', '', '', '']);
@@ -181,21 +184,6 @@ const AuthModal = ({ isOpen, onClose, initialMode = 'login' }) => {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loginMethod]);
-
-  // Cleanup countdown timer saat modal tutup
-  useEffect(() => {
-    if (!isOpen && countdownRef.current) {
-      clearInterval(countdownRef.current);
-      countdownRef.current = null;
-    }
-  }, [isOpen]);
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      if (countdownRef.current) clearInterval(countdownRef.current);
-    };
-  }, []);
 
   if (!isOpen) return null;
 
@@ -267,37 +255,26 @@ const AuthModal = ({ isOpen, onClose, initialMode = 'login' }) => {
     setError(null);
     setInfo(null);
 
-    // Basic validation — accept 08xxx, +62xxx, 628xxx, atau format spasi/dash
     const digits = waPhone.replace(/\D/g, '');
     if (digits.length < 9 || digits.length > 15) {
-      setError('Masukkan nomor WhatsApp yang valid (contoh: 0812 3456 7890 atau +62 812 3456 7890)');
+      setError('Masukkan nomor WhatsApp yang valid (contoh: 0812 3456 7890 atau +62 812 3456 7890).');
       return;
     }
 
     setSendingOtp(true);
     try {
-      const { data, error: fnError } = await supabase.functions.invoke('send-waba-otp', {
-        body: { phone: waPhone },
-      });
-
-      if (fnError) throw fnError;
-
-      if (data?.success) {
-        setOtpSent(true);
-        setInfo(data.message || 'Kode OTP telah dikirim ke WhatsApp Anda.');
-        setOtp(['', '', '', '', '', '']);
-        startCountdown(60);
-        // Auto-focus ke box OTP pertama (sedikit delay biar render dulu)
-        setTimeout(() => {
-          const firstBox = document.querySelector('input[aria-label="Digit OTP 1"]');
-          if (firstBox) firstBox.focus();
-        }, 100);
-      } else {
-        setError(data?.error || 'Gagal mengirim kode OTP. Coba lagi.');
-      }
+      const data = await invokeEdgeFunction('send-waba-otp', { phone: waPhone });
+      setOtpSent(true);
+      setInfo(data.message || 'Kode OTP telah dikirim ke WhatsApp Anda.');
+      setOtp(['', '', '', '', '', '']);
+      startCountdown(60);
+      setTimeout(() => {
+        const firstBox = document.querySelector('input[aria-label="Digit OTP 1"]');
+        if (firstBox) firstBox.focus();
+      }, 100);
     } catch (err) {
       console.error('[AuthModal] send-waba-otp error:', err);
-      setError(err.message || 'Gagal terhubung ke server. Coba lagi.');
+      setError(err.message || 'Gagal mengirim kode OTP. Coba lagi.');
     } finally {
       setSendingOtp(false);
     }
@@ -315,25 +292,18 @@ const AuthModal = ({ isOpen, onClose, initialMode = 'login' }) => {
 
     setVerifyingOtp(true);
     try {
-      const { data, error: fnError } = await supabase.functions.invoke('verify-waba-otp', {
-        body: { phone: waPhone, code },
-      });
+      const data = await invokeEdgeFunction('verify-waba-otp', { phone: waPhone, code });
 
-      if (fnError) throw fnError;
-
-      if (data?.success && data.redirect_url) {
-        // Magic link — redirect untuk auto-login
+      if (data.redirect_url) {
         setInfo('Verifikasi berhasil! Mengalihkan ke akun Anda...');
         onClose();
-        // Beri delay kecil biar modal close animation selesai + UX bersih
         setTimeout(() => {
           window.location.href = data.redirect_url;
         }, 500);
         return;
       }
 
-      if (data?.success && data.verified && !data.redirect_url) {
-        // OTP verified tapi magic link gagal — fallback ke email login
+      if (data.verified && !data.redirect_url) {
         setLoginMethod('email');
         setError(
           data.error ||
@@ -342,8 +312,7 @@ const AuthModal = ({ isOpen, onClose, initialMode = 'login' }) => {
         return;
       }
 
-      // Error dari server (kode salah, kadaluarsa, attempt habis, dll)
-      setError(data?.error || 'Verifikasi OTP gagal. Coba lagi.');
+      setError(data.error || 'Verifikasi OTP gagal. Coba lagi.');
     } catch (err) {
       console.error('[AuthModal] verify-waba-otp error:', err);
       setError(err.message || 'Gagal terhubung ke server. Coba lagi.');
@@ -360,7 +329,6 @@ const AuthModal = ({ isOpen, onClose, initialMode = 'login' }) => {
 
   const handlePhoneChange = (e) => {
     setWaPhone(e.target.value);
-    // Kalau nomor berubah setelah OTP dikirim, reset state OTP biar user harus kirim ulang
     if (otpSent) {
       setOtpSent(false);
       setOtp(['', '', '', '', '', '']);
@@ -452,8 +420,8 @@ const AuthModal = ({ isOpen, onClose, initialMode = 'login' }) => {
       <div className="flex justify-end -mt-2 mb-1">
         <Link
           to="/forgot-password"
-          className="text-[0.75rem] text-eglux-secondary font-semibold hover:underline"
           onClick={onClose}
+          className="text-[0.75rem] text-eglux-secondary font-semibold hover:underline"
         >
           Lupa Password?
         </Link>
@@ -687,9 +655,7 @@ const AuthModal = ({ isOpen, onClose, initialMode = 'login' }) => {
 
           {mode === 'login' ? (
             <>
-              {/* Toggle antara Email / WhatsApp — hanya di mode login */}
               {renderLoginMethodTabs()}
-
               {loginMethod === 'email'
                 ? renderEmailLoginForm()
                 : renderWhatsAppLoginForm()}
