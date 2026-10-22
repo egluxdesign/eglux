@@ -72,7 +72,7 @@ const StorefrontActivityTracker = () => {
 // ============================================================================
 // Setelah OTP verify sukses, edge function generate Supabase magic link.
 // Magic link redirect balik ke storefront dengan URL kayak:
-//   http://localhost:3000/#access_token=eyJ...&type=magiclink
+//   http://localhost:5173/#access_token=eyJ...&type=magiclink
 //
 // supabase-js seharusnya auto-exchange token ini jadi session, TAPI kalau
 // SPA gak detect hash dengan benar, session gak ke-set. Handler ini:
@@ -94,13 +94,13 @@ const MagicLinkHandler = () => {
       return; // Bukan magic link URL, skip
     }
 
-    console.log('[MagicLinkHandler] Magic link hash detected, waiting for session...');
+    // console.log('[MagicLinkHandler] Magic link hash detected, waiting for session...');
 
     // supabase-js auto-exchange hash tokens jadi session (detectSessionInUrl: true default).
     // Tunggu SIGNED_IN event, lalu redirect ke /orders.
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (event, session) => {
-        console.log('[MagicLinkHandler] Auth event:', event, 'Email:', session?.user?.email);
+        // console.log('[MagicLinkHandler] Auth event:', event, 'Email:', session?.user?.email);
 
         if (event === 'SIGNED_IN' && session?.user) {
           // Bersihkan hash dari URL (security — biar token gak keliatan di address bar)
@@ -110,10 +110,10 @@ const MagicLinkHandler = () => {
             window.location.pathname + window.location.search
           );
 
-          console.log('[MagicLinkHandler] ✓ Session set, redirecting to /orders...');
+          // console.log('[MagicLinkHandler] ✓ Session set, redirecting to /orders...');
 
           // Redirect ke /orders (atau route lain kalau mau)
-          navigate('/orders', { replace: true });
+          navigate('/', { replace: true });
 
           // Unsubscribe setelah redirect (one-time handler)
           subscription?.unsubscribe();
