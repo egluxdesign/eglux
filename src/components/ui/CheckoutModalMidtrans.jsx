@@ -1049,7 +1049,9 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
         }
       };
 
-      window.snap.pay(data.token, {
+        window.snap.pay(data.token, { 
+        // ⭐ FIX: Auto-select payment method yang user pilih di checkout
+        selectedPaymentType: selectedPaymentMethod, // e.g., "qris", "credit_card", "bank_transfer", "gopay"
         onSuccess: (result) => {
           console.log('[Midtrans] Payment success (Snap callback):', result.transaction_id);
           document.body.style.overflow = '';
@@ -1741,17 +1743,14 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
             {!shippingLoading && shippingOptions.length > 0 && (
               <div className="space-y-2 max-h-[260px] overflow-y-auto pr-1">
                 {shippingOptions.map((opt) => {
-                {shippingOptions.map((opt) => {
-                  // ⭐ FIX Bug #2: Use unique_id for selection (was opt.courier — undefined → all selected)
+                  // ⭐ FIX Bug #2: Use unique_id for selection
                   const optUniqueId = opt.unique_id || `${opt.company_code || opt.courier}:${opt.service_code || opt.service}`;
                   const selectedUniqueId = selectedShipping?.unique_id ||
                     `${selectedShipping?.company_code || selectedShipping?.courier}:${selectedShipping?.service_code || selectedShipping?.service}`;
                   const isSelected = selectedUniqueId === optUniqueId;
 
-                  // ⭐ FIX Bug #3: Use company_code for CourierLogo (was opt.courier — undefined)
+                  // ⭐ FIX Bug #3: Use company_code + display_name
                   const courierCode = opt.company_code || opt.courier || '';
-
-                  // ⭐ FIX Bug #3: Use display_name for label (was opt.courier — "undefined — Reguler")
                   const displayName = opt.display_name || `${opt.company || opt.courier || ''} - ${opt.service || ''}`;
 
                   return (

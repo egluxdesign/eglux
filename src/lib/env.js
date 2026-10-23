@@ -2,40 +2,14 @@
 // ============================================================================
 // Centralized environment config + validation
 // ============================================================================
-//
-// KENAPA FILE INI ADA?
-//   Sebelumnya, env vars di-access langsung via `import.meta.env.VITE_XXX`
-//   di banyak file (OrdersList, CheckoutModalMidtrans, ChangeCourierModal,
-//   useMidtransSnap, dst.). Akibatnya:
-//     - Gak ada satu tempat untuk lihat semua env vars yang dipakai
-//     - Gak ada validasi startup — user baru tau env var missing saat
-//       fitur tertentu gagal (mis. klik "Lanjutkan Pembayaran" → error
-//       "Midtrans client key not configured" yang mysterious)
-//     - Error message gak konsisten
-//
-//   Sekarang: satu file ini jadi single source of truth. Saat app start,
-//   validateEnv() dipanggil. Kalau ada var missing, EnvErrorPage render
-//   dengan instruksi yang jelas (var mana yang missing + cara setting).
-//
-// Cara pakai:
-//   import { env, validateEnv, getMissingEnvVars } from '../lib/env';
-//
-//   // Akses env var (semua sudah validated):
-//   env.SUPABASE_URL
-//   env.SUPABASE_ANON_KEY
-//   env.MIDTRANS_CLIENT_KEY
-//   env.MIDTRANS_IS_PRODUCTION
-//
-//   // Startup validation:
-//   const missing = getMissingEnvVars();
-//   if (missing.length > 0) {
-//     // render EnvErrorPage dengan `missing` list
-//   }
+// ⭐ v2 FIX: Hardcode MIDTRANS_IS_PRODUCTION = true buat production.
+//   Masalah sebelumnya: VITE_MIDTRANS_IS_PRODUCTION gak kebaca dari .env.local
+//   → Snap.js load dari sandbox → 404 saat checkout.
+//   Fix: hardcode production URL, bypass env var check.
+//   Kalau mau balik ke sandbox untuk testing, set MIDTRANS_FORCE_SANDBOX=true di .env.local
 // ============================================================================
 
 // ── Env var definitions ────────────────────────────────────────────────────
-// Setiap var punya: key (VITE_XXX), label (untuk display), required (bool),
-// description (untuk EnvErrorPage), dan group (untuk grouping di UI).
 const ENV_DEFINITIONS = [
   {
     key: 'VITE_SUPABASE_URL',
@@ -58,7 +32,7 @@ const ENV_DEFINITIONS = [
     label: 'Midtrans Client Key',
     required: true,
     group: 'Midtrans (Payment)',
-    description: 'Client Key dari Midtrans (public, safe untuk frontend). Sandbox format: SB-Mid-client-XXX. Production: Mid-client-XXX.',
+    description: 'Client Key dari Midtrans (public, safe untuk frontend). Production: Mid-client-XXX.',
     hint: 'Midtrans Dashboard → Settings → Access Keys → Client Key',
   },
   {
@@ -66,17 +40,19 @@ const ENV_DEFINITIONS = [
     label: 'Midtrans Production Mode',
     required: false,
     group: 'Midtrans (Payment)',
-    description: 'Set "true" kalau production (pakai app.midtrans.com). Kosong/false = sandbox (app.sandbox.midtrans.com).',
-    hint: 'Default: false (sandbox)',
+    description: 'Set "true" kalau production. Kosong/false = sandbox.',
+    hint: 'Default: true (hardcoded production buat LIVE)',
   },
 ];
 
-// ── Parsed env (read once, cached) ─────────────────────────────────────────
+// ── Parsed env ─────────────────────────────────────────────────────────────
 const rawEnv = {
   SUPABASE_URL: import.meta.env.VITE_SUPABASE_URL,
   SUPABASE_ANON_KEY: import.meta.env.VITE_SUPABASE_ANON_KEY,
   MIDTRANS_CLIENT_KEY: import.meta.env.VITE_MIDTRANS_CLIENT_KEY,
-  MIDTRANS_IS_PRODUCTION: import.meta.env.VITE_MIDTRANS_IS_PRODUCTION === 'true',
+  // ⭐ FIX: Hardcode production = true. Bypass env var yang gak kebaca.
+  // Kalau mau sandbox testing, set VITE_MIDTRANS_FORCE_SANDBOX=true di .env.local
+  MIDTRANS_IS_PRODUCTION: import.meta.env.VITE_MIDTRANS_FORCE_SANDBOX === 'true' ? false : true,
 };
 
 // ── Public env object (frozen, type-safe) ──────────────────────────────────
@@ -87,6 +63,7 @@ export const env = Object.freeze({
   SUPABASE_URL_VALID: typeof rawEnv.SUPABASE_URL === 'string' &&
     /^https:\/\/[a-z0-9-]+\.supabase\.(co|in)$/.test(rawEnv.SUPABASE_URL),
 
+  // ⭐ FIX: Hardcode production Snap.js URL
   MIDTRANS_SNAP_JS_URL: rawEnv.MIDTRANS_IS_PRODUCTION
     ? 'https://app.midtrans.com/snap/snap.js'
     : 'https://app.sandbox.midtrans.com/snap/snap.js',
@@ -96,10 +73,6 @@ export const env = Object.freeze({
 
 // ── Validation ─────────────────────────────────────────────────────────────
 
-/**
- * Return list of missing REQUIRED env vars.
- * Setiap item: { key, label, description, hint, group }
- */
 export function getMissingEnvVars() {
   return ENV_DEFINITIONS
     .filter(def => def.required)
@@ -117,10 +90,6 @@ export function getMissingEnvVars() {
     }));
 }
 
-/**
- * Validate env vars. Return { valid: boolean, missing: [] }.
- * Dipanggil saat app start (main.jsx). Kalau valid=false, render EnvErrorPage.
- */
 export function validateEnv() {
   const missing = getMissingEnvVars();
   return {
@@ -129,9 +98,6 @@ export function validateEnv() {
   };
 }
 
-/**
- * Get all env definitions (untuk display di EnvErrorPage atau debug panel).
- */
 export function getEnvDefinitions() {
   return ENV_DEFINITIONS;
 }
@@ -152,6 +118,9 @@ if (import.meta.env.DEV) {
     console.warn('  3. Restart Vite dev server:  npm run dev');
     console.groupEnd();
   } else {
-    // console.log('✓ EGLUX — All required env vars configured');
+    console.log('✓ EGLUX — All required env vars configured');
   }
+
+  // ⭐ Log Midtrans mode
+  console.log(`[Midtrans] Mode: ${env.MIDTRANS_MODE_LABEL} | Snap.js URL: ${env.MIDTRANS_SNAP_JS_URL}`);
 }
