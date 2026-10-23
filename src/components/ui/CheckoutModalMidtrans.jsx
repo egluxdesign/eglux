@@ -517,9 +517,13 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
           items: cart.map((item) => ({
             product_id: item.productId,
             name: item.name,
-            price: item.price || 0,
-            qty: item.qty,
-            weight_in_gram: item.weight_in_gram || 500,
+            // ⭐ FIX: Biteship expects 'value' (BUKAN 'price')
+            // Use originalPrice for jntcargo insurance calc — fallback to price
+            value: item.originalPrice || item.price || 0,
+            // ⭐ FIX: Biteship expects 'quantity' (BUKAN 'qty')
+            quantity: item.qty,
+            // ⭐ FIX: Biteship expects 'weight' in grams (BUKAN 'weight_in_gram')
+            weight: item.weight_in_gram || 500,
           })),
         };
 
@@ -540,8 +544,11 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
           );
         }
 
-        setShippingOptions(data.pricing || []);
-        if (!data.pricing?.length) showToast('Tidak ada kurir tersedia untuk area ini.');
+        // ⭐ FIX: Edge function v4.1 returns both 'rates' and 'pricing' fields
+        // Check rates first (primary), fallback to pricing (Biteship docs format)
+        const shippingRates = data.rates || data.pricing || [];
+        setShippingOptions(shippingRates);
+        if (!shippingRates.length) showToast('Tidak ada kurir tersedia untuk area ini.');
       } catch (err) {
         let msg = err.message;
         try {
@@ -844,7 +851,8 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
         shipping_postal_code: form.postal,
         shipping_area_id: String(selectedAreaId || '').trim() || null,
         shipping_area_name: selectedArea?.name || null,
-        courier_code: (selectedShipping?.courier || '').toLowerCase(),
+        // ⭐ FIX: Use company_code (from edge function) instead of courier (undefined)
+        courier_code: (selectedShipping?.company_code || selectedShipping?.courier || '').toLowerCase(),
         courier_service: selectedShipping?.service || null,
         courier_duration: selectedShipping?.duration || null,
         courier_rate: shippingCost,
@@ -1270,9 +1278,9 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
                   {selectedShipping && (
                     <div className="flex justify-between mt-1 text-[0.82rem]">
                       <span className="text-gray-600 flex items-center gap-2">
-                        {/* ⭐ Courier logo di selected shipping display */}
-                        <CourierLogo courierCode={selectedShipping.courier} size={24} />
-                        Ongkir ({selectedShipping.courier} {selectedShipping.service})
+                        {/* ⭐ FIX: Use company_code for CourierLogo + display_name for label */}
+                        <CourierLogo courierCode={selectedShipping.company_code || selectedShipping.courier} size={24} />
+                        Ongkir ({selectedShipping.display_name || `${selectedShipping.company || selectedShipping.courier} - ${selectedShipping.service}`})
                       </span>
                       <span className="font-medium text-eglux-primary">{rupiah(shippingCost)}</span>
                     </div>
@@ -1733,12 +1741,22 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
             {!shippingLoading && shippingOptions.length > 0 && (
               <div className="space-y-2 max-h-[260px] overflow-y-auto pr-1">
                 {shippingOptions.map((opt) => {
-                  const isSelected =
-                    selectedShipping?.courier === opt.courier &&
-                    selectedShipping?.service === opt.service;
+                {shippingOptions.map((opt) => {
+                  // ⭐ FIX Bug #2: Use unique_id for selection (was opt.courier — undefined → all selected)
+                  const optUniqueId = opt.unique_id || `${opt.company_code || opt.courier}:${opt.service_code || opt.service}`;
+                  const selectedUniqueId = selectedShipping?.unique_id ||
+                    `${selectedShipping?.company_code || selectedShipping?.courier}:${selectedShipping?.service_code || selectedShipping?.service}`;
+                  const isSelected = selectedUniqueId === optUniqueId;
+
+                  // ⭐ FIX Bug #3: Use company_code for CourierLogo (was opt.courier — undefined)
+                  const courierCode = opt.company_code || opt.courier || '';
+
+                  // ⭐ FIX Bug #3: Use display_name for label (was opt.courier — "undefined — Reguler")
+                  const displayName = opt.display_name || `${opt.company || opt.courier || ''} - ${opt.service || ''}`;
+
                   return (
                     <label
-                      key={`${opt.courier}-${opt.service}`}
+                      key={optUniqueId}
                       className={`flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-all ${
                         isSelected
                           ? 'border-eglux-secondary bg-eglux-accent'
@@ -1754,11 +1772,10 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
                           onChange={() => setSelectedShipping(opt)}
                           disabled={isLocked}
                         />
-                        {/* ⭐ Courier logo dari Biteship CDN */}
-                        <CourierLogo courierCode={opt.courier} size={36} />
+                        <CourierLogo courierCode={courierCode} size={36} />
                         <div>
                           <p className="text-[0.82rem] font-semibold text-eglux-primary">
-                            {opt.courier} — {opt.service}
+                            {displayName}
                           </p>
                           <p className="text-[0.72rem] text-[#999]">
                             {opt.duration}

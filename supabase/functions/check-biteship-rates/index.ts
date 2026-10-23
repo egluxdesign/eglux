@@ -1,16 +1,18 @@
 // supabase/functions/check-biteship-rates/index.ts
 // ============================================================================
-// Check Biteship Rates v3.0 — CLEAN REWRITE dengan hardcoded courier whitelist
+// Check Biteship Rates v4.0 — sesuai official Biteship API documentation
 // ============================================================================
-// ⭐ v3.0 CHANGES (dari v2.1):
-//   - Hardcode courier whitelist di edge function code (simpler, no DB query needed)
-//   - Filter logic simpler — direct filter without DB fetch
-//   - Optional DB override: kalau `enabled_courier_services` di app_settings
-//     SET, pakai DB config. Else pakai hardcoded COURIER_WHITELIST.
-//   - Single filter function (cleaner than v2.1 dual logic)
+// ⭐ v4.0 FIX (dari v3.1):
+//   - URL CORRECT: POST /v1/rates/couriers (BUKAN /v1/rates)
+//   - Payload field CORRECT: items[].value (BUKAN items[].price)
+//   - Response field CORRECT: data.pricing (BUKAN data.rates)
+//   - Field normalization sesuai docs:
+//     * courier_code (lowercase) bukan company_code
+//     * courier_service_code (lowercase) bukan service_code
+//     * price (final price including fees)
+//     * shipping_fee (base shipping fee)
 //
-// ⭐ v2.1 (previous): Filter by JSONB `enabled_courier_services` dari DB
-// ⭐ v2.0 (previous): Filter by TEXT[] `enabled_couriers` dari DB
+// Source: https://biteship.com/en/docs/api/rates/retrieve
 //
 // COURIER WHITELIST (sesuai config EGLUX):
 //   jne      = REG + YES   (Regular + Yakin Esok Sampai)
@@ -20,7 +22,7 @@
 //
 // ENV VARS:
 //   - SUPABASE_URL               (auto-set)
-//   - SUPABASE_SERVICE_ROLE_KEY  (auto-set) — for DB override fetch (optional)
+//   - SUPABASE_SERVICE_ROLE_KEY  (auto-set)
 //   - BITESHIP_API_KEY           (supabase secrets set BITESHIP_API_KEY=xxx)
 //   - BITESHIP_ORIGIN_AREA_ID    (supabase secrets set BITESHIP_ORIGIN_AREA_ID=xxx)
 //   - BITESHIP_ORIGIN_POSTAL_CODE (optional fallback)
@@ -29,7 +31,7 @@
 //   {
 //     "destination_postal_code": "10210",
 //     "destination_area_id": "xxx" (optional),
-//     "items": [{ "name": "Product", "weight": 500, "quantity": 2, "price": 50000 }],
+//     "items": [{ "name": "Product", "weight": 500, "quantity": 2, "value": 50000 }],
 //     "cod_price": 0 (optional)
 //   }
 //
@@ -42,8 +44,7 @@
 //       ...
 //     ],
 //     "total_rates": 5,
-//     "raw_biteship_count": 12,
-//     "filter_source": "hardcoded" | "db_override"
+//     "raw_biteship_count": 12
 //   }
 // ============================================================================
 
@@ -60,15 +61,69 @@ const BITESHIP_ORIGIN_AREA_ID = Deno.env.get("BITESHIP_ORIGIN_AREA_ID");
 const BITESHIP_ORIGIN_POSTAL_CODE = Deno.env.get("BITESHIP_ORIGIN_POSTAL_CODE");
 
 // ============================================================================
-// ⭐ COURIER WHITELIST — HARDCODED CONFIG
+// ⭐ BITESHIP API CONFIG (sesuai official docs)
 // ============================================================================
-// Config courier yang lu pilih (sesuai DB app_settings.enabled_courier_services).
-// Kalau mau ubah, edit array ini + redeploy edge function.
+// Source: https://biteship.com/en/docs/api/rates/retrieve
 //
-// Alternative: kalau `enabled_courier_services` di DB ada, bakal override
-// hardcoded ini (lihat function getCourierFilterConfigFromDB di bawah).
+// Endpoint: POST /v1/rates/couriers
+// Auth: Authorization: <api_key> (raw, no Bearer prefix)
+// Content-Type: application/json
+//
+// Request body fields:
+//   - origin_area_id (string)      OPTIONAL/REQUIRED
+//   - destination_area_id (string) OPTIONAL/REQUIRED
+//   - origin_postal_code (number)  OPTIONAL/REQUIRED
+//   - destination_postal_code (number) OPTIONAL/REQUIRED
+//   - origin_latitude/longitude (number) OPTIONAL (for instant delivery)
+//   - destination_latitude/longitude (number) OPTIONAL
+//   - couriers (string)            REQUIRED — comma-separated courier codes
+//   - items (array)                REQUIRED
+//     - name (string)              REQUIRED
+//     - description (string)       OPTIONAL
+//     - value (number)             REQUIRED  ⭐ BUKAN price!
+//     - quantity (number)          REQUIRED
+//     - weight (number)            REQUIRED (grams)
+//     - length/width/height (number) OPTIONAL (cm)
+//     - category (string)           OPTIONAL (fashion/food/electronic/dll)
+//   - courier_insurance (number)   OPTIONAL
+//   - destination_cash_on_delivery (number) OPTIONAL
+//   - destination_cash_on_delivery_type (string) OPTIONAL (7_days/5_days/3_days)
+//   - type (string)                 OPTIONAL (origin_suggestion_to_closest_destination)
+//
+// Response fields:
+//   - success (boolean)
+//   - object (string) = "courier_pricing"
+//   - message (string)
+//   - code (number)
+//   - origin (object) — location info
+//   - destination (object) — location info
+//   - pricing (array) ⭐ BUKAN rates!
+//     - company (string)         e.g., "jne"
+//     - courier_name (string)    e.g., "JNE"
+//     - courier_code (string)    e.g., "jne"
+//     - courier_service_name (string) e.g., "City to City (CTC)"
+//     - courier_service_code (string) e.g., "ctc"  ⭐ lowercase
+//     - description (string)
+//     - duration (string)        e.g., "2 - 3 days"
+//     - shipment_duration_range (string) e.g., "2 - 3"
+//     - shipment_duration_unit (string) e.g., "days"
+//     - service_type (string)    e.g., "standard"
+//     - shipping_type (string)   e.g., "parcel"
+//     - shipping_fee (number)   base shipping fee
+//     - shipping_fee_discount (number)
+//     - shipping_fee_surcharge (number)
+//     - insurance_fee (number)
+//     - cash_on_delivery_fee (number)
+//     - price (number)          ⭐ FINAL price including all fees
+//     - type (string)            e.g., "ctc"
+//     - currency (string)        e.g., "IDR"
 // ============================================================================
 
+const BITESHIP_RATES_ENDPOINT = "https://api.biteship.com/v1/rates/couriers";
+
+// ============================================================================
+// COURIER WHITELIST — HARDCODED CONFIG
+// ============================================================================
 interface CourierServiceFilter {
   company_code: string;
   services: string[];
@@ -106,14 +161,6 @@ function json(obj: unknown, status = 200) {
 // ============================================================================
 // DB OVERRIDE (optional — kalau ada di DB, pakai DB config, else hardcoded)
 // ============================================================================
-/**
- * Fetch courier config dari app_settings table (DB override).
- *
- * Return:
- *   - null  → pakai hardcoded COURIER_WHITELIST
- *   - []    → block all (matikan shipping)
- *   - array → pakai DB config (override hardcoded)
- */
 async function getCourierFilterConfigFromDB(): Promise<CourierServiceFilter[] | null> {
   try {
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
@@ -125,7 +172,7 @@ async function getCourierFilterConfigFromDB(): Promise<CourierServiceFilter[] | 
 
     if (error) {
       console.warn("[check-biteship-rates] Failed to fetch app_settings:", error.message);
-      return null; // Fallback to hardcoded
+      return null;
     }
 
     if (!data) {
@@ -166,7 +213,7 @@ async function getCourierFilterConfigFromDB(): Promise<CourierServiceFilter[] | 
     return normalized;
   } catch (err) {
     console.warn("[check-biteship-rates] Exception fetching app_settings:", err?.message);
-    return null; // Fallback to hardcoded
+    return null;
   }
 }
 
@@ -174,20 +221,19 @@ async function getCourierFilterConfigFromDB(): Promise<CourierServiceFilter[] | 
 // FILTER FUNCTION — case-insensitive match by (company_code, service_code)
 // ============================================================================
 function filterRatesByCourierServices(
-  rates: any[],
+  pricing: any[],
   whitelist: CourierServiceFilter[]
 ): any[] {
   if (whitelist.length === 0) {
-    // Empty whitelist = block all
     return [];
   }
 
-  return rates.filter((rate) => {
-    // Biteship response fields:
-    //   - company_code OR company (e.g., "jne" or "JNE")
-    //   - service_code OR service (e.g., "reg" or "REG")
-    const companyCode = String(rate?.company_code || rate?.company || "").toLowerCase();
-    const serviceCode = String(rate?.service_code || rate?.service || "").toLowerCase();
+  return pricing.filter((rate) => {
+    // ⭐ CORRECT field names per Biteship docs:
+    //   - courier_code (lowercase) — e.g., "jne"
+    //   - courier_service_code (lowercase) — e.g., "ctc", "reg", "best"
+    const companyCode = String(rate?.courier_code || rate?.company || "").toLowerCase();
+    const serviceCode = String(rate?.courier_service_code || rate?.type || "").toLowerCase();
 
     if (!companyCode || !serviceCode) return false;
 
@@ -195,7 +241,6 @@ function filterRatesByCourierServices(
     const matchingCourier = whitelist.find((cs) => cs.company_code === companyCode);
     if (!matchingCourier) return false;
 
-    // Check if service is in the courier's services whitelist
     return matchingCourier.services.includes(serviceCode);
   });
 }
@@ -248,30 +293,58 @@ serve(async (req: Request) => {
 
   console.log(`[check-biteship-rates] Request: dest_postal=${destinationPostalCode}, dest_area=${destinationAreaId}, items=${items.length}`);
 
-  // ── Build Biteship API payload ──
+  // ── Build Biteship API payload (SESUAI OFFICIAL DOCS) ──
+  // ⭐ FIX: items[].value (BUKAN items[].price) — per Biteship docs
   const originAreaId = BITESHIP_ORIGIN_AREA_ID || null;
   const originPostalCode = BITESHIP_ORIGIN_POSTAL_CODE || null;
+
+  // Build couriers string from hardcoded whitelist
+  const hardcodedCouriers = COURIER_WHITELIST.map((c) => c.company_code).join(",");
+  // Caller can override via body.couriers
+  const couriersParam = body?.couriers || hardcodedCouriers;
 
   const biteshipPayload: any = {
     origin_postal_code: originPostalCode,
     destination_postal_code: destinationPostalCode,
+    couriers: couriersParam,  // ⭐ REQUIRED per docs — comma-separated courier codes
     items: items.map((item: any) => ({
       name: item.name || "Item",
-      weight: Number(item.weight) || 100, // grams
+      description: item.description || undefined,
+      value: Number(item.value || item.price) || 0,  // ⭐ FIX: 'value' (BUKAN 'price')
       quantity: Number(item.quantity) || 1,
-      price: Number(item.price) || 0,
+      weight: Number(item.weight) || 100,  // grams
+      length: item.length ? Number(item.length) : undefined,
+      width: item.width ? Number(item.width) : undefined,
+      height: item.height ? Number(item.height) : undefined,
+      category: item.category || undefined,
     })),
   };
 
   if (originAreaId) biteshipPayload.origin_area_id = originAreaId;
   if (destinationAreaId) biteshipPayload.destination_area_id = destinationAreaId;
-  if (codPrice > 0) biteshipPayload.cod_price = codPrice;
+  if (codPrice > 0) {
+    biteshipPayload.destination_cash_on_delivery = codPrice;
+    biteshipPayload.destination_cash_on_delivery_type = "7_days"; // default 7 days
+  }
 
-  // ── Call Biteship POST /v1/rates ──
-  let biteshipRates: any[] = [];
+  // Remove undefined fields (Biteship might reject them)
+  Object.keys(biteshipPayload).forEach((key) => {
+    if (biteshipPayload[key] === undefined) delete biteshipPayload[key];
+  });
+  biteshipPayload.items = biteshipPayload.items.map((item: any) => {
+    Object.keys(item).forEach((key) => {
+      if (item[key] === undefined) delete item[key];
+    });
+    return item;
+  });
+
+  console.log(`[check-biteship-rates] Biteship payload:`, JSON.stringify(biteshipPayload).substring(0, 1000));
+
+  // ── ⭐ CALL BITESHIP POST /v1/rates/couriers (CORRECT URL per docs) ──
+  let biteshipPricing: any[] = [];
   try {
-    console.log("[check-biteship-rates] Calling Biteship /v1/rates...");
-    const resp = await fetch("https://api.biteship.com/v1/rates", {
+    console.log(`[check-biteship-rates] Calling Biteship ${BITESHIP_RATES_ENDPOINT}...`);
+    const resp = await fetch(BITESHIP_RATES_ENDPOINT, {
       method: "POST",
       headers: {
         Authorization: BITESHIP_API_KEY,
@@ -283,19 +356,41 @@ serve(async (req: Request) => {
 
     const data = await resp.json();
     console.log(`[check-biteship-rates] Biteship HTTP ${resp.status}, response:`,
-      JSON.stringify(data).substring(0, 1500));
+      JSON.stringify(data).substring(0, 2000));
 
     if (!resp.ok) {
+      // ⭐ Friendly error messages per HTTP status
+      let friendlyError = "Biteship API error";
+      let hint = "";
+      if (resp.status === 404) {
+        friendlyError = "Biteship API endpoint not found (404)";
+        hint = "URL endpoint salah atau Biteship account gak punya akses. Cek Biteship API documentation di https://biteship.com/en/docs/api/rates/retrieve";
+      } else if (resp.status === 401) {
+        friendlyError = "Biteship API key invalid (401 Unauthorized)";
+        hint = "Cek BITESHIP_API_KEY secret. Production key format: biteship_live.{JWT}";
+      } else if (resp.status === 400) {
+        friendlyError = "Biteship API bad request (400)";
+        hint = `Payload salah. Cek fields: origin_postal_code/area_id, destination_postal_code/area_id, items[].value (BUKAN price), items[].weight, couriers. Error message: ${data?.error || data?.message}`;
+      } else if (resp.status === 429) {
+        friendlyError = "Biteship API rate limit (429 Too Many Requests)";
+        hint = "Biteship rate limit hit — tunggu 1 menit sebelum coba lagi";
+      }
+
+      console.error(`[check-biteship-rates] Biteship API error ${resp.status}:`, data);
       return json({
-        error: "Biteship API error",
+        error: friendlyError,
         debug: {
           status: resp.status,
-          message: data?.error?.message || data?.error || data,
+          message: data?.error?.message || data?.error || data?.message || data,
+          biteship_response: data,
         },
+        hint,
+        sent_payload: biteshipPayload,
       }, resp.status);
     }
 
-    biteshipRates = data?.rates || data || [];
+    // ⭐ CORRECT response field: data.pricing (BUKAN data.rates)
+    biteshipPricing = data?.pricing || data?.rates || data || [];
   } catch (err) {
     console.error("[check-biteship-rates] Network error calling Biteship:", err?.message);
     return json({
@@ -304,8 +399,8 @@ serve(async (req: Request) => {
     }, 502);
   }
 
-  if (!Array.isArray(biteshipRates) || biteshipRates.length === 0) {
-    console.warn("[check-biteship-rates] No rates returned by Biteship");
+  if (!Array.isArray(biteshipPricing) || biteshipPricing.length === 0) {
+    console.warn("[check-biteship-rates] No pricing returned by Biteship");
     return json({
       success: true,
       rates: [],
@@ -313,12 +408,10 @@ serve(async (req: Request) => {
     });
   }
 
-  console.log(`[check-biteship-rates] Biteship returned ${biteshipRates.length} rates`);
-  console.log(`[check-biteship-rates] Sample rate:`, JSON.stringify(biteshipRates[0]));
+  console.log(`[check-biteship-rates] Biteship returned ${biteshipPricing.length} pricing options`);
+  console.log(`[check-biteship-rates] Sample pricing:`, JSON.stringify(biteshipPricing[0]));
 
   // ── ⭐ FETCH DB OVERRIDE (optional) ──
-  // Kalau ada config di DB (enabled_courier_services), pakai DB.
-  // Else pakai hardcoded COURIER_WHITELIST_LOWER.
   const dbOverride = await getCourierFilterConfigFromDB();
   const activeWhitelist = dbOverride !== null ? dbOverride : COURIER_WHITELIST_LOWER;
   const filterSource = dbOverride !== null ? "db_override" : "hardcoded";
@@ -327,38 +420,83 @@ serve(async (req: Request) => {
   console.log(`[check-biteship-rates] Active whitelist:`, activeWhitelist);
 
   // ── ⭐ APPLY FILTER ──
-  const filteredRates = filterRatesByCourierServices(biteshipRates, activeWhitelist);
+  const filteredPricing = filterRatesByCourierServices(biteshipPricing, activeWhitelist);
 
-  console.log(`[check-biteship-rates] Filter result: ${biteshipRates.length} → ${filteredRates.length} rates`);
+  console.log(`[check-biteship-rates] Filter result: ${biteshipPricing.length} → ${filteredPricing.length} rates`);
 
-  if (filteredRates.length === 0 && activeWhitelist.length > 0) {
+  if (filteredPricing.length === 0 && activeWhitelist.length > 0) {
     console.warn(`[check-biteship-rates] ⚠️ All rates filtered out — check whitelist vs Biteship response`);
     console.warn(`[check-biteship-rates] Whitelist:`, activeWhitelist);
-    console.warn(`[check-biteship-rates] Biteship sample:`, biteshipRates.slice(0, 3).map(r => ({
-      company_code: r?.company_code || r?.company,
-      service_code: r?.service_code || r?.service,
+    console.warn(`[check-biteship-rates] Biteship sample:`, biteshipPricing.slice(0, 3).map((p) => ({
+      courier_code: p?.courier_code || p?.company,
+      courier_service_code: p?.courier_service_code || p?.type,
     })));
   }
 
-  // ── Normalize output format ──
-  // Standard fields frontend expect: company, company_code, service, service_code, price, duration, etd
-  const normalizedRates = filteredRates.map((rate) => ({
-    company: rate.company || rate.company_name || null,
-    company_code: rate.company_code || (rate.company ? rate.company.toLowerCase() : null),
-    service: rate.service || rate.service_name || null,
-    service_code: rate.service_code || (rate.service ? rate.service.toLowerCase() : null),
-    price: Number(rate.price) || 0,
-    duration: rate.duration || rate.etd || null,
-    etd: rate.etd || rate.duration || null,
-    note: rate.note || null,
-  }));
+  // ── ⭐ NORMALIZE OUTPUT (sesuai Biteship response field names) ──
+  const normalizedRates = filteredPricing.map((p) => {
+    const companyName = p.courier_name || p.company || null;
+    const serviceName = p.courier_service_name || p.service || null;
+    const companyCode = p.courier_code || (p.company ? p.company.toLowerCase() : null);
+    const serviceCode = p.courier_service_code || (p.type ? p.type.toLowerCase() : null);
+
+    // ⭐ NEW: display_name buat frontend gampang show (e.g., "JNE - Reguler")
+    // Kalau service ada: "JNE - Reguler"
+    // Kalau service gak ada: "JNE"
+    let displayName = companyName || "Unknown Courier";
+    if (serviceName && serviceName !== displayName) {
+      displayName = `${companyName} - ${serviceName}`;
+    }
+
+    return {
+      // ⭐ NEW field: display_name (combined company + service)
+      display_name: displayName,
+
+      // Frontend-friendly field names
+      company: companyName,                                          // e.g., "JNE"
+      company_code: companyCode,                                    // e.g., "jne"
+      service: serviceName,                                         // e.g., "Reguler"
+      service_code: serviceCode,                                   // e.g., "reg"
+
+      // ⭐ NEW field: unique_id buat React state key (avoid collision when same company+service_code)
+      unique_id: `${companyCode}:${serviceCode}`,
+
+      // Pricing details
+      price: Number(p.price) || 0,                                  // ⭐ FINAL price (includes fees)
+      shipping_fee: Number(p.shipping_fee) || 0,                   // Base shipping fee
+      shipping_fee_discount: Number(p.shipping_fee_discount) || 0,
+      shipping_fee_surcharge: Number(p.shipping_fee_surcharge) || 0,
+      insurance_fee: Number(p.insurance_fee) || 0,
+      cash_on_delivery_fee: Number(p.cash_on_delivery_fee) || 0,
+
+      // Duration
+      duration: p.duration || p.shipment_duration_range || null,      // e.g., "2 - 3 days"
+      etd: p.shipment_duration_range || p.duration || null,           // e.g., "2 - 3"
+      duration_unit: p.shipment_duration_unit || "days",
+
+      // Service metadata
+      service_type: p.service_type || null,                            // e.g., "standard"
+      shipping_type: p.shipping_type || null,                          // e.g., "parcel"
+      description: p.description || null,
+      currency: p.currency || "IDR",
+      available_for_cash_on_delivery: p.available_for_cash_on_delivery || false,
+      available_for_insurance: p.available_for_insurance || false,
+      available_for_proof_of_delivery: p.available_for_proof_of_delivery || false,
+      type: p.type || null,                                           // e.g., "reg"
+    };
+  });
 
   return json({
     success: true,
-    rates: normalizedRates,
+    rates: normalizedRates,         // ⭐ Field untuk frontend yang baca `rates`
+    pricing: normalizedRates,       // ⭐ Field untuk frontend yang baca `pricing` (per Biteship docs)
     total_rates: normalizedRates.length,
-    raw_biteship_count: biteshipRates.length,
+    raw_biteship_count: biteshipPricing.length,
     filter_source: filterSource,
     whitelist_count: activeWhitelist.length,
+    used_endpoint: BITESHIP_RATES_ENDPOINT,
+    // Also include origin Biteship response fields kalau frontend butuh
+    origin: biteshipPricing.length > 0 ? "available" : null,
+    destination: biteshipPricing.length > 0 ? "available" : null,
   });
 });
