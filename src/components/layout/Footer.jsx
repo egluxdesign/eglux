@@ -62,7 +62,7 @@ const IconMail = ({ className = 'w-4 h-4' }) => (
 // ── Social links data ──
 const SOCIAL_LINKS = [
   { label: 'Instagram', href: 'https://instagram.com/eglux_id', Icon: IconInstagram },
-  { label: 'WhatsApp',  href: 'https://wa.me/6285111752600', Icon: IconWhatsApp  },
+  { label: 'WhatsApp',  href: 'https://whatsapp.com/channel/0029Vb97KeMJpe8Z8GSmVc04', Icon: IconWhatsApp  },
   { label: 'TikTok',    href: 'https://tiktok.com/@egluxdecor',   Icon: IconTikTok    },
 ];
 
@@ -160,7 +160,7 @@ const Footer = () => {
 
       // ⭐ Auto-redirect ke WA group setelah 1.5 detik
       setTimeout(() => {
-        window.open('https://bit.ly/eglux-id', '_blank', 'noopener,noreferrer');
+        window.open('https://whatsapp.com/channel/0029Vb97KeMJpe8Z8GSmVc04', '_blank', 'noopener,noreferrer');
       }, 1500);
     } catch (e) {
       const msg = e.message?.includes('Failed to fetch')
