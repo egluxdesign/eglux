@@ -1,19 +1,26 @@
-/* src/styles/eglux-design-system.css */
+/* src/assets/styles/eglux-design-system.css */
 /* ============================================================================
- * EGLUX Design System v3 — Ruadh-inspired luxury editorial aesthetic
+ * EGLUX Design System v4 — Ruadh-inspired luxury editorial aesthetic
  * ============================================================================
+ * v4 CHANGES:
+ *   - Mobile optimizations: compact product cards, scroll snap, safe area
+ *   - Horizontal scroll: 2.5 items per view (Shopee pattern)
+ *   - "Lihat Lainnya" card height matches product card
+ *   - Reduced whitespace on mobile sections
+ *   - Dynamic viewport height (100dvh) for mobile browser bar
+ *
  * Typography:
  *   - Headings: Playfair Display (serif, elegant)
  *   - Body: Inter (sans-serif, clean)
  *
- * Color Palette (more muted/sophisticated):
- *   --eglux-primary:    #1a1a1a (near-black, was same)
- *   --eglux-secondary:  #9a7d4a (muted gold, less saturated than #c9a96e)
- *   --eglux-accent:     #f7f3ed (warmer cream, was #faf6ef)
- *   --eglux-text:       #3a3944 (soft dark, was pure black)
- *   --eglux-text-muted: #8a8a8a (was gray-400/500)
+ * Color Palette:
+ *   --eglux-primary:    #554521 (warm brown)
+ *   --eglux-secondary:  #cba65a (muted gold)
+ *   --eglux-accent:     #f5f0e8 (warm cream)
+ *   --eglux-text:       #3a3944 (soft dark)
+ *   --eglux-text-muted: #8a8a8a (gray)
  *
- * Spacing: More generous whitespace between sections
+ * Spacing: More generous whitespace on desktop, compact on mobile
  * Cards: Borderless, no shadow, clean
  * ============================================================================ */
 
@@ -32,8 +39,18 @@
   --font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 
   /* ── Spacing ── */
-  --space-section: 5rem;    /* 80px between sections (was 3rem/48px) */
-  --space-section-lg: 7rem; /* 112px for major section breaks */
+  --space-section: 5rem;
+  --space-section-lg: 7rem;
+
+  /* ── Mobile card sizing ── */
+  --card-gap-mobile: 0.5rem;
+  --card-gap-desktop: 1rem;
+  --card-name-margin-mobile: 0.5rem;
+  --card-name-margin-desktop: 0.75rem;
+  --card-font-mobile: 0.75rem;
+  --card-font-desktop: 0.85rem;
+  --card-image-ratio-mobile: 1 / 1.15;
+  --card-image-ratio-desktop: 4 / 5;
 }
 
 /* ── Base typography ── */
@@ -73,6 +90,17 @@ h1, h2, h3, h4, h5, h6,
   margin-top: 0.5rem;
 }
 
+/* ── Mobile: smaller section titles ── */
+@media (max-width: 767px) {
+  .section-title {
+    font-size: 1.2rem;
+  }
+  .section-subtitle {
+    font-size: 0.7rem;
+    margin-top: 0.25rem;
+  }
+}
+
 /* ── Product Card: Borderless Clean (Ruadh/IKEA style) ── */
 .product-card {
   background: transparent;
@@ -86,36 +114,40 @@ h1, h2, h3, h4, h5, h6,
 
 .product-card:hover {
   opacity: 0.85;
-  transform: none; /* no lift effect */
+  transform: none;
   box-shadow: none;
 }
 
 .product-card .product-card__image {
   overflow: hidden;
   border-radius: 0;
+  aspect-ratio: var(--card-image-ratio-desktop);
 }
 
 .product-card .product-card__image img {
   transition: transform 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .product-card:hover .product-card__image img {
-  transform: scale(1.04); /* subtle zoom, no lift */
+  transform: scale(1.04);
 }
 
 .product-card .product-card__name {
   font-family: var(--font-body);
-  font-size: 0.85rem;
+  font-size: var(--card-font-desktop);
   font-weight: 400;
   color: var(--eglux-text);
   line-height: 1.5;
-  margin-top: 0.75rem;
+  margin-top: var(--card-name-margin-desktop);
   letter-spacing: 0.01em;
 }
 
 .product-card .product-card__price {
   font-family: var(--font-body);
-  font-size: 0.85rem;
+  font-size: var(--card-font-desktop);
   font-weight: 500;
   color: var(--eglux-primary);
   margin-top: 0.25rem;
@@ -129,6 +161,25 @@ h1, h2, h3, h4, h5, h6,
   margin-right: 0.5rem;
 }
 
+/* ── Mobile: compact product cards ── */
+@media (max-width: 767px) {
+  .product-card .product-card__image {
+    aspect-ratio: var(--card-image-ratio-mobile);
+  }
+  .product-card .product-card__name {
+    font-size: var(--card-font-mobile);
+    line-height: 1.4;
+    margin-top: var(--card-name-margin-mobile);
+  }
+  .product-card .product-card__price {
+    font-size: var(--card-font-mobile);
+    margin-top: 0.15rem;
+  }
+  .product-card .product-card__price-original {
+    font-size: 0.65rem;
+  }
+}
+
 /* ── Badge: minimal, no rounded ── */
 .product-badge {
   font-family: var(--font-body);
@@ -139,7 +190,7 @@ h1, h2, h3, h4, h5, h6,
   padding: 4px 10px;
   background: var(--eglux-primary);
   color: var(--eglux-white);
-  border-radius: 0; /* sharp corners = editorial */
+  border-radius: 0;
 }
 
 .product-badge--discount {
@@ -225,6 +276,22 @@ h1, h2, h3, h4, h5, h6,
   padding-bottom: var(--space-section-lg);
 }
 
+/* ── Mobile: reduced section spacing ── */
+@media (max-width: 767px) {
+  .section-spacing {
+    padding-top: 2rem;
+    padding-bottom: 2rem;
+  }
+  .section-spacing-lg {
+    padding-top: 2.5rem;
+    padding-bottom: 2.5rem;
+  }
+  .section-overlay {
+    padding-top: 1.5rem;
+    padding-bottom: 1.5rem;
+  }
+}
+
 /* ── "Lihat Semua" link: minimal ── */
 .see-all-link {
   font-family: var(--font-body);
@@ -288,33 +355,25 @@ h1, h2, h3, h4, h5, h6,
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 /* ── Parallax Hero: stays fixed, next section scrolls over ── */
-/* ⭐ FIX: position: sticky → relative (sticky bisa break kalau parent ada overflow)
-   + !important supaya gak di-override oleh utility class manapun */
 .hero-parallax {
   position: relative !important;
   top: 0 !important;
   left: 0 !important;
-  /* ⭐ Full viewport on ALL media:
-     - 100vh: standard (fallback for older browsers)
-     - 100dvh: dynamic viewport (mobile URL bar show/hide) */
   height: 100vh !important;
   height: 100dvh !important;
   min-height: 100vh !important;
   width: 100% !important;
-  /* ⭐ Banner goes BEHIND transparent header — no top padding/margin */
   margin: 0 !important;
   padding: 0 !important;
   z-index: 0 !important;
   overflow: hidden !important;
   background: var(--eglux-accent) !important;
-  /* ⭐ Swipe-friendly defaults (defensive — inline styles also set on component) */
   touch-action: pan-y;
   -webkit-user-select: none;
   user-select: none;
   -webkit-touch-callout: none;
 }
 
-/* ⭐ Guarantee children fill hero height */
 .hero-parallax > div {
   height: 100% !important;
 }
@@ -362,11 +421,6 @@ body {
   line-height: 1.1;
 }
 
-/* ── Product card aspect ratio: 4/5 (portrait, Ruadh style) ── */
-.product-card .product-card__image {
-  aspect-ratio: 4 / 5;
-}
-
 /* ── Section min-height for full-page feel ── */
 @media (min-height: 600px) {
   .section-overlay {
@@ -376,11 +430,8 @@ body {
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * PageLoader — React loader (checkout, route transitions, fetch)
- * Same animation as pre-hydration loader: logo rises from bottom + opacity 50→100
  * ═══════════════════════════════════════════════════════════════════════════ */
 
-/* ⭐ Keyframes — duplicate dari inline <style> di index.html supaya
-   PageLoader (React component) juga punya animasi yang sama. */
 @keyframes eglux-logo-reveal {
   0%   { opacity: 0.5; transform: translateY(16px); }
   50%  { opacity: 1;   transform: translateY(0); }
@@ -464,6 +515,9 @@ body {
  * Pattern: Shopee/Tokopedia "flash sale" style — horizontal scroll snap
  * with hidden scrollbar + peek of next item to indicate scrollability.
  *
+ * Mobile: 2.5 items visible (2 full + peek of 3rd)
+ * Desktop: 5 items visible
+ *
  * Usage:
  *   <div className="eglux-hscroll">
  *     <div className="eglux-hscroll__track">
@@ -482,8 +536,11 @@ body {
   -ms-overflow-style: none; /* IE10+ */
   scroll-behavior: smooth;
   scroll-snap-type: x mandatory;
-  /* Subtle left/right padding so first/last items don't touch viewport edge */
-  -webkit-overflow-scrolling: touch; /* iOS smooth scroll */
+  /* iOS smooth scroll */
+  -webkit-overflow-scrolling: touch;
+  /* Subtle padding so first/last items don't touch viewport edge */
+  padding-top: 0.5rem;
+  padding-bottom: 0.5rem;
 }
 .eglux-hscroll::-webkit-scrollbar {
   display: none; /* Chrome/Safari/Edge */
@@ -491,25 +548,26 @@ body {
 
 .eglux-hscroll__track {
   display: flex;
-  gap: 0.375rem; /* 6px — match mobile gap */
-  /* No width constraint — items flow naturally, track overflows */
+  gap: var(--card-gap-mobile); /* 8px on mobile */
 }
 
-/* Default = mobile sizing (compact cards) */
+/* Mobile: 2.5 items visible (2 full + peek of 3rd — Shopee pattern) */
 .eglux-hscroll__item {
-  flex: 0 0 calc((100% - 0.375rem * 3) / 4); /* 4 items visible on mobile */
-  max-width: calc((100% - 0.375rem * 3) / 4);
+  flex: 0 0 calc((100% - var(--card-gap-mobile) * 2) / 2.5);
+  max-width: calc((100% - var(--card-gap-mobile) * 2) / 2.5);
   scroll-snap-align: start;
+  scroll-snap-stop: always; /* prevent skipping items on fast swipe */
 }
 
-/* Desktop = bigger cards, 5 visible per view */
+/* Desktop: 5 items visible */
 @media (min-width: 768px) {
   .eglux-hscroll__track {
-    gap: 1rem; /* 16px */
+    gap: var(--card-gap-desktop); /* 16px */
   }
   .eglux-hscroll__item {
-    flex: 0 0 calc((100% - 1rem * 4) / 5); /* 5 items visible on desktop */
-    max-width: calc((100% - 1rem * 4) / 5);
+    flex: 0 0 calc((100% - var(--card-gap-desktop) * 4) / 5);
+    max-width: calc((100% - var(--card-gap-desktop) * 4) / 5);
+    scroll-snap-stop: normal; /* allow skipping on desktop */
   }
 }
 
@@ -520,12 +578,13 @@ body {
   align-items: center;
   justify-content: center;
   background: transparent;
-  border: 1px dashed rgba(154, 125, 74, 0.4); /* eglux-secondary muted */
+  border: 1px dashed rgba(154, 125, 74, 0.4);
   border-radius: 0.75rem;
   color: var(--eglux-secondary, #9a7d4a);
   cursor: pointer;
   transition: all 0.3s ease;
-  min-height: 200px; /* match compact card approx height */
+  /* ⭐ FIX: Match product card height (image ~153px + name ~30px + price ~20px + margins ~10px = ~213px on mobile) */
+  min-height: 240px;
   padding: 1rem;
   text-align: center;
 }
@@ -544,7 +603,7 @@ body {
 /* Desktop tweaks for "Lihat Lainnya" */
 @media (min-width: 768px) {
   .eglux-hscroll__more {
-    min-height: 280px;
+    min-height: 320px;
     border-radius: 1rem;
   }
 }
@@ -553,7 +612,6 @@ body {
  * Number Input — Hide spinner arrows + prevent scroll change
  * ═══════════════════════════════════════════════════════════════════════════ */
 
-/* Hide spinner arrows (Chrome, Safari, Edge, Firefox) */
 input[type="number"]::-webkit-inner-spin-button,
 input[type="number"]::-webkit-outer-spin-button {
   -webkit-appearance: none;
@@ -564,7 +622,6 @@ input[type="number"] {
   appearance: textfield;
 }
 
-/* Prevent scroll from changing number input value */
 input[type="number"]:focus {
   pointer-events: auto;
 }
@@ -599,5 +656,14 @@ body {
 @media (max-width: 768px) {
   main, .page-container, .min-h-screen {
     padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+}
+
+/* ============================================================================
+   Mobile Scroll Padding — ensure scroll-to-element accounts for fixed header
+   ============================================================================ */
+@media (max-width: 768px) {
+  html {
+    scroll-padding-top: 80px; /* header height on mobile */
   }
 }
