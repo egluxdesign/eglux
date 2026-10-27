@@ -1,27 +1,14 @@
 /* src/assets/styles/eglux-design-system.css */
 /* ============================================================================
- * EGLUX Design System v4 — Ruadh-inspired luxury editorial aesthetic
+ * EGLUX Design System v4.1 — Mobile Optimized
  * ============================================================================
- * v4 CHANGES:
- *   - Mobile optimizations: compact product cards, scroll snap, safe area
- *   - Horizontal scroll: 2.5 items per view (Shopee pattern)
- *   - "Lihat Lainnya" card height matches product card
- *   - Reduced whitespace on mobile sections
- *   - Dynamic viewport height (100dvh) for mobile browser bar
- *
- * Typography:
- *   - Headings: Playfair Display (serif, elegant)
- *   - Body: Inter (sans-serif, clean)
- *
- * Color Palette:
- *   --eglux-primary:    #554521 (warm brown)
- *   --eglux-secondary:  #cba65a (muted gold)
- *   --eglux-accent:     #f5f0e8 (warm cream)
- *   --eglux-text:       #3a3944 (soft dark)
- *   --eglux-text-muted: #8a8a8a (gray)
- *
- * Spacing: More generous whitespace on desktop, compact on mobile
- * Cards: Borderless, no shadow, clean
+ * v4.1 CHANGES:
+ *   - Mobile: 2 items per view (clean, no peek, gak terpotong)
+ *   - scroll-padding-left untuk snap alignment rapi di kiri
+ *   - Product card compact di mobile (font, margin, image ratio)
+ *   - "Lihat Lainnya" height match dengan product card
+ *   - Section spacing compact di mobile
+ *   - Dynamic viewport height (100dvh) + safe area
  * ============================================================================ */
 
 :root {
@@ -42,9 +29,9 @@
   --space-section: 5rem;
   --space-section-lg: 7rem;
 
-  /* ── Mobile card sizing ── */
-  --card-gap-mobile: 0.5rem;
-  --card-gap-desktop: 1rem;
+  /* ── Card sizing (CSS variables — gampang adjust) ── */
+  --card-gap-mobile: 0.5rem;        /* 8px gap between cards on mobile */
+  --card-gap-desktop: 1rem;         /* 16px gap on desktop */
   --card-name-margin-mobile: 0.5rem;
   --card-name-margin-desktop: 0.75rem;
   --card-font-mobile: 0.75rem;
@@ -354,7 +341,6 @@ h1, h2, h3, h4, h5, h6,
  * v4: Parallax Hero + Full-page Sections (Ruadh-inspired)
  * ═══════════════════════════════════════════════════════════════════════════ */
 
-/* ── Parallax Hero: stays fixed, next section scrolls over ── */
 .hero-parallax {
   position: relative !important;
   top: 0 !important;
@@ -388,30 +374,25 @@ h1, h2, h3, h4, h5, h6,
   user-select: none;
 }
 
-/* ── Section overlay: scrolls over the parallax hero ── */
 .section-overlay {
   position: relative;
   z-index: 1;
   background: var(--eglux-white);
 }
 
-/* ── Footer: ensure above parallax hero ── */
 footer {
   position: relative;
   z-index: 2;
 }
 
-/* ── Smooth scroll behavior ── */
 html {
   scroll-behavior: smooth;
 }
 
-/* ── Hide scrollbar on body during hero parallax (prevent flash) ── */
 body {
   overflow-x: hidden;
 }
 
-/* ── Hero overlay adjustments for parallax ── */
 .hero-parallax .hero-overlay {
   padding: 4rem 2rem;
 }
@@ -421,7 +402,6 @@ body {
   line-height: 1.1;
 }
 
-/* ── Section min-height for full-page feel ── */
 @media (min-height: 600px) {
   .section-overlay {
     min-height: 100vh;
@@ -429,7 +409,7 @@ body {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
- * PageLoader — React loader (checkout, route transitions, fetch)
+ * PageLoader
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 @keyframes eglux-logo-reveal {
@@ -512,66 +492,57 @@ body {
 /* ═══════════════════════════════════════════════════════════════════════════
  * Horizontal Scroll Container — Best Seller & Produk Baru sections
  * ─────────────────────────────────────────────────────────────────────────
- * Pattern: Shopee/Tokopedia "flash sale" style — horizontal scroll snap
- * with hidden scrollbar + peek of next item to indicate scrollability.
+ * Mobile: 2 items per view (clean, full, gak terpotong)
+ * Desktop: 5 items per view
  *
- * Mobile: 2.5 items visible (2 full + peek of 3rd)
- * Desktop: 5 items visible
- *
- * Usage:
- *   <div className="eglux-hscroll">
- *     <div className="eglux-hscroll__track">
- *       <div className="eglux-hscroll__item">...</div>
- *       <button className="eglux-hscroll__item eglux-hscroll__more">Lihat Lainnya</button>
- *     </div>
- *   </div>
+ * ⭐ v4.1 FIX:
+ *   - 2 items (bukan 2.5) — gak ada card setengah yang gambarnya jelek
+ *   - scroll-padding-left — snap position rapi dari kiri
+ *   - scroll-snap-stop: always — gak skip card saat swipe cepat
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 .eglux-hscroll {
-  /* Outer wrapper — clip overflow, hide scrollbar */
   overflow-x: auto;
   overflow-y: hidden;
-  /* Hide scrollbar cross-browser */
-  scrollbar-width: none; /* Firefox */
-  -ms-overflow-style: none; /* IE10+ */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
   scroll-behavior: smooth;
   scroll-snap-type: x mandatory;
-  /* iOS smooth scroll */
+  scroll-padding-left: 1rem;        /* ⭐ snap rapi dari kiri */
   -webkit-overflow-scrolling: touch;
-  /* Subtle padding so first/last items don't touch viewport edge */
   padding-top: 0.5rem;
   padding-bottom: 0.5rem;
 }
 .eglux-hscroll::-webkit-scrollbar {
-  display: none; /* Chrome/Safari/Edge */
+  display: none;
 }
 
 .eglux-hscroll__track {
   display: flex;
-  gap: var(--card-gap-mobile); /* 8px on mobile */
+  gap: var(--card-gap-mobile);
 }
 
-/* Mobile: 2.5 items visible (2 full + peek of 3rd — Shopee pattern) */
+/* ⭐ Mobile: 2 items per view — clean, full, gak terpotong */
 .eglux-hscroll__item {
-  flex: 0 0 calc((100% - var(--card-gap-mobile) * 2) / 2.5);
-  max-width: calc((100% - var(--card-gap-mobile) * 2) / 2.5);
+  flex: 0 0 calc((100% - var(--card-gap-mobile) * 1) / 2);
+  max-width: calc((100% - var(--card-gap-mobile) * 1) / 2);
   scroll-snap-align: start;
-  scroll-snap-stop: always; /* prevent skipping items on fast swipe */
+  scroll-snap-stop: always;
 }
 
-/* Desktop: 5 items visible */
+/* Desktop: 5 items per view */
 @media (min-width: 768px) {
   .eglux-hscroll__track {
-    gap: var(--card-gap-desktop); /* 16px */
+    gap: var(--card-gap-desktop);
   }
   .eglux-hscroll__item {
     flex: 0 0 calc((100% - var(--card-gap-desktop) * 4) / 5);
     max-width: calc((100% - var(--card-gap-desktop) * 4) / 5);
-    scroll-snap-stop: normal; /* allow skipping on desktop */
+    scroll-snap-stop: normal;
   }
 }
 
-/* "Lihat Lainnya" card — centered arrow + text, hover effect */
+/* "Lihat Lainnya" card */
 .eglux-hscroll__more {
   display: flex;
   flex-direction: column;
@@ -583,8 +554,7 @@ body {
   color: var(--eglux-secondary, #9a7d4a);
   cursor: pointer;
   transition: all 0.3s ease;
-  /* ⭐ FIX: Match product card height (image ~153px + name ~30px + price ~20px + margins ~10px = ~213px on mobile) */
-  min-height: 240px;
+  min-height: 240px;   /* ⭐ match product card height on mobile */
   padding: 1rem;
   text-align: center;
 }
@@ -600,7 +570,6 @@ body {
   transform: translateX(4px);
 }
 
-/* Desktop tweaks for "Lihat Lainnya" */
 @media (min-width: 768px) {
   .eglux-hscroll__more {
     min-height: 320px;
@@ -609,7 +578,7 @@ body {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
- * Number Input — Hide spinner arrows + prevent scroll change
+ * Number Input
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 input[type="number"]::-webkit-inner-spin-button,
@@ -621,22 +590,19 @@ input[type="number"] {
   -moz-appearance: textfield;
   appearance: textfield;
 }
-
 input[type="number"]:focus {
   pointer-events: auto;
 }
 
 /* ============================================================================
-   Mobile Safe Area Fix — cegah button/element tenggelem di balik browser bar
+   Mobile Safe Area Fix
    ============================================================================ */
 
-/* Dynamic viewport height — adjust saat mobile browser bar show/hide */
 @supports (height: 100dvh) {
   .min-h-screen { min-height: 100dvh !important; }
   .h-screen { height: 100dvh !important; }
 }
 
-/* Safe area padding untuk fixed bottom elements */
 @supports (padding: max(0px)) {
   .fixed.bottom-0,
   .fixed.bottom-4,
@@ -646,13 +612,11 @@ input[type="number"]:focus {
   }
 }
 
-/* Prevent page bounce + smooth scroll on mobile */
 body {
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
 }
 
-/* Extra bottom padding untuk page containers di mobile */
 @media (max-width: 768px) {
   main, .page-container, .min-h-screen {
     padding-bottom: env(safe-area-inset-bottom, 0px);
@@ -660,10 +624,10 @@ body {
 }
 
 /* ============================================================================
-   Mobile Scroll Padding — ensure scroll-to-element accounts for fixed header
+   Mobile Scroll Padding — fixed header offset
    ============================================================================ */
 @media (max-width: 768px) {
   html {
-    scroll-padding-top: 80px; /* header height on mobile */
+    scroll-padding-top: 80px;
   }
 }
