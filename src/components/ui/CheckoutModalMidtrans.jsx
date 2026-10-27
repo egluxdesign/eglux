@@ -1181,7 +1181,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
           <div className="min-w-0 pr-2">
             <h3 className="text-[1rem] md:text-[1.1rem] font-bold text-eglux-primary truncate">Checkout</h3>
             <p className="text-[0.72rem] text-gray-500 mt-0.5 flex items-center gap-1 truncate">
-              <ShieldCheck className="w-3 h-3 flex-shrink-0" /> EGLUX
+              <ShieldCheck className="w-3 h-3 flex-shrink-0" /> PT. Rayee Investment Indonesia — Transaksi aman & terenkripsi
             </p>
           </div>
           <button
@@ -1881,7 +1881,7 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
           </button>
 
           <p className="text-[0.7rem] text-gray-400 text-center">
-            Dengan melanjutkan, kamu setuju dengan syarat & ketentuan kami. Pembayaran diproses aman oleh Midtrans.
+            Dengan melanjutkan, kamu setuju dengan syarat & ketentuan kami. Pembayaran diproses aman oleh EGLUX.
           </p>
         </div>
       </div>

@@ -467,42 +467,44 @@ const LoginForm = () => {
               </button>
             </form>
           ) : (
+
             // === WHATSAPP OTP LOGIN FORM ===
             <div className="space-y-4">
-              {/* Step 1: Phone input + Kirim Kode */}
-              <div>
-                <label className="block text-[0.8rem] font-semibold text-eglux-primary uppercase tracking-[0.5px] mb-1.5">
-                  Nomor WhatsApp
-                </label>
-                <input
-                  type="tel"
-                  value={waPhone}
-                  onChange={handlePhoneChange}
-                  placeholder="Masukkan nomor WhatsApp"
-                  required
-                  disabled={otpSent}
-                  autoComplete="tel"
-                  className="w-full py-3 px-4 border-[1.5px] border-[#ddd] rounded-[10px] text-[0.88rem] text-eglux-primary bg-white outline-none focus:border-eglux-secondary transition-colors disabled:bg-gray-50 disabled:cursor-not-allowed"
-                />
-                <p className="text-[0.72rem] text-gray-500 mt-1.5">
-                  Nomor harus sudah terdaftar di akun EGLUX Anda.
-                </p>
-              </div>
+              {/* Step 1: Phone input + Kirim Kode (wrapped in form buat Enter key support) */}
+              <form onSubmit={(e) => { e.preventDefault(); if (!otpSent) handleSendOTP(); }}>
+                <div>
+                  <label className="block text-[0.8rem] font-semibold text-eglux-primary uppercase tracking-[0.5px] mb-1.5">
+                    Nomor WhatsApp
+                  </label>
+                  <input
+                    type="tel"
+                    value={waPhone}
+                    onChange={handlePhoneChange}
+                    placeholder="Masukkan No. WhatsApp"
+                    required
+                    disabled={otpSent}
+                    autoComplete="tel"
+                    className="w-full py-3 px-4 border-[1.5px] border-[#ddd] rounded-[10px] text-[0.88rem] text-eglux-primary bg-white outline-none focus:border-eglux-secondary transition-colors disabled:bg-gray-50 disabled:cursor-not-allowed"
+                  />
+                  <p className="text-[0.72rem] text-gray-500 mt-1.5">
+                    Nomor harus sudah terdaftar di akun EGLUX Anda.
+                  </p>
+                </div>
 
-              {!otpSent && (
-                <button
-                  type="button"
-                  onClick={handleSendOTP}
-                  disabled={sendingOtp}
-                  className="w-full py-3.5 bg-eglux-primary text-white border-none rounded-xl text-[0.95rem] font-bold cursor-pointer transition-all hover:opacity-90 disabled:opacity-60 disabled:cursor-not-allowed"
-                >
-                  {sendingOtp ? 'Mengirim Kode...' : 'Kirim Kode OTP'}
-                </button>
-              )}
+                {!otpSent && (
+                  <button
+                    type="submit"
+                    disabled={sendingOtp}
+                    className="w-full mt-8 py-3.5 bg-eglux-primary text-white border-none rounded-xl text-[0.95rem] font-bold cursor-pointer transition-all hover:opacity-90 disabled:opacity-60 disabled:cursor-not-allowed"
+                  >
+                    {sendingOtp ? 'Mengirim Kode...' : 'Kirim Kode OTP'}
+                  </button>
+                )}
+              </form>
 
-              {/* Step 2: OTP input + Verify */}
+              {/* Step 2: OTP input + Verify (wrapped in form buat Enter key support) */}
               {otpSent && (
-                <>
+                <form onSubmit={(e) => { e.preventDefault(); handleVerifyOTP(); }}>
                   <div>
                     <label className="block text-[0.8rem] font-semibold text-eglux-primary uppercase tracking-[0.5px] mb-1.5">
                       Kode OTP
@@ -539,14 +541,13 @@ const LoginForm = () => {
                   </div>
 
                   <button
-                    type="button"
-                    onClick={handleVerifyOTP}
+                    type="submit"
                     disabled={verifyingOtp || otp.join('').length !== 6}
                     className="w-full py-3.5 bg-eglux-primary text-white border-none rounded-xl text-[0.95rem] font-bold cursor-pointer transition-all hover:opacity-90 disabled:opacity-60 disabled:cursor-not-allowed"
                   >
                     {verifyingOtp ? 'Memverifikasi...' : 'Verifikasi & Masuk'}
                   </button>
-                </>
+                </form>
               )}
             </div>
           )}
@@ -565,7 +566,7 @@ const LoginForm = () => {
         {/* Footer */}
         <div className="px-5 md:px-8 py-3 md:py-4 bg-gray-50 border-t border-gray-100">
           <p className="text-[0.7rem] text-gray-400 text-center">
-            EGLUX Admin Panel · Akses terbatas untuk admin & staff
+            PT. Rayee Investment Indonesia &copy; {new Date().getFullYear()}. All rights reserved.
           </p>
         </div>
       </div>
