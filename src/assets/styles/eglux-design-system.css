@@ -568,3 +568,36 @@ input[type="number"] {
 input[type="number"]:focus {
   pointer-events: auto;
 }
+
+/* ============================================================================
+   Mobile Safe Area Fix — cegah button/element tenggelem di balik browser bar
+   ============================================================================ */
+
+/* Dynamic viewport height — adjust saat mobile browser bar show/hide */
+@supports (height: 100dvh) {
+  .min-h-screen { min-height: 100dvh !important; }
+  .h-screen { height: 100dvh !important; }
+}
+
+/* Safe area padding untuk fixed bottom elements */
+@supports (padding: max(0px)) {
+  .fixed.bottom-0,
+  .fixed.bottom-4,
+  .sticky.bottom-0 {
+    bottom: max(0px, env(safe-area-inset-bottom)) !important;
+    padding-bottom: max(0.5rem, env(safe-area-inset-bottom)) !important;
+  }
+}
+
+/* Prevent page bounce + smooth scroll on mobile */
+body {
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Extra bottom padding untuk page containers di mobile */
+@media (max-width: 768px) {
+  main, .page-container, .min-h-screen {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+}
