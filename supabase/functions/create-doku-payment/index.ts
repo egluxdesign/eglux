@@ -416,11 +416,13 @@ async function sendDokuRequest(
   console.error("[DOKU] ✗ REQUEST FAILED");
   console.error("[DOKU] Status:", dokuStatus);
   console.error("[DOKU] Response:", JSON.stringify(dokuResponse, null, 2));
-
+  
   // Extract error message from various possible formats
   let errorMessage = "";
   if (Array.isArray(dokuResponse?.error_messages) && dokuResponse.error_messages.length > 0) {
     errorMessage = dokuResponse.error_messages.join(", ");
+  } else if (Array.isArray(dokuResponse?.message) && dokuResponse.message.length > 0) {
+    errorMessage = dokuResponse.message.join(", ");
   } else if (typeof dokuResponse?.message === "string") {
     errorMessage = dokuResponse.message;
   } else if (typeof dokuResponse?.error === "string") {
