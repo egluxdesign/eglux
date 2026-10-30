@@ -973,10 +973,20 @@ const CheckoutModalDoku = ({ isOpen, onClose, showToast }) => {
       }
 
       if (!dokuResp.ok || !dokuResult.success) {
+        // ⭐ Log full debug info to console for diagnosis
+        console.error('[DOKU] create-doku-payment failed — FULL RESPONSE:', dokuResult);
+        console.error('[DOKU] Status:', dokuResp.status);
+        console.error('[DOKU] Error:', dokuResult.error);
+        console.error('[DOKU] Raw response:', dokuResult.raw);
+        console.error('[DOKU] Raw text:', dokuResult.raw_text);
+        console.error('[DOKU] Signature debug:', dokuResult.signature_debug);
+
         const errMsg = Array.isArray(dokuResult.error)
           ? dokuResult.error.join(', ')
           : dokuResult.error || `HTTP ${dokuResp.status}`;
-        throw new Error(`DOKU: ${errMsg}`);
+        // Include status code + raw_text in error message for easier diagnosis
+        const detailedErr = `[${dokuResult.status || dokuResp.status}] ${errMsg}`;
+        throw new Error(`DOKU: ${detailedErr}`);
       }
 
       const { payment_url, invoice_number } = dokuResult;
