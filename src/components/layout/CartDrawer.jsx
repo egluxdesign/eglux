@@ -2,26 +2,25 @@
 // ============================================================================
 // CartDrawer — slide-out panel dari kanan, menampilkan item keranjang.
 //
-// Fitur auth-gated checkout (sesuai request user):
+// [v3] Switch dari Midtrans → DOKU Checkout:
+//   - Import & render CheckoutModalDoku (bukan CheckoutModalMidtrans)
+//   - CHECKOUT_INTENT_KEY di-import dari CheckoutModalDoku (exported there)
+//
+// Fitur auth-gated checkout:
 //   - Tombol "Bayar Sekarang" cek auth terlebih dahulu.
 //   - Kalau belum login → simpan intent di sessionStorage, redirect ke /admin.
-//   - Setelah login/register berhasil → AdminPage redirect balik ke page asal
-//     (state.from). useEffect di komponen ini deteksi intent flag + user login
-//     → auto-buka CheckoutModalMidtrans.
+//   - Setelah login/register berhasil → useEffect deteksi intent flag + user
+//     login → auto-buka CheckoutModalDoku.
 //
 // Pemakaian:
 //   <CartDrawer isOpen={isCartOpen} onClose={() => setIsCartOpen(false)} showToast={showToast} />
-//
-// Catatan: CartDrawer juga dipakai sebagai "host" CheckoutModalMidtrans.
-//   Modal checkout di-render di sini (bukan di page parent), jadi auto-open
-//   logic juga tinggal di sini.
 // ============================================================================
 
 import { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useCart, rupiah } from '../../context/CartContext';
 import { useAuth } from '../../context/AuthContext';
-import CheckoutModalMidtrans, { CHECKOUT_INTENT_KEY } from '../ui/CheckoutModalMidtrans';
+import CheckoutModalDoku, { CHECKOUT_INTENT_KEY } from '../ui/CheckoutModalDoku';
 
 // ── Minimalist line icons (1-color, stroke=currentColor) ──
 const IconClose = ({ className = 'w-5 h-5' }) => (
@@ -60,17 +59,15 @@ const IconBag = ({ className = 'w-16 h-16' }) => (
 );
 
 const CartDrawer = ({ isOpen, onClose, showToast }) => {
-  // ⭐ v3: pakai recomputeCartPrices untuk refresh prices saat drawer buka
   const { cart, totalQty, totalPrice, updateQty, removeItem, recomputeCartPrices } = useCart();
   const { user } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
-  // State untuk CheckoutModalMidtrans (modal pembayaran)
+  // State untuk CheckoutModalDoku (modal pembayaran DOKU)
   const [checkoutOpen, setCheckoutOpen] = useState(false);
 
   // ── Auto-open checkout modal setelah balik dari login ──
-  // Trigger: user balik ke page ini setelah login, dan intent flag masih ada.
   useEffect(() => {
     if (
       user &&
@@ -86,7 +83,6 @@ const CartDrawer = ({ isOpen, onClose, showToast }) => {
   useEffect(() => {
     if (isOpen) {
       document.body.style.overflow = 'hidden';
-      // ⭐ v3: Refresh cart prices saat drawer dibuka (discount mungkin expire/start)
       if (cart.length > 0) {
         recomputeCartPrices();
       }
@@ -97,21 +93,14 @@ const CartDrawer = ({ isOpen, onClose, showToast }) => {
   }, [isOpen, cart.length, recomputeCartPrices]);
 
   // ── Handler: tombol "Bayar Sekarang" ──
-  // Cek auth DULU sebelum buka checkout modal.
-  // Kalau belum login → simpan intent + redirect ke /admin.
-  // Kalau sudah login → tutup drawer DULU, baru buka checkout modal.
-  //   Urutan penting: onClose() harus dipanggil supaya drawer slide-out
-  //   dan tidak menumpuk di belakang modal checkout.
   const handleCheckout = () => {
     if (cart.length === 0) return;
 
     if (!user) {
       try {
         sessionStorage.setItem(CHECKOUT_INTENT_KEY, 'true');
-      } catch (e) {
-        // sessionStorage mungkin disabled — fail silently
-      }
-      onClose?.(); // tutup drawer
+      } catch (e) {}
+      onClose?.();
       navigate('/admin', {
         state: { from: location.pathname + location.search },
         replace: true,
@@ -119,10 +108,6 @@ const CartDrawer = ({ isOpen, onClose, showToast }) => {
       return;
     }
 
-    // User sudah login → tutup drawer, lalu buka checkout modal.
-    // onClose() trigger transition slide-out (300ms). Modal langsung buka
-    // barengan — visually clean karena drawer off-screen (translate-x-full)
-    // dan overlay-nya opacity-0 + pointer-events-none.
     onClose?.();
     setCheckoutOpen(true);
   };
@@ -217,7 +202,6 @@ const CartDrawer = ({ isOpen, onClose, showToast }) => {
                     {item.variantName && (
                       <p className="text-[0.72rem] text-gray-500 mt-0.5">{item.variantName}</p>
                     )}
-                    {/* ⭐ v3: Price display dengan strike original + discounted + badge */}
                     <div className="flex items-baseline gap-1.5 mt-1 flex-wrap">
                       {item.isDiscounted && item.originalPrice > item.price && (
                         <>
@@ -237,7 +221,6 @@ const CartDrawer = ({ isOpen, onClose, showToast }) => {
                     </div>
 
                     <div className="flex items-center justify-between mt-2">
-                      {/* Qty stepper */}
                       <div className="flex items-center border border-[#eee] rounded-lg overflow-hidden">
                         <button
                           onClick={() => updateQty(item.id, item.variantId, item.qty - 1)}
@@ -258,7 +241,6 @@ const CartDrawer = ({ isOpen, onClose, showToast }) => {
                         </button>
                       </div>
 
-                      {/* Remove */}
                       <button
                         onClick={() => removeItem(item.id, item.variantId)}
                         aria-label="Hapus item"
@@ -303,8 +285,8 @@ const CartDrawer = ({ isOpen, onClose, showToast }) => {
         )}
       </aside>
 
-      {/* Checkout Modal — di-render di sini supaya auto-open bisa di-trigger langsung */}
-      <CheckoutModalMidtrans
+      {/* Checkout Modal DOKU — di-render di sini supaya auto-open bisa di-trigger langsung */}
+      <CheckoutModalDoku
         isOpen={checkoutOpen}
         onClose={() => setCheckoutOpen(false)}
         showToast={showToast}

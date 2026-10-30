@@ -4,20 +4,20 @@
 // Manage state cart panel + checkout modals + toast notifications.
 // Provide action functions lewat CartActionsContext.
 //
+// [v3] Switch dari Midtrans → DOKU Checkout:
+//   - Import & render CheckoutModalDoku (bukan CheckoutModalMidtrans)
+//   - State variables tetap pakai nama 'midtransCheckoutOpen' untuk backward
+//     compat dengan consumer components (cuma nama, fungsional jalan ke DOKU)
+//
 // [FIX] Auth-gated checkout:
-//   - Semua fungsi checkout (openCheckout, openMidtransCheckout,
-//     handleCheckoutNow, handleCheckoutNowMidtrans) cek auth DULU.
+//   - Semua fungsi checkout cek auth DULU.
 //   - Kalau belum login → simpan intent di sessionStorage + redirect ke /admin.
 //   - Setelah login berhasil → useEffect auto-open checkout modal yang sesuai.
-//   - Intent values: 'whatsapp' (CheckoutModal) atau 'midtrans' (CheckoutModalMidtrans).
 //
 // Cara pakai (di App.jsx):
 //   <CartPage>
 //     <Routes>...</Routes>
 //   </CartPage>
-//
-// Cara pakai useCartActions (di page manapun di dalam CartPage):
-//   const { openCart, handleAddToCart, openMidtransCheckout } = useCartActions();
 // ============================================================================
 
 import { useState, useCallback, useEffect, createContext, useContext } from 'react';
@@ -27,13 +27,14 @@ import { useAuth }    from '../context/AuthContext';
 import { useToast }   from '../hooks/useToast';
 import CartPanel      from '../components/ui/CartPanel';
 import CheckoutModal         from '../components/ui/CheckoutModal';
-import CheckoutModalMidtrans from '../components/ui/CheckoutModalMidtrans';
+import CheckoutModalDoku     from '../components/ui/CheckoutModalDoku';
 import TicketModal    from '../components/ui/TicketModal';
 import Toast          from '../components/ui/Toast';
 
 // ── Checkout intent key ──
 // Dipakai di sessionStorage sebagai flag supaya setelah login, modal checkout
-// yang sesuai bisa auto-open. Value: 'whatsapp' atau 'midtrans'.
+// yang sesuai bisa auto-open. Value: 'whatsapp' atau 'midtrans' (legacy name,
+// sekarang opens DOKU modal).
 export const CHECKOUT_INTENT_KEY = 'eglux_checkout_intent';
 
 export const CartActionsContext = createContext(null);
@@ -52,12 +53,10 @@ const CartPage = ({ children }) => {
 
   const [cartOpen,     setCartOpen]     = useState(false);
   const [checkoutOpen, setCheckoutOpen] = useState(false);          // modal WhatsApp (CheckoutModal)
-  const [midtransCheckoutOpen, setMidtransCheckoutOpen] = useState(false); // modal Bayar Sekarang (Midtrans)
+  const [midtransCheckoutOpen, setMidtransCheckoutOpen] = useState(false); // modal Bayar Sekarang (DOKU — nama variabel legacy)
   const [ticketOpen,   setTicketOpen]   = useState(false);           // modal Tiket Bantuan
 
   // ── Auth helper ──
-  // Cek apakah user sudah login. Kalau belum, simpan intent + redirect ke /admin.
-  // Return true kalau sudah login (boleh lanjut checkout), false kalau di-redirect.
   const requireAuth = useCallback((intent = 'midtrans') => {
     if (user) return true;
     try { sessionStorage.setItem(CHECKOUT_INTENT_KEY, intent); } catch (e) {}
@@ -71,8 +70,6 @@ const CartPage = ({ children }) => {
   }, [user, navigate, location]);
 
   // ── Auto-open checkout setelah login ──
-  // Saat user berubah dari null → user object (setelah login/register),
-  // cek apakah ada intent flag. Kalau ada, buka modal yang sesuai.
   useEffect(() => {
     if (!user) return;
     const intent = sessionStorage.getItem(CHECKOUT_INTENT_KEY);
@@ -112,7 +109,8 @@ const CartPage = ({ children }) => {
     document.body.style.overflow = '';
   }, []);
 
-  // Midtrans checkout (CheckoutModalMidtrans) — "Bayar Sekarang"
+  // DOKU checkout (CheckoutModalDoku) — "Bayar Sekarang"
+  // Nama variabel tetap 'midtrans' untuk backward compat dengan consumer components.
   const openMidtransCheckout = useCallback(() => {
     if (!requireAuth('midtrans')) return;
     setCartOpen(false);
@@ -140,7 +138,8 @@ const CartPage = ({ children }) => {
     document.body.style.overflow = 'hidden';
   }, [requireAuth, clearCart, addItem]);
 
-  // ── "Beli sekarang" versi langsung ke pembayaran Midtrans (auth-gated) ──
+  // ── "Beli sekarang" versi langsung ke pembayaran DOKU (auth-gated) ──
+  // Nama tetap 'handleCheckoutNowMidtrans' untuk backward compat.
   const handleCheckoutNowMidtrans = useCallback((product, variant, qty) => {
     if (!requireAuth('midtrans')) return;
     clearCart();
@@ -158,9 +157,7 @@ const CartPage = ({ children }) => {
         openCheckout,
         openMidtransCheckout,
         handleCheckoutNowMidtrans,
-          openTicket: () => {
-          // ⭐ Auth-gate: tiket bantuan wajib login (tickets table RLS pakai user.id)
-          // Kalau belum login → redirect ke /admin dengan intent flag, biar modal auto-open setelah login
+        openTicket: () => {
           if (!user) {
             try { sessionStorage.setItem(CHECKOUT_INTENT_KEY, 'ticket'); } catch (e) {}
             setCartOpen(false);
@@ -194,7 +191,7 @@ const CartPage = ({ children }) => {
       )}
 
       {midtransCheckoutOpen && (
-        <CheckoutModalMidtrans
+        <CheckoutModalDoku
           isOpen={midtransCheckoutOpen}
           onClose={closeMidtransCheckout}
           showToast={showToast}

@@ -4,12 +4,12 @@
 // ============================================================================
 //
 // ⚠️ CRITICAL: Sebelum render App, validateEnv() dipanggil.
-// Kalau ada required env var yang missing (mis. VITE_MIDTRANS_CLIENT_KEY),
-// EnvErrorPage render sebagai pengganti App — dengan instruksi yang jelas.
+// Kalau ada required env var yang missing (VITE_SUPABASE_URL,
+// VITE_SUPABASE_ANON_KEY, VITE_DOKU_MODE), EnvErrorPage render sebagai
+// pengganti App — dengan instruksi yang jelas.
 //
-// Tanpa validation ini, user baru tau env var missing saat fitur tertentu
-// gagal (mis. klik "Lanjutkan Pembayaran" → "Midtrans client key not configured"
-// yang mysterious). Dengan EnvErrorPage, error terdeteksi di startup.
+// [v3] Required env vars sekarang: Supabase + DOKU_MODE.
+//      Midtrans env vars sudah optional (legacy, gak dipakai setelah switch).
 // ============================================================================
 
 import React from 'react';
@@ -24,9 +24,6 @@ const { valid, missing } = validateEnv();
 const root = ReactDOM.createRoot(document.getElementById('root'));
 
 const hideLoader = () => {
-  // ⭐ Hide pre-hydration loader setelah App render.
-  // requestAnimationFrame → pastikan paint pertama selesai dulu, supaya
-  // gak ada flash of empty content (FOEC) sebelum App visible.
   requestAnimationFrame(() => {
     if (typeof window.hideEgluxLoader === 'function') {
       window.hideEgluxLoader();
@@ -49,8 +46,5 @@ if (!valid) {
       <App />
     </React.StrictMode>
   );
-  // ⭐ Hide loader setelah React commit pertama selesai.
-  // flushSync gak dipakai di sini karena createRoot.render sudah synchronous
-  // untuk initial mount di React 18+ — requestAnimationFrame cukup.
   hideLoader();
 }

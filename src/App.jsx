@@ -4,7 +4,9 @@
 //
 // CartPage di sini sebagai PROVIDER yang wrap seluruh app supaya
 // useCartActions() available di semua page. CartPage juga render
-// CartPanel + CheckoutModal + CheckoutModalMidtrans + Toast.
+// CartPanel + CheckoutModal (WhatsApp) + CheckoutModalDoku (DOKU) + Toast.
+//
+// [v3] Switch dari Midtrans → DOKU Checkout (CheckoutModalDoku)
 //
 // Pattern tiap page:
 //   <HeaderProducts onCartOpen={openCart} />   ← sticky header + primary nav + swiper
@@ -53,6 +55,8 @@ import AdminReturnsPage from './pages/AdminReturnsPage';
 import ShippingInfoPage from './pages/ShippingInfoPage';
 import ReturnPolicyPage from './pages/ReturnPolicyPage';
 import SalesReportPage from './pages/SalesReportPage';
+import PaymentSuccessPage from './pages/PaymentSuccessPage';
+import PaymentFailedPage from './pages/PaymentFailedPage';
 
 // Protected route wrapper
 import ProtectedRoute from './components/ui/ProtectedRoute';
@@ -61,27 +65,13 @@ import ProtectedRoute from './components/ui/ProtectedRoute';
 import { useUserActivity } from './hooks/useUserActivity';
 
 // ⭐ Wrapper component untuk call hook di dalam BrowserRouter
-// (useLocation() butuh Router context)
 const StorefrontActivityTracker = () => {
   useUserActivity();
-  return null; // gak render apa-apa, cuma track
+  return null;
 };
 
 // ============================================================================
 // ⭐ MagicLinkHandler — auto-detect magic link hash fragment + redirect
-// ============================================================================
-// Setelah OTP verify sukses, edge function generate Supabase magic link.
-// Magic link redirect balik ke storefront dengan URL kayak:
-//   http://localhost:5173/#access_token=eyJ...&type=magiclink
-//
-// supabase-js seharusnya auto-exchange token ini jadi session, TAPI kalau
-// SPA gak detect hash dengan benar, session gak ke-set. Handler ini:
-//   1. Detect URL hash berisi access_token + type=magiclink
-//   2. Listen onAuthStateChange buat SIGNED_IN event
-//   3. Setelah session set → clean hash dari URL (security best practice)
-//   4. Redirect ke /orders (atau path lain yang sesuai)
-//
-// Dipanggil di dalam <BrowserRouter> supaya useNavigate() jalan.
 // ============================================================================
 const MagicLinkHandler = () => {
   const navigate = useNavigate();
@@ -89,36 +79,21 @@ const MagicLinkHandler = () => {
   useEffect(() => {
     const hash = window.location.hash;
 
-    // Cek apakah URL hash berisi magic link tokens (dari OTP login)
     if (!hash.includes('access_token=') || !hash.includes('type=magiclink')) {
-      return; // Bukan magic link URL, skip
+      return;
     }
 
-    // console.log('[MagicLinkHandler] Magic link hash detected, waiting for session...');
-
-    // supabase-js auto-exchange hash tokens jadi session (detectSessionInUrl: true default).
-    // Tunggu SIGNED_IN event, lalu redirect ke /orders.
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (event, session) => {
-        // console.log('[MagicLinkHandler] Auth event:', event, 'Email:', session?.user?.email);
-
         if (event === 'SIGNED_IN' && session?.user) {
-          // Bersihkan hash dari URL (security — biar token gak keliatan di address bar)
           window.history.replaceState(
             null,
             '',
             window.location.pathname + window.location.search
           );
-
-          // console.log('[MagicLinkHandler] ✓ Session set, redirecting to /orders...');
-
-          // Redirect ke /orders (atau route lain kalau mau)
           navigate('/', { replace: true });
-
-          // Unsubscribe setelah redirect (one-time handler)
           subscription?.unsubscribe();
         } else if (event === 'SIGNED_OUT') {
-          // Kalau session gak ke-set (exchange gagal), kembali ke /admin login
           console.warn('[MagicLinkHandler] SIGNED_OUT — magic link exchange failed, redirect to /admin');
           navigate('/admin', { replace: true });
           subscription?.unsubscribe();
@@ -126,13 +101,12 @@ const MagicLinkHandler = () => {
       }
     );
 
-    // Cleanup kalau component unmount sebelum SIGNED_IN
     return () => {
       subscription?.unsubscribe();
     };
   }, [navigate]);
 
-  return null; // Gak render apa-apa
+  return null;
 };
 
 const App = () => {
@@ -167,6 +141,10 @@ const App = () => {
               <Route path="/forgot-password" element={<ForgotPasswordPage />} />
               <Route path="/reset-password" element={<ResetPasswordPage />} />
 
+              {/* ── Payment result routes ── */}
+              <Route path="/payment-success" element={<PaymentSuccessPage />} />
+              <Route path="/payment-failed" element={<PaymentFailedPage />} />
+
               {/* ── Protected user routes ── */}
               <Route
                 path="/profile"
@@ -177,10 +155,8 @@ const App = () => {
                 }
               />
 
-              {/* ── Protected admin routes ──
-                  ⭐ page prop = check canAccess() for custom permissions */}
+              {/* ── Protected admin routes ── */}
 
-              {/* Dashboard — all admin roles */}
               <Route
                 path="/dashboard-admin"
                 element={
@@ -190,7 +166,6 @@ const App = () => {
                 }
               />
 
-              {/* Products — all admin roles */}
               <Route
                 path="/products-admin"
                 element={
@@ -200,7 +175,6 @@ const App = () => {
                 }
               />
 
-              {/* Orders — all admin roles */}
               <Route
                 path="/orders-admin"
                 element={
@@ -210,7 +184,6 @@ const App = () => {
                 }
               />
 
-              {/* Homepage — team_dev + master only */}
               <Route
                 path="/homepage-admin"
                 element={
@@ -220,7 +193,6 @@ const App = () => {
                 }
               />
 
-              {/* Discount & Voucher — team_dev + master only */}
               <Route
                 path="/discount-admin"
                 element={
@@ -230,7 +202,6 @@ const App = () => {
                 }
               />
 
-              {/* Points Management — team_dev + master only */}
               <Route
                 path="/points-admin"
                 element={
@@ -240,7 +211,6 @@ const App = () => {
                 }
               />
 
-              {/* User Management — team_dev + master only */}
               <Route
                 path="/users-admin"
                 element={
@@ -250,7 +220,6 @@ const App = () => {
                 }
               />
 
-              {/* Reviews — all admin roles */}
               <Route
                 path="/reviews-admin"
                 element={
@@ -260,7 +229,6 @@ const App = () => {
                 }
               />
 
-              {/* Returns & Refunds — team_dev + master only */}
               <Route
                   path="/returns-admin"
                   element={
@@ -270,7 +238,6 @@ const App = () => {
                 }
               />
 
-              {/* Sales Report (Shopee-style) — team_dev + master only */}
               <Route
                 path="/sales-report"
                 element={
@@ -280,8 +247,6 @@ const App = () => {
                 }
               />
 
-
-              {/* Blog — team_dev + master only */}
               <Route
                 path="/blog-admin"
                 element={
@@ -291,7 +256,6 @@ const App = () => {
                 }
               />
 
-              {/* About — team_dev + master only */}
               <Route
                 path="/about-admin"
                 element={
@@ -301,7 +265,6 @@ const App = () => {
                 }
               />
 
-              {/* Contact — team_dev + master only */}
               <Route
                 path="/contact-admin"
                 element={

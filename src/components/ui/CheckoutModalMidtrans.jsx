@@ -1056,26 +1056,29 @@ const CheckoutModalMidtrans = ({ isOpen, onClose, showToast }) => {
           console.log('[Midtrans] Payment success (Snap callback):', result.transaction_id);
           document.body.style.overflow = '';
           stopPaymentPolling();  // Stop polling — payment confirmed
-          showToast('✅ Pembayaran berhasil! Terima kasih.', 'success');
-          window.dispatchEvent(new CustomEvent('eglux:payment-success', { detail: { orderId: data.order_id } }));
+          // ⭐ Redirect ke payment success page
+          navigate('/payment-success', { 
+            state: { orderId: data.order_id },
+            replace: true,
+          });
         },
         onPending: () => {
           document.body.style.overflow = '';
           showToast('Menunggu pembayaran. Cek WA/email untuk instruksi.', 'info');
-          // ⭐ START polling — detect payment success untuk VA/QRIS yang telat
           startPaymentPolling(data.order_id);
         },
         onError: (result) => {
           console.error('[Midtrans] Payment error:', result);
           document.body.style.overflow = '';
           stopPaymentPolling();
-          showToast('Pembayaran gagal. Bayar ulang via menu Pesanan Saya.', 'error');
+          // ⭐ Redirect ke payment failed page
+          navigate('/payment-failed', {
+            state: { orderId: data.order_id, status: 'failure' },
+            replace: true,
+          });
         },
         onClose: () => {
           document.body.style.overflow = '';
-          // ⭐ User close Snap popup tanpa bayar — keep polling jika ada pending payment
-          // (user mungkin bayar via VA/QRIS di app lain)
-          // Polling akan auto-stop kalau payment confirmed atau timeout 3 menit
           showToast('Order tersimpan. Bayar nanti via menu Pesanan Saya.', 'warning');
         },
       });

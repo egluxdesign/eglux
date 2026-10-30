@@ -1,5 +1,8 @@
 // src/components/ui/CartPanel.jsx
 // Panel keranjang slide-in dari kanan.
+//
+// [v3] Comment "Bayar via Midtrans" → "Bayar via DOKU" (label button tetap "Bayar Sekarang")
+// Prop `onCheckoutMidtrans` tetap pakai nama lama untuk backward compat dengan CartPage.
 import { useCart, rupiah } from '../../context/CartContext';
 
 const CartPanel = ({ isOpen, onClose, onCheckout, onCheckoutMidtrans }) => {
@@ -43,7 +46,6 @@ const CartPanel = ({ isOpen, onClose, onCheckout, onCheckoutMidtrans }) => {
             ? <p className="text-center text-[#666] text-[0.9rem] py-12">Keranjang masih kosong</p>
             : cart.map((item) => (
               <div key={item.id} className="flex gap-4 py-4 border-b border-[#f0f0f0] items-start">
-                {/* TODO: item.img → Supabase Storage URL */}
                 <img src={item.img} alt={item.name}
                      className="w-16 h-16 object-cover rounded-[10px] flex-shrink-0" />
                 <div className="flex-1 min-w-0">
@@ -99,7 +101,7 @@ const CartPanel = ({ isOpen, onClose, onCheckout, onCheckoutMidtrans }) => {
             </span>
           </div>
 
-          {/* Bayar langsung via Midtrans (QRIS, transfer, e-wallet, dll) */}
+          {/* Bayar via DOKU (Transfer Bank VA, DOKU e-Wallet, Alfamart, Indomaret) */}
           <button
             onClick={onCheckoutMidtrans}
             disabled={cart.length === 0}
