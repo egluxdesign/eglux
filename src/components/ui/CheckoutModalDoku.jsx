@@ -1,53 +1,161 @@
 // src/components/ui/CheckoutModalDoku.jsx
 // ============================================================================
-// CheckoutModalDoku — DROP-IN REPLACEMENT untuk CheckoutModalMidtrans
+// EGLUX Checkout — DOKU Checkout (payment) + Biteship (shipping aggregator)
 //
-// Perbedaan dengan CheckoutModalMidtrans:
-//   - Pakai DOKU Checkout (bukan Midtrans Snap)
-//   - Load jokul-checkout-1.0.0.js (bukan snap.js)
-//   - Call edge function `create-doku-payment` (bukan `create-midtrans-payment`)
-//   - Modal popup via window.loadJokulCheckout(payment_url)
+// [v1.0] Rewrite dari CheckoutModalMidtrans.jsx — swap Midtrans Snap → DOKU:
+//   - Remove: useMidtransSnap, ensureSnapLoaded, snap.pay()
+//   - Add: loadDokuJs(), window.loadJokulCheckout(payment_url)
+//   - Remove: payment_methods DB table (DOKU modal handles method selection)
+//   - Remove: adminFee calculation (DOKU fees deducted from settlement, not added)
+//   - Keep: Biteship courier selection, voucher validation, country selector,
+//           city dropdown, tax (EGLUX internal), order save to Supabase
 //
-// Props sama persis dengan CheckoutModalMidtrans (drop-in):
-//   isOpen     : boolean — true buka modal, false tutup
-//   onClose    : () => void — handler tutup modal
-//   showToast  : (msg, type?) => void — notifikasi (optional)
-//
-// Cart data diambil dari useCart() context (sama kayak CheckoutModalMidtrans).
-// User data diambil dari useAuth() context.
+// DOKU Flow:
+//   1. User fills form (Name/Phone/Email/Address/City/Postal)
+//   2. Biteship courier selection → shipping cost
+//   3. Voucher apply (optional)
+//   4. Click "Bayar Sekarang" → save order → call create-doku-payment edge fn
+//   5. Get payment_url → close our modal → loadJokulCheckout(payment_url)
+//   6. DOKU modal popup → user pays (VA/e-Wallet/Minimarket)
+//   7. Poll order_payments table for status → redirect to /payment-success
 //
 // Required env (.env frontend):
 //   VITE_SUPABASE_URL
 //   VITE_SUPABASE_ANON_KEY
-//   VITE_DOKU_MODE=sandbox|production
+//   VITE_DOKU_MODE=sandbox|production (default: production)
 //
-// Required Supabase Edge Functions:
-//   create-doku-payment  (POST → returns payment_url)
-//   doku-webhook         (menerima notifikasi DOKU)
+// Required edge functions:
+//   create-order (existing)
+//   create-doku-payment (NEW — returns payment_url)
+//   doku-webhook (NEW — receives payment notification, updates order_payments)
+//
+// Required DB tables:
+//   orders (existing)
+//   order_payments (NEW — see sql/doku_payment_tables.sql)
+//   customers, voucher_claims, etc. (existing)
 // ============================================================================
 
-import { useEffect, useState } from 'react';
-import { useCart } from '../../context/CartContext';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { useCart, rupiah } from '../../context/CartContext';
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../lib/supabaseClient';
+import {
+  Truck,
+  Loader2,
+  MapPin,
+  User,
+  Package,
+  ShieldCheck,
+  AlertCircle,
+  ChevronDown,
+} from 'lucide-react';
+import Select from 'react-select';
+import { INDONESIAN_CITIES } from '../../data/indonesianCities';
+import { COUNTRIES, DEFAULT_COUNTRY } from '../../data/countries';
+import VoucherClaimModal from './VoucherClaimModal';
+import CourierLogo from './CourierLogo';
+import useAppSettings from '../../hooks/useAppSettings';
 
-// ── DOKU Checkout JS loader (cached, sandbox vs production) ──
+// Key untuk sessionStorage — sinyal agar parent page auto-buka checkout modal
+// setelah user berhasil login dari halaman /admin.
+export const CHECKOUT_INTENT_KEY = 'eglux_checkout_intent';
+
+// ⭐ Tax fallback — dipakai HANYA kalau settings DB gagal load.
+export const TAX_PERCENT_FALLBACK = 3;
+
+const INITIAL_FORM = {
+  name: '',
+  email: '',
+  phone: '', // E.164: +628xxxxxxxxxx
+  address: '',
+  city: '', // city name string (dari dropdown)
+  postal: '',
+  notes: '',
+};
+
+const generateUUID = () => crypto.randomUUID();
+
+// ===== Email validation =====
+const isEmailValid = (e) => !e || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
+
+// ===== Phone validation (longga E.164) =====
+const isPhoneValidE164 = (p) => {
+  if (!p) return false;
+  const digits = p.replace(/\D/g, '');
+  return /^\d{8,15}$/.test(digits);
+};
+
+const getPhoneErrorMessage = (p, country) => {
+  if (!p || !p.trim()) return 'Nomor WhatsApp wajib diisi';
+  const digits = p.replace(/\D/g, '');
+  if (!digits.startsWith(country.dial)) {
+    return `Format nomor tidak valid untuk +${country.dial} (${country.name})`;
+  }
+  const afterCountry = digits.slice(country.dial.length);
+  if (afterCountry.length === 0) return 'Masukkan nomor telepon setelah kode negara';
+  if (afterCountry.length < 7) return 'Nomor terlalu pendek (minimal 7 digit)';
+  if (afterCountry.length > 14) return 'Nomor terlalu panjang (maksimal 14 digit)';
+  return '';
+};
+
+// ===== react-select custom styles (match eglux design) =====
+const selectStyles = {
+  control: (base, state) => ({
+    ...base,
+    minHeight: '48px',
+    height: '48px',
+    border: state.isFocused
+      ? '1.5px solid #c9a96e'
+      : state.selectProps.error
+      ? '1.5px solid #ef4444'
+      : '1.5px solid #ddd',
+    borderRadius: '10px',
+    fontSize: '0.88rem',
+    fontFamily: 'inherit',
+    boxShadow: 'none',
+    '&:hover': { borderColor: state.selectProps.error ? '#ef4444' : '#c9a96e' },
+    background: state.isDisabled ? '#f5f5f5' : '#fff',
+    cursor: 'pointer',
+  }),
+  option: (base, state) => ({
+    ...base,
+    fontSize: '0.85rem',
+    background: state.isSelected ? '#c9a96e' : state.isFocused ? '#faf6ef' : '#fff',
+    color: state.isSelected ? '#fff' : '#1a1a1a',
+    cursor: 'pointer',
+    '&:active': { background: state.isSelected ? '#c9a96e' : '#f0e8d6' },
+  }),
+  placeholder: (base) => ({ ...base, color: '#999', fontSize: '0.85rem' }),
+  singleValue: (base) => ({ ...base, color: '#1a1a1a', fontSize: '0.88rem' }),
+  menu: (base) => ({ ...base, zIndex: 9999, borderRadius: '10px', overflow: 'hidden' }),
+  menuList: (base) => ({ ...base, maxHeight: '220px' }),
+  indicatorSeparator: (base) => ({ ...base, backgroundColor: '#ddd' }),
+  dropdownIndicator: (base) => ({
+    ...base,
+    color: '#999',
+    '&:hover': { color: '#c9a96e' },
+  }),
+};
+
+// ============================================================================
+// ⭐ DOKU Checkout JS loader (replaces ensureSnapLoaded)
+// ============================================================================
 const DOKU_JS_SANDBOX = 'https://sandbox.doku.com/jokul-checkout-js/v1/jokul-checkout-1.0.0.js';
 const DOKU_JS_PRODUCTION = 'https://jokul.doku.com/jokul-checkout-js/v1/jokul-checkout-1.0.0.js';
 
-// ⭐ Export CHECKOUT_INTENT_KEY for compatibility with CartDrawer / CartPage
-// that import it from CheckoutModalMidtrans (legacy).
-// Same value as in CartPage.jsx: 'eglux_checkout_intent'
-export const CHECKOUT_INTENT_KEY = 'eglux_checkout_intent';
-
 let dokuJsPromise = null;
 
-function loadDokuJs(isProduction) {
+function loadDokuJs() {
   if (typeof window === 'undefined') return Promise.reject(new Error('window not available'));
   if (typeof window.loadJokulCheckout === 'function') return Promise.resolve();
   if (dokuJsPromise) return dokuJsPromise;
 
+  // Default: production kalau VITE_DOKU_MODE kosong/unset
+  const mode = (import.meta?.env?.VITE_DOKU_MODE || 'production').toLowerCase();
+  const isProduction = mode !== 'sandbox';
   const src = isProduction ? DOKU_JS_PRODUCTION : DOKU_JS_SANDBOX;
+
   dokuJsPromise = new Promise((resolve, reject) => {
     // Cleanup any prior instance
     document.querySelectorAll('script[data-doku-checkout-js]').forEach((s) => s.remove());
@@ -56,8 +164,11 @@ function loadDokuJs(isProduction) {
     script.async = true;
     script.setAttribute('data-doku-checkout-js', 'true');
     script.onload = () => {
-      if (typeof window.loadJokulCheckout === 'function') resolve();
-      else reject(new Error('jokul-checkout-1.0.0.js loaded but loadJokulCheckout not defined'));
+      if (typeof window.loadJokulCheckout === 'function') {
+        resolve();
+      } else {
+        reject(new Error('jokul-checkout-1.0.0.js loaded but loadJokulCheckout not defined'));
+      }
     };
     script.onerror = () => reject(new Error('Failed to load jokul-checkout-1.0.0.js'));
     document.head.appendChild(script);
@@ -65,311 +176,1506 @@ function loadDokuJs(isProduction) {
   return dokuJsPromise;
 }
 
-const isProductionMode = () => {
-  const v = (import.meta?.env?.VITE_DOKU_MODE || '').toLowerCase();
-  return v === 'production';
-};
-
-// ── Component ──
+// ============================================================================
+// Component
+// ============================================================================
 const CheckoutModalDoku = ({ isOpen, onClose, showToast }) => {
-  const { cart, clearCart } = useCart();
-  const { user } = useAuth();
+  const { cart, totalPrice, clearCart, recomputeCartPrices } = useCart();
+  const { settings: appSettings } = useAppSettings();
+  const TAX_PERCENT = appSettings.tax_enabled ? (appSettings.tax_percent || TAX_PERCENT_FALLBACK) : 0;
+  const TAX_ENABLED = appSettings.tax_enabled !== false;
 
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-  const [form, setForm] = useState({
-    name: '',
-    phone: '',
-    email: '',
-    address: '',
-    city: '',
-    postal_code: '',
-    notes: '',
+  const { user, profile } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  const [form, setForm] = useState(INITIAL_FORM);
+  const [formErrors, setFormErrors] = useState({});
+  const [submitting, setSubmitting] = useState(false);
+  const [orderId, setOrderId] = useState(null);
+  const [dokuInvoiceNumber, setDokuInvoiceNumber] = useState(null);
+
+  // Voucher state
+  const [voucherCode, setVoucherCode] = useState('');
+  const [voucherDiscount, setVoucherDiscount] = useState(0);
+  const [voucherValid, setVoucherValid] = useState(false);
+  const [voucherError, setVoucherError] = useState('');
+  const [voucherLoading, setVoucherLoading] = useState(false);
+  const [appliedVoucher, setAppliedVoucher] = useState(null);
+  const [showVoucherClaimModal, setShowVoucherClaimModal] = useState(false);
+
+  // My Vouchers dropdown
+  const [myVouchers, setMyVouchers] = useState([]);
+  const [myVouchersOpen, setMyVouchersOpen] = useState(false);
+  const [myVouchersLoading, setMyVouchersLoading] = useState(false);
+  const myVouchersRef = useRef(null);
+
+  // Phone country selector
+  const [selectedCountry, setSelectedCountry] = useState(DEFAULT_COUNTRY);
+  const [countryDropdownOpen, setCountryDropdownOpen] = useState(false);
+  const [countrySearch, setCountrySearch] = useState('');
+  const countryDropdownRef = useRef(null);
+
+  // Biteship
+  const [areas, setAreas] = useState([]);
+  const [areasLoading, setAreasLoading] = useState(false);
+  const [selectedAreaId, setSelectedAreaId] = useState('');
+  const [shippingOptions, setShippingOptions] = useState([]);
+  const [shippingLoading, setShippingLoading] = useState(false);
+  const [selectedShipping, setSelectedShipping] = useState(null);
+
+  // Payment polling
+  const pollingTimerRef = useRef(null);
+
+  // ============================================================================
+  // AUTH: Pre-fill form from profile + user_metadata
+  // ============================================================================
+  useEffect(() => {
+    if (user && profile) {
+      const userMeta = user.user_metadata || {};
+      setForm((prev) => ({
+        ...prev,
+        name: profile.full_name || userMeta.full_name || prev.name,
+        email: user.email || prev.email,
+        phone: profile.phone || userMeta.phone || prev.phone,
+        address: profile.address || prev.address,
+      }));
+    }
+  }, [user, profile]);
+
+  const postalDebounceRef = useRef(null);
+
+  // Reset state saat modal ditutup
+  useEffect(() => {
+    if (!isOpen) {
+      setForm(INITIAL_FORM);
+      setFormErrors({});
+      setOrderId(null);
+      setDokuInvoiceNumber(null);
+      setSubmitting(false);
+      setAreas([]);
+      setSelectedAreaId('');
+      setShippingOptions([]);
+      setSelectedShipping(null);
+      setSelectedCountry(DEFAULT_COUNTRY);
+      setCountryDropdownOpen(false);
+      setCountrySearch('');
+      // Stop polling if active
+      if (pollingTimerRef.current) {
+        clearInterval(pollingTimerRef.current);
+        pollingTimerRef.current = null;
+      }
+    }
+  }, [isOpen]);
+
+  // Click-outside: tutup country dropdown
+  useEffect(() => {
+    if (!countryDropdownOpen) return;
+    const handler = (e) => {
+      if (countryDropdownRef.current && !countryDropdownRef.current.contains(e.target)) {
+        setCountryDropdownOpen(false);
+        setCountrySearch('');
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [countryDropdownOpen]);
+
+  // Click-outside: tutup my vouchers dropdown
+  useEffect(() => {
+    const handler = (e) => {
+      if (myVouchersRef.current && !myVouchersRef.current.contains(e.target)) {
+        setMyVouchersOpen(false);
+      }
+    };
+    document.addEventListener('click', handler);
+    return () => document.removeEventListener('click', handler);
+  }, []);
+
+  // Prefetch DOKU JS when modal opens (so popup is instant on click)
+  useEffect(() => {
+    if (isOpen) {
+      loadDokuJs().catch((e) => console.warn('[DOKU] preload JS failed:', e));
+    }
+  }, [isOpen]);
+
+  // Cleanup polling on unmount
+  useEffect(() => {
+    return () => {
+      if (pollingTimerRef.current) {
+        clearInterval(pollingTimerRef.current);
+        pollingTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  const change = (e) => {
+    const { name, value } = e.target;
+    setForm((f) => ({ ...f, [name]: value }));
+    setFormErrors((prev) => ({ ...prev, [name]: '' }));
+    if (name === 'postal') {
+      setAreas([]);
+      setSelectedAreaId('');
+      setShippingOptions([]);
+      setSelectedShipping(null);
+    }
+  };
+
+  // ===== Phone handlers =====
+  const onPhoneChange = (e) => {
+    const digits = e.target.value.replace(/\D/g, '').slice(0, 14);
+    const e164 = digits ? `+${selectedCountry.dial}${digits}` : '';
+    setForm((f) => ({ ...f, phone: e164 }));
+    setFormErrors((prev) => ({ ...prev, phone: '' }));
+  };
+
+  const onPhoneBlur = () => {
+    const err = getPhoneErrorMessage(form.phone, selectedCountry);
+    setFormErrors((prev) => ({ ...prev, phone: err }));
+  };
+
+  const onSelectCountry = (country) => {
+    const currentDigits = form.phone.replace(/\D/g, '').slice(selectedCountry.dial.length);
+    const newE164 = currentDigits ? `+${country.dial}${currentDigits}` : '';
+    setForm((f) => ({ ...f, phone: newE164 }));
+    setSelectedCountry(country);
+    setCountryDropdownOpen(false);
+    setCountrySearch('');
+    setFormErrors((prev) => ({ ...prev, phone: '' }));
+  };
+
+  const phoneDisplayValue = (() => {
+    if (!form.phone) return '';
+    const stripped = form.phone.replace(/^\+/, '');
+    return stripped.startsWith(selectedCountry.dial)
+      ? stripped.slice(selectedCountry.dial.length)
+      : stripped;
+  })();
+
+  const filteredCountries = COUNTRIES.filter((c) => {
+    if (!countrySearch.trim()) return true;
+    const q = countrySearch.toLowerCase().trim().replace(/^\+/, '');
+    return c.name.toLowerCase().includes(countrySearch.toLowerCase().trim()) || c.dial.includes(q);
   });
 
-  // Auto-fill from user profile
-  useEffect(() => {
-    if (!user) return;
-    setForm((f) => ({
-      ...f,
-      name: f.name || user.user_metadata?.full_name || '',
-      email: f.email || user.email || '',
-      phone: f.phone || user.user_metadata?.phone || '',
-    }));
-  }, [user]);
+  const onCityChange = (opt) => {
+    setForm((f) => ({ ...f, city: opt?.value || '' }));
+    setFormErrors((prev) => ({ ...prev, city: '' }));
+  };
 
-  // Body scroll lock when open
-  useEffect(() => {
-    if (isOpen) {
-      document.body.style.overflow = 'hidden';
+  const onEmailBlur = () => {
+    if (!form.email) {
+      setFormErrors((prev) => ({ ...prev, email: 'Email wajib diisi untuk notifikasi pembayaran' }));
+    } else if (!isEmailValid(form.email)) {
+      setFormErrors((prev) => ({ ...prev, email: 'Format email tidak valid (contoh: nama@contoh.com)' }));
     } else {
-      document.body.style.overflow = '';
-      setError(null);
+      setFormErrors((prev) => ({ ...prev, email: '' }));
     }
-  }, [isOpen]);
+  };
 
-  // Prefetch DOKU JS when modal opens
-  useEffect(() => {
-    if (isOpen) {
-      loadDokuJs(isProductionMode()).catch((e) => {
-        console.warn('[DOKU] preload JS failed:', e);
-      });
-    }
-  }, [isOpen]);
+  // ===== Biteship area lookup =====
+  const lookupAreas = useCallback(
+    async (postal) => {
+      if (!/^\d{5}$/.test(postal)) return;
+      setAreasLoading(true);
+      setAreas([]);
+      setSelectedAreaId('');
+      setShippingOptions([]);
+      setSelectedShipping(null);
 
-  if (!isOpen) return null;
+      try {
+        const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+        const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-  const subtotal = cart.reduce(
-    (sum, it) => sum + Number(it.price || 0) * Number(it.quantity || 1),
-    0
+        const resp = await fetch(
+          `${supabaseUrl}/functions/v1/search-biteship-areas?postal_code=${encodeURIComponent(postal)}`,
+          {
+            method: 'GET',
+            headers: {
+              Authorization: `Bearer ${anonKey}`,
+              apikey: anonKey,
+              'Content-Type': 'application/json',
+            },
+          }
+        );
+
+        const data = await resp.json();
+        if (!resp.ok || data.error) {
+          throw new Error(data.error?.message || data.error || `HTTP ${resp.status}`);
+        }
+
+        setAreas(data.areas || []);
+        if (data.areas?.length === 1) {
+          setSelectedAreaId(String(data.areas[0].id));
+        }
+        if (resp.ok && (!data.areas || data.areas.length === 0)) {
+          showToast(`Kode pos ${postal} tidak ditemukan di Biteship.`);
+        }
+      } catch (err) {
+        let msg = err.message;
+        try {
+          const p = JSON.parse(err.message);
+          msg = p.error || p.msg || msg;
+        } catch { /* not JSON */ }
+        showToast(`Gagal cari area: ${msg}`);
+      } finally {
+        setAreasLoading(false);
+      }
+    },
+    [showToast]
   );
-  const total = subtotal; // shipping handled separately / on DOKU side
 
-  const handlePay = async (e) => {
-    e.preventDefault();
-    if (!form.name || !form.phone) {
-      const msg = 'Mohon lengkapi nama dan nomor WhatsApp.';
-      setError(msg);
-      if (showToast) showToast(msg, 'error');
-      return;
+  const onPostalChange = (e) => {
+    const val = e.target.value.replace(/\D/g, '').slice(0, 5);
+    setForm((f) => ({ ...f, postal: val }));
+    setFormErrors((prev) => ({ ...prev, postal: '' }));
+
+    if (postalDebounceRef.current) clearTimeout(postalDebounceRef.current);
+    if (val.length === 5) {
+      postalDebounceRef.current = setTimeout(() => lookupAreas(val), 500);
+    } else {
+      setAreas([]);
+      setSelectedAreaId('');
     }
-    if (!cart.length) {
-      const msg = 'Keranjang masih kosong.';
-      setError(msg);
-      if (showToast) showToast(msg, 'error');
-      return;
+  };
+
+  // ===== Auto-fetch rates begitu area dipilih =====
+  const fetchRates = useCallback(
+    async (areaId) => {
+      const areaIdStr = areaId != null ? String(areaId).trim() : '';
+      if (!areaIdStr) {
+        showToast('Area ID tidak valid, coba pilih ulang area tujuan.');
+        return;
+      }
+      if (cart.length === 0) return;
+
+      setShippingLoading(true);
+      setShippingOptions([]);
+      setSelectedShipping(null);
+
+      try {
+        const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+        const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+        const payload = {
+          destination_area_id: areaIdStr,
+          items: cart.map((item) => ({
+            product_id: item.productId,
+            name: item.name,
+            value: item.originalPrice || item.price || 0,
+            quantity: item.qty,
+            weight: item.weight_in_gram || 500,
+          })),
+        };
+
+        const resp = await fetch(`${supabaseUrl}/functions/v1/check-biteship-rates`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${anonKey}`,
+            apikey: anonKey,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload),
+        });
+
+        const data = await resp.json();
+        if (!resp.ok || data.error) {
+          throw new Error(data.error?.message || data.error || `HTTP ${resp.status}`);
+        }
+
+        const shippingRates = data.rates || data.pricing || [];
+        setShippingOptions(shippingRates);
+        if (!shippingRates.length) showToast('Tidak ada kurir tersedia untuk area ini.');
+      } catch (err) {
+        let msg = err.message;
+        try {
+          const p = JSON.parse(err.message);
+          msg = p.error || p.msg || msg;
+        } catch { /* not JSON */ }
+        showToast(`Error ongkir: ${msg}`);
+      } finally {
+        setShippingLoading(false);
+      }
+    },
+    [cart, showToast]
+  );
+
+  useEffect(() => {
+    if (selectedAreaId) fetchRates(selectedAreaId);
+  }, [selectedAreaId, fetchRates]);
+
+  // ===== Validation =====
+  const validate = () => {
+    const errors = {};
+
+    if (cart.length === 0) errors.cart = 'Keranjang masih kosong';
+    if (!form.name.trim()) errors.name = 'Nama lengkap wajib diisi';
+
+    const phoneErr = getPhoneErrorMessage(form.phone, selectedCountry);
+    if (phoneErr) errors.phone = phoneErr;
+
+    if (form.email && !isEmailValid(form.email)) {
+      errors.email = 'Format email tidak valid (contoh: nama@contoh.com)';
+    }
+    if (!form.email) {
+      errors.email = 'Email wajib diisi untuk notifikasi pembayaran';
+    }
+    if (!form.address.trim()) errors.address = 'Alamat lengkap wajib diisi';
+    if (!form.city.trim()) errors.city = 'Kota wajib dipilih';
+    if (!/^\d{5}$/.test(form.postal)) errors.postal = 'Kode pos harus 5 digit';
+    if (!selectedAreaId) errors.area = 'Pilih area tujuan dari hasil pencarian kode pos';
+    if (!selectedShipping) errors.shipping = 'Pilih kurir terlebih dahulu';
+
+    // Stock check (prevent oversell di frontend)
+    const oversoldItems = cart.filter((item) => {
+      if (item.stock === null || item.stock === undefined) return false;
+      return item.qty > item.stock;
+    });
+    if (oversoldItems.length > 0) {
+      const firstItem = oversoldItems[0];
+      const itemDesc = firstItem.variantName
+        ? `${firstItem.name} (${firstItem.variantName})`
+        : firstItem.name;
+      errors.stock = `Stok tidak cukup untuk ${itemDesc}. Tersedia: ${firstItem.stock}, diminta: ${firstItem.qty}. Mohon kurangi jumlah atau hapus item dari keranjang.`;
     }
 
-    setLoading(true);
-    setError(null);
+    setFormErrors(errors);
+
+    if (Object.keys(errors).length > 0) {
+      const firstError = Object.values(errors)[0];
+      if (firstError) showToast(firstError);
+      return false;
+    }
+    return true;
+  };
+
+  // ===== Voucher handlers =====
+  const buildCartItemsPayload = () =>
+    cart.map((item) => ({ variant_id: item.variantId, qty: item.qty }))
+      .filter((item) => item.variant_id);
+
+  const handleApplyVoucher = async () => {
+    if (!voucherCode.trim()) return;
+    setVoucherLoading(true);
+    setVoucherError('');
+    setVoucherValid(false);
+    setVoucherDiscount(0);
+    setAppliedVoucher(null);
 
     try {
-      // Build line_items from cart
-      const line_items = cart.map((it, i) => ({
-        id: String(it.id || it.product_id || `ITEM-${i + 1}`).slice(0, 64),
-        name: String(it.name || it.title || 'Item').slice(0, 255),
-        price: Number(it.price || 0),
-        quantity: Number(it.quantity || 1),
-        sku: String(it.sku || '').slice(0, 64),
-        category: String(it.category || 'retail').slice(0, 100),
-      }));
+      const token = (await supabase.auth.getSession()).data?.session?.access_token;
+      if (!token) { setVoucherError('Sesi login habis'); return; }
 
-      // Generate merchant order_id
-      const order_id = `doku-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+      const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/validate-voucher`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          code: voucherCode.trim(),
+          subtotal: totalPrice,
+          cart_items: buildCartItemsPayload(),
+        }),
+      });
+      const result = await resp.json();
 
-      // Build payload
-      const payload = {
-        order_id,
-        amount: total,
-        customer_name: form.name,
-        customer_phone: form.phone,
-        customer_email: form.email,
-        customer_address: form.address,
-        customer_city: form.city,
-        customer_postcode: form.postal_code,
-        line_items,
+      if (result.valid) {
+        setVoucherValid(true);
+        setVoucherDiscount(result.discount_amount);
+        setAppliedVoucher(result.voucher);
+      } else {
+        setVoucherError(result.error || 'Voucher tidak valid');
+      }
+    } catch (e) {
+      setVoucherError('Gagal validasi: ' + e.message);
+    } finally {
+      setVoucherLoading(false);
+    }
+  };
+
+  const handleRemoveVoucher = () => {
+    setVoucherCode('');
+    setVoucherValid(false);
+    setVoucherDiscount(0);
+    setVoucherError('');
+    setAppliedVoucher(null);
+  };
+
+  const fetchMyVouchers = useCallback(async () => {
+    setMyVouchersLoading(true);
+    try {
+      const token = (await supabase.auth.getSession()).data?.session?.access_token;
+      if (!token) return;
+
+      const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/get-user-vouchers`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const result = await resp.json();
+      if (result.success) {
+        setMyVouchers(result.vouchers || []);
+      }
+    } catch (e) {
+      console.warn('[Checkout] fetchMyVouchers error:', e?.message);
+    } finally {
+      setMyVouchersLoading(false);
+    }
+  }, []);
+
+  const toggleMyVouchers = () => {
+    if (!myVouchersOpen && myVouchers.length === 0 && !myVouchersLoading) {
+      fetchMyVouchers();
+    }
+    setMyVouchersOpen((open) => !open);
+  };
+
+  const formatVoucherPreview = (v) => {
+    if (v.discount_type === 'fixed') return `Diskon ${rupiah(v.discount_value)}`;
+    if (v.discount_type === 'percentage') return `Diskon ${v.discount_value}%`;
+    if (v.discount_type === 'free_shipping') return 'Gratis Ongkir';
+    if (v.discount_type === 'free_product') return `Produk Gratis: ${v.product_sku || ''}`;
+    return 'Voucher';
+  };
+
+  const formatMinPurchaseHint = (v) => {
+    if (v.discount_type === 'free_product') return 'Tanpa min. belanja';
+    if (!v.min_purchase || v.min_purchase === 0) return 'Tanpa min. belanja';
+    return `Min. ${rupiah(v.min_purchase)}`;
+  };
+
+  const applyVoucherFromList = async (voucher) => {
+    setMyVouchersOpen(false);
+    setVoucherCode(voucher.code);
+    setVoucherError('');
+    setVoucherLoading(true);
+
+    try {
+      const token = (await supabase.auth.getSession()).data?.session?.access_token;
+      if (!token) { setVoucherError('Sesi login habis'); return; }
+
+      const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/validate-voucher`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          code: voucher.code,
+          subtotal: totalPrice,
+          cart_items: buildCartItemsPayload(),
+        }),
+      });
+      const result = await resp.json();
+
+      if (result.valid) {
+        setVoucherValid(true);
+        setVoucherDiscount(result.discount_amount);
+        setAppliedVoucher(result.voucher);
+      } else {
+        setVoucherError(result.error || 'Voucher tidak valid');
+      }
+    } catch (e) {
+      setVoucherError('Gagal validasi: ' + e.message);
+    } finally {
+      setVoucherLoading(false);
+    }
+  };
+
+  const handleUseVoucherFromClaim = async (voucher) => {
+    setVoucherCode(voucher.code);
+    setVoucherError('');
+    setVoucherLoading(true);
+
+    try {
+      const token = (await supabase.auth.getSession()).data?.session?.access_token;
+      if (!token) { setVoucherError('Sesi login habis'); return; }
+
+      const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/validate-voucher`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          code: voucher.code,
+          subtotal: totalPrice,
+          cart_items: buildCartItemsPayload(),
+        }),
+      });
+      const result = await resp.json();
+
+      if (result.valid) {
+        setVoucherValid(true);
+        setVoucherDiscount(result.discount_amount);
+        setAppliedVoucher(result.voucher);
+      } else {
+        setVoucherError(result.error || 'Voucher tidak valid');
+      }
+    } catch (e) {
+      setVoucherError('Gagal validasi: ' + e.message);
+    } finally {
+      setVoucherLoading(false);
+    }
+  };
+
+  // ===== Persist order ke Supabase =====
+  const saveOrderToSupabase = async () => {
+    const shippingCost = selectedShipping?.price || 0;
+    const taxBase = cart.reduce(
+      (s, i) => s + ((i.originalPrice != null && i.originalPrice > 0 ? i.originalPrice : i.price) * i.qty),
+      0
+    );
+    const taxAmount = Math.round(taxBase * TAX_PERCENT / 100);
+    // ⭐ DOKU: No admin fee added to customer total (DOKU fees deducted from settlement)
+    const grandTotal = totalPrice + shippingCost + taxAmount - voucherDiscount;
+    const selectedArea = areas.find((a) => String(a.id) === String(selectedAreaId));
+
+    const payload = {
+      customer: {
+        name: form.name.trim(),
+        phone: form.phone.trim(),
+        email: form.email.trim() || null,
+        address: form.address.trim(),
+      },
+      order: {
+        subtotal: totalPrice,
+        shipping_cost: shippingCost,
+        total_amount: grandTotal,
+        shipping_address: form.address.trim(),
+        shipping_city: form.city.trim(),
+        shipping_postal_code: form.postal,
+        shipping_area_id: String(selectedAreaId || '').trim() || null,
+        shipping_area_name: selectedArea?.name || null,
+        courier_code: (selectedShipping?.company_code || selectedShipping?.courier || '').toLowerCase(),
+        courier_service: selectedShipping?.service || null,
+        courier_duration: selectedShipping?.duration || null,
+        courier_rate: shippingCost,
+        notes: form.notes.trim() || null,
+        voucher_code: voucherValid ? voucherCode.trim() : null,
+        voucher_discount: voucherDiscount,
+        tax_percent: TAX_PERCENT,
+        tax_base: taxBase,
+        tax_amount: taxAmount,
+        // ⭐ DOKU: payment_method akan di-select user di DOKU modal, set ke 'doku'
+        payment_method_selected: 'doku',
+        admin_fee: 0, // DOKU fees deducted from settlement, not added to customer
+      },
+      items: cart.map((item) => ({
+        product_id: item.productId,
+        variant_id: item.variantId ?? null,
+        product_name_snapshot: item.name,
+        variant_name_snapshot: item.variantName ?? null,
+        unit_price_snapshot: item.price || 0,
+        original_unit_price: (item.originalPrice != null && item.originalPrice > 0)
+          ? item.originalPrice
+          : (item.price || 0),
+        quantity: item.qty,
+        subtotal: (item.price || 0) * item.qty,
+        weight_gram: item.weight_in_gram || 500,
+      })),
+    };
+
+    const { data: result, error: fnError } = await supabase.functions.invoke(
+      'create-order',
+      { body: payload }
+    );
+
+    if (fnError) {
+      throw new Error(`create-order: ${fnError.message}`);
+    }
+    if (!result?.success || !result?.order_id) {
+      throw new Error(`create-order: ${result?.error || 'Unknown error'}`);
+    }
+
+    return result.order_id;
+  };
+
+  // ============================================================================
+  // ⭐ DOKU PAYMENT POLLING — query order_payments table directly
+  // ============================================================================
+  // DOKU modal doesn't have JS callbacks like Snap. Instead:
+  //   - DOKU sends async webhook to doku-webhook edge function
+  //   - Webhook updates order_payments.status to 'paid'/'failed'/'expired'
+  //   - Frontend polls order_payments table for status changes
+  //   - When status changes → redirect to /payment-success or /payment-failed
+  const startPaymentPolling = (invoiceNumber, orderIdForRedirect) => {
+    if (pollingTimerRef.current) {
+      clearInterval(pollingTimerRef.current);
+      pollingTimerRef.current = null;
+    }
+
+    let pollCount = 0;
+    const MAX_POLLS = 120; // 120 × 5s = 10 minutes max polling
+
+    console.log('[DOKU] Start polling for invoice:', invoiceNumber);
+
+    pollingTimerRef.current = setInterval(async () => {
+      pollCount++;
+      if (pollCount > MAX_POLLS) {
+        console.log('[DOKU] Polling timeout (10 menit) — stop');
+        clearInterval(pollingTimerRef.current);
+        pollingTimerRef.current = null;
+        return;
+      }
+
+      try {
+        const { data, error } = await supabase
+          .from('order_payments')
+          .select('status, transaction_id, payment_channel')
+          .eq('invoice_number', invoiceNumber)
+          .limit(1)
+          .maybeSingle();
+
+        if (error) {
+          console.warn('[DOKU] Polling query error:', error.message);
+          return;
+        }
+
+        if (data?.status && data.status !== 'pending') {
+          clearInterval(pollingTimerRef.current);
+          pollingTimerRef.current = null;
+
+          if (data.status === 'paid') {
+            console.log('[DOKU] ✓ Payment confirmed via polling!');
+            showToast('✅ Pembayaran berhasil! Pesanan Anda sedang diproses.', 'success');
+            window.dispatchEvent(new CustomEvent('eglux:payment-success', {
+              detail: { orderId: orderIdForRedirect, invoiceNumber }
+            }));
+            navigate('/payment-success', {
+              state: { orderId: orderIdForRedirect, invoiceNumber },
+              replace: true,
+            });
+          } else if (data.status === 'failed' || data.status === 'expired') {
+            console.log('[DOKU] ✗ Payment failed/expired');
+            showToast('Pembayaran gagal atau kadaluarsa.', 'error');
+            navigate('/payment-failed', {
+              state: { orderId: orderIdForRedirect, invoiceNumber, status: data.status },
+              replace: true,
+            });
+          }
+        }
+      } catch (e) {
+        console.warn('[DOKU] Polling exception:', e?.message);
+      }
+    }, 5000); // Poll every 5 seconds
+  };
+
+  const stopPaymentPolling = () => {
+    if (pollingTimerRef.current) {
+      clearInterval(pollingTimerRef.current);
+      pollingTimerRef.current = null;
+    }
+  };
+
+  // ============================================================================
+  // ⭐ handlePay — DOKU flow (replaces Midtrans snap.pay)
+  // ============================================================================
+  // Flow:
+  //   1. Validate form
+  //   2. Save order to Supabase (create-order) → get order_id
+  //   3. Call create-doku-payment edge function → get payment_url
+  //   4. Close our modal (so DOKU modal isn't blocked)
+  //   5. Load DOKU JS + open loadJokulCheckout(payment_url)
+  //   6. Start polling order_payments for status
+  //   7. On status change → redirect to /payment-success or /payment-failed
+  const handlePay = async () => {
+    if (!user) {
+      try { sessionStorage.setItem(CHECKOUT_INTENT_KEY, 'true'); } catch (e) {}
+      onClose?.();
+      navigate('/admin', {
+        state: { from: location.pathname + location.search },
+        replace: true,
+      });
+      return;
+    }
+
+    if (!validate()) return;
+
+    setSubmitting(true);
+    try {
+      let currentOrderId = orderId;
+      if (!currentOrderId) {
+        currentOrderId = await saveOrderToSupabase();
+        setOrderId(currentOrderId);
+        clearCart();
+        showToast('Pesanan dibuat! Selesaikan pembayaran sekarang.', 'info');
+      }
+
+      // ⭐ STEP 1: Ensure DOKU JS loaded
+      try {
+        await loadDokuJs();
+      } catch (loadErr) {
+        setSubmitting(false);
+        showToast('Sistem pembayaran DOKU gagal dimuat. Cek koneksi. Order tersimpan — bayar via Pesanan Saya.', 'warning');
+        return;
+      }
+
+      if (typeof window.loadJokulCheckout !== 'function') {
+        setSubmitting(false);
+        showToast('Sistem pembayaran DOKU belum siap. Order tersimpan — bayar via Pesanan Saya.', 'warning');
+        return;
+      }
+
+      // ⭐ STEP 2: Calculate grand total (must match saveOrderToSupabase)
+      const shippingCost = selectedShipping?.price || 0;
+      const taxBase = cart.reduce(
+        (s, i) => s + ((i.originalPrice != null && i.originalPrice > 0 ? i.originalPrice : i.price) * i.qty),
+        0
+      );
+      const taxAmount = Math.round(taxBase * TAX_PERCENT / 100);
+      const grandTotal = totalPrice + shippingCost + taxAmount - voucherDiscount;
+
+      // ⭐ STEP 3: Call create-doku-payment edge function via raw fetch
+      const dokuPayload = {
+        order_id: currentOrderId,
+        amount: grandTotal,
+        customer_name: form.name.trim(),
+        customer_phone: form.phone.trim(),
+        customer_email: form.email.trim(),
+        customer_address: form.address.trim(),
+        customer_city: form.city.trim(),
+        customer_postcode: form.postal,
+        line_items: cart.map((item) => ({
+          id: String(item.productId || item.id || '').slice(0, 64),
+          name: String(item.name || 'Item').slice(0, 255),
+          price: Number(item.price || 0),
+          quantity: Number(item.qty || 1),
+          sku: String(item.variantId || '').slice(0, 64),
+          category: 'retail',
+        })),
         shipping_address: {
-          first_name: form.name,
-          address: form.address,
-          city: form.city,
-          postal_code: form.postal_code,
-          phone: form.phone,
+          first_name: form.name.trim(),
+          address: form.address.trim(),
+          city: form.city.trim(),
+          postal_code: form.postal,
+          phone: form.phone.trim(),
         },
         billing_address: {
-          first_name: form.name,
-          address: form.address,
-          city: form.city,
-          postal_code: form.postal_code,
-          phone: form.phone,
+          first_name: form.name.trim(),
+          address: form.address.trim(),
+          city: form.city.trim(),
+          postal_code: form.postal,
+          phone: form.phone.trim(),
         },
+        // payment_method_types: undefined → DOKU modal shows all activated methods
       };
 
-      // Call edge function via raw fetch (better error visibility)
       const edgeUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-doku-payment`;
-      const resp = await fetch(edgeUrl, {
+      const dokuResp = await fetch(edgeUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
           apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
         },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(dokuPayload),
       });
 
-      const text = await resp.text();
-      let data;
+      const dokuText = await dokuResp.text();
+      let dokuResult;
       try {
-        data = JSON.parse(text);
+        dokuResult = JSON.parse(dokuText);
       } catch {
-        throw new Error(`Invalid response: ${text.slice(0, 200)}`);
+        throw new Error(`Invalid response from create-doku-payment: ${dokuText.slice(0, 300)}`);
       }
 
-      if (!resp.ok || !data.success) {
-        const errMsg = Array.isArray(data.error)
-          ? data.error.join(', ')
-          : data.error || `HTTP ${resp.status}`;
-        throw new Error(errMsg);
+      if (!dokuResp.ok || !dokuResult.success) {
+        const errMsg = Array.isArray(dokuResult.error)
+          ? dokuResult.error.join(', ')
+          : dokuResult.error || `HTTP ${dokuResp.status}`;
+        throw new Error(`DOKU: ${errMsg}`);
       }
 
-      const { payment_url, invoice_number } = data;
+      const { payment_url, invoice_number } = dokuResult;
+      setDokuInvoiceNumber(invoice_number);
 
-      // Open DOKU modal
-      await loadDokuJs(isProductionMode());
-      if (typeof window.loadJokulCheckout !== 'function') {
-        // Fallback: full-page redirect
-        window.location.href = payment_url;
-        return;
-      }
+      setSubmitting(false);
 
+      // ⭐ STEP 4: Close our modal DULU (so DOKU modal isn't blocked)
+      onClose();
+
+      // ⭐ STEP 5: Open DOKU Checkout modal
       window.loadJokulCheckout(payment_url);
 
-      if (showToast) {
-        showToast(`Pembayaran DOKU dimulai — Invoice: ${invoice_number}`, 'success');
-      }
+      // ⭐ STEP 6: Start polling order_payments for payment status
+      // Delay 3s before first poll (give user time to interact with DOKU modal)
+      setTimeout(() => {
+        startPaymentPolling(invoice_number, currentOrderId);
+      }, 3000);
 
-      // Optional: clear cart after payment session starts
-      // (uncomment if you want cart cleared immediately — but user might close modal without paying)
-      // clearCart();
+      showToast('Pembayaran DOKU dibuka — selesaikan pembayaran dalam modal.', 'info');
 
-      // Close our modal (DOKU modal takes over)
-      onClose?.();
     } catch (err) {
-      console.error('[DOKU] payment failed:', err);
-      setError(err.message || String(err));
-      if (showToast) showToast(`Gagal memulai pembayaran: ${err.message}`, 'error');
-    } finally {
-      setLoading(false);
+      console.error('[DOKU Checkout] Gagal:', err);
+      showToast(`Gagal: ${err.message}`);
+      setSubmitting(false);
     }
   };
 
+  // Clear intent flag kalau user sudah login
+  useEffect(() => {
+    if (user && sessionStorage.getItem(CHECKOUT_INTENT_KEY) === 'true') {
+      sessionStorage.removeItem(CHECKOUT_INTENT_KEY);
+    }
+  }, [user]);
+
+  // Refresh cart prices saat checkout modal dibuka
+  useEffect(() => {
+    if (isOpen && cart.length > 0) {
+      recomputeCartPrices();
+    }
+  }, [isOpen, cart.length, recomputeCartPrices]);
+
+  if (!isOpen) return null;
+
+  // Safety net: kalau modal ke-open saat user belum login
+  if (!user) {
+    try { sessionStorage.setItem(CHECKOUT_INTENT_KEY, 'true'); } catch (e) {}
+    onClose?.();
+    navigate('/admin', {
+      state: { from: location.pathname + location.search },
+      replace: true,
+    });
+    return null;
+  }
+
+  // ⭐ Grand total calculation
+  const shippingCostForDisplay = selectedShipping?.price || 0;
+  const taxBaseForDisplay = cart.reduce(
+    (s, i) => s + ((i.originalPrice != null && i.originalPrice > 0 ? i.originalPrice : i.price) * i.qty),
+    0
+  );
+  const taxAmountForDisplay = Math.round(taxBaseForDisplay * TAX_PERCENT / 100);
+  const grandTotal = totalPrice + shippingCostForDisplay + taxAmountForDisplay - voucherDiscount;
+
+  const isLocked = !!orderId;
+  const showAreaDropdown = !areasLoading && areas.length > 1;
+  const showAreaAutoSelected = !areasLoading && areas.length === 1 && selectedAreaId;
+  const showAreaNotFound = !areasLoading && form.postal.length === 5 && areas.length === 0;
+
+  const InlineError = ({ msg }) =>
+    msg ? (
+      <p className="text-[0.72rem] text-red-500 mt-1 flex items-center gap-1">
+        <AlertCircle className="w-3 h-3 flex-shrink-0" /> {msg}
+      </p>
+    ) : null;
+
   return (
+    <>
     <div
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm"
-      style={{ pointerEvents: 'auto' }}
+      className="fixed inset-0 bg-black/60 z-[3500] flex items-center justify-center p-3 md:p-4"
+      onClick={(e) => e.target === e.currentTarget && onClose()}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Form Pembayaran"
     >
-      <div
-        className="bg-white w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl shadow-2xl max-h-[95dvh] overflow-y-auto"
-        style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}
-      >
+      <div className="bg-white rounded-[20px] max-w-[500px] w-full max-h-[92vh] overflow-y-auto shadow-2xl">
         {/* Header */}
-        <div className="sticky top-0 bg-white px-5 py-4 border-b border-neutral-200 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-neutral-900">Checkout Pembayaran</h2>
+        <div className="sticky top-0 bg-white z-10 flex items-center justify-between px-4 md:px-6 pt-5 md:pt-6 pb-3 md:pb-4 border-b border-gray-100">
+          <div className="min-w-0 pr-2">
+            <h3 className="text-[1rem] md:text-[1.1rem] font-bold text-eglux-primary truncate">Checkout</h3>
+            <p className="text-[0.72rem] text-gray-500 mt-0.5 flex items-center gap-1 truncate">
+              <ShieldCheck className="w-3 h-3 flex-shrink-0" /> PT. Rayee Investment Indonesia — Transaksi aman & terenkripsi
+            </p>
+          </div>
           <button
             onClick={onClose}
-            className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-neutral-100"
-            aria-label="Close"
+            className="flex-shrink-0 w-11 h-11 min-w-[44px] min-h-[44px] rounded-full bg-black/[0.07] flex items-center justify-center
+                       text-eglux-primary text-xl border-none cursor-pointer hover:bg-black/[0.13] transition-colors"
+            aria-label="Tutup"
           >
-            ✕
+            &times;
           </button>
         </div>
 
-        <form onSubmit={handlePay} className="p-5 space-y-4">
-          {/* Customer info */}
-          <div className="space-y-3">
-            <h3 className="text-sm font-semibold text-neutral-800 uppercase tracking-wide">
-              Data Pemesan
-            </h3>
-            <input
-              type="text"
-              placeholder="Nama lengkap"
-              value={form.name}
-              onChange={(e) => setForm({ ...form, name: e.target.value })}
-              className="w-full px-4 py-3 border border-neutral-200 rounded-xl text-sm focus:outline-none focus:border-amber-500"
-              required
-            />
-            <input
-              type="tel"
-              placeholder="Nomor WhatsApp (08xxx)"
-              value={form.phone}
-              onChange={(e) => setForm({ ...form, phone: e.target.value })}
-              className="w-full px-4 py-3 border border-neutral-200 rounded-xl text-sm focus:outline-none focus:border-amber-500"
-              required
-            />
-            <input
-              type="email"
-              placeholder="Email (opsional)"
-              value={form.email}
-              onChange={(e) => setForm({ ...form, email: e.target.value })}
-              className="w-full px-4 py-3 border border-neutral-200 rounded-xl text-sm focus:outline-none focus:border-amber-500"
-            />
-          </div>
+        <div className="px-4 md:px-6 pb-6 pt-5 space-y-6">
+          {/* === Order Summary === */}
+          <section className="bg-eglux-accent rounded-xl p-4 text-[0.85rem]">
+            <h4 className="text-[0.78rem] uppercase tracking-[1px] text-[#666] mb-2 font-semibold flex items-center gap-1.5">
+              <Package className="w-3.5 h-3.5" />Ringkasan Pesanan
+            </h4>
 
-          {/* Shipping address */}
-          <div className="space-y-3">
-            <h3 className="text-sm font-semibold text-neutral-800 uppercase tracking-wide">
-              Alamat Pengiriman
-            </h3>
-            <textarea
-              placeholder="Alamat lengkap (jalan, RT/RW, kelurahan)"
-              value={form.address}
-              onChange={(e) => setForm({ ...form, address: e.target.value })}
-              rows={2}
-              className="w-full px-4 py-3 border border-neutral-200 rounded-xl text-sm focus:outline-none focus:border-amber-500 resize-none"
-              required
-            />
-            <div className="grid grid-cols-2 gap-3">
-              <input
-                type="text"
-                placeholder="Kota"
-                value={form.city}
-                onChange={(e) => setForm({ ...form, city: e.target.value })}
-                className="px-4 py-3 border border-neutral-200 rounded-xl text-sm focus:outline-none focus:border-amber-500"
-                required
-              />
-              <input
-                type="text"
-                placeholder="Kode pos"
-                value={form.postal_code}
-                onChange={(e) => setForm({ ...form, postal_code: e.target.value })}
-                className="px-4 py-3 border border-neutral-200 rounded-xl text-sm focus:outline-none focus:border-amber-500"
-                required
-              />
+            {cart.map((item) => {
+              const itemHasDiscount = item.isDiscounted && item.originalPrice > item.price;
+              const itemOriginalSubtotal = (item.originalPrice || item.price) * item.qty;
+              const itemDiscountedSubtotal = item.price * item.qty;
+              return (
+                <div key={item.id} className="mb-2">
+                  <div className="flex justify-between text-eglux-primary font-medium">
+                    <span className="flex-1 mr-2 truncate">
+                      {item.name.slice(0, 38)}
+                      {item.name.length > 38 ? '…' : ''}
+                      <br />
+                      <small className="text-[#666] font-normal">
+                        {item.variantName ?? '-'} × {item.qty}
+                        {item.weight_in_gram ? ` · ${item.weight_in_gram}g` : ''}
+                      </small>
+                    </span>
+                    <span className="whitespace-nowrap text-right">
+                      {item.price ? rupiah(item.price * item.qty) : '—'}
+                      {itemHasDiscount && (<br />)}
+                      {itemHasDiscount && (
+                        <small className="text-[0.65rem] text-gray-400 line-through font-normal">
+                          {rupiah(itemOriginalSubtotal)}
+                        </small>
+                      )}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+
+            {(() => {
+              const originalSubtotal = cart.reduce(
+                (s, i) => s + ((i.originalPrice || i.price) * i.qty), 0
+              );
+              const discountedSubtotal = cart.reduce(
+                (s, i) => s + (i.price * i.qty), 0
+              );
+              const totalDiscount = originalSubtotal - discountedSubtotal;
+              const hasAnyDiscount = totalDiscount > 0;
+              const shippingCost = shippingCostForDisplay;
+              const taxFee = taxAmountForDisplay;
+              const taxBase = taxBaseForDisplay;
+              const grandTotalV3 = discountedSubtotal + shippingCost + taxFee - voucherDiscount;
+
+              return (
+                <>
+                  <div className="flex justify-between mt-2 pt-2 border-t border-[#ddd] text-[0.82rem]">
+                    <span className="text-gray-600">Subtotal Produk ({cart.reduce((s,i)=>s+i.qty,0)} item)</span>
+                    <span className="font-medium text-eglux-primary">{rupiah(originalSubtotal)}</span>
+                  </div>
+
+                  {hasAnyDiscount && (
+                    <div className="flex justify-between mt-1 text-[0.82rem]">
+                      <span className="text-green-600">↓ Diskon</span>
+                      <span className="font-medium text-green-600">− {rupiah(totalDiscount)}</span>
+                    </div>
+                  )}
+
+                  {hasAnyDiscount && (
+                    <div className="flex justify-between mt-1 text-[0.82rem]">
+                      <span className="text-gray-600">Subtotal Setelah Diskon</span>
+                      <span className="font-medium text-eglux-primary">{rupiah(discountedSubtotal)}</span>
+                    </div>
+                  )}
+
+                  {selectedShipping && (
+                    <div className="flex justify-between mt-1 text-[0.82rem]">
+                      <span className="text-gray-600 flex items-center gap-2">
+                        <CourierLogo courierCode={selectedShipping.company_code || selectedShipping.courier} size={24} />
+                        Ongkir ({selectedShipping.display_name || `${selectedShipping.company || selectedShipping.courier} - ${selectedShipping.service}`})
+                      </span>
+                      <span className="font-medium text-eglux-primary">{rupiah(shippingCost)}</span>
+                    </div>
+                  )}
+
+                  {voucherValid && voucherDiscount > 0 && (
+                    <div className="flex justify-between mt-1 text-[0.82rem]">
+                      <span className="text-green-600">🎟️ {appliedVoucher?.name || voucherCode}</span>
+                      <span className="font-medium text-green-600">− {rupiah(voucherDiscount)}</span>
+                    </div>
+                  )}
+
+                  {TAX_ENABLED && taxFee > 0 && (
+                    <div className="flex justify-between mt-1 text-[0.82rem]">
+                      <span className="text-gray-600" title={`Dihitung dari harga asli: ${rupiah(taxBase)} × ${TAX_PERCENT}%`}>
+                        Biaya Admin &amp; Tax ({TAX_PERCENT}%)
+                      </span>
+                      <span className="font-medium text-eglux-primary">{rupiah(taxFee)}</span>
+                    </div>
+                  )}
+
+                  <div className="flex justify-between border-t border-[#ddd] mt-2 pt-2">
+                    <span className="font-bold text-eglux-primary text-[0.85rem]">Total Pembayaran</span>
+                    <span className="font-bold text-eglux-secondary text-[0.95rem]">{rupiah(grandTotalV3)}</span>
+                  </div>
+
+                  {(hasAnyDiscount || voucherDiscount > 0) && (
+                    <p className="text-[0.65rem] text-green-600 mt-1.5 text-right">
+                      🎉 Kamu hemat {rupiah(totalDiscount + voucherDiscount)}!
+                    </p>
+                  )}
+                </>
+              );
+            })()}
+          </section>
+
+          {/* === VOUCHER INPUT SECTION === */}
+          <section className="bg-eglux-accent/50 rounded-xl p-4 space-y-2">
+            <div className="flex items-center justify-between">
+              <p className="text-[0.78rem] font-semibold text-eglux-primary flex items-center gap-1.5">
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/><path d="M13 5v2"/><path d="M13 17v2"/><path d="M13 11v2"/></svg>
+                Voucher
+              </p>
+              <button
+                onClick={() => setShowVoucherClaimModal(true)}
+                className="text-[0.72rem] font-semibold text-eglux-secondary hover:underline cursor-pointer border-none bg-transparent"
+              >
+                Klaim Voucher Lainnya →
+              </button>
             </div>
-          </div>
-
-          {/* Order summary */}
-          <div className="bg-neutral-50 rounded-2xl p-4 space-y-2">
-            <h3 className="text-sm font-semibold text-neutral-800 uppercase tracking-wide">
-              Ringkasan Pesanan
-            </h3>
-            {cart.map((it, i) => (
-              <div key={i} className="flex justify-between text-sm text-neutral-700">
-                <span>
-                  {it.name || it.title} × {it.quantity}
-                </span>
-                <span>Rp {(Number(it.price || 0) * Number(it.quantity || 1)).toLocaleString('id-ID')}</span>
+            {voucherValid ? (
+              <div className="flex items-center justify-between bg-green-50 border border-green-200 rounded-lg p-2.5">
+                <div className="flex items-center gap-2">
+                  <span className="text-green-600 text-sm">✓</span>
+                  <div>
+                    <p className="text-xs font-semibold text-green-700">{appliedVoucher?.name || voucherCode}</p>
+                    <p className="text-[0.7rem] text-green-600">Hemat {rupiah(voucherDiscount)}</p>
+                  </div>
+                </div>
+                <button onClick={handleRemoveVoucher} className="text-xs text-red-500 hover:underline cursor-pointer border-none bg-transparent">Hapus</button>
               </div>
-            ))}
-            <div className="border-t border-neutral-200 my-2" />
-            <div className="flex justify-between font-semibold text-neutral-900">
-              <span>Total</span>
-              <span className="text-amber-700">Rp {total.toLocaleString('id-ID')}</span>
-            </div>
-          </div>
+            ) : (
+              <div className="space-y-2">
+                <div ref={myVouchersRef} className="relative">
+                  <button
+                    type="button"
+                    onClick={toggleMyVouchers}
+                    className="w-full flex items-center justify-between px-3 py-2 text-sm border border-eglux-secondary/40 bg-eglux-accent/30 rounded-md hover:border-eglux-secondary cursor-pointer border-solid"
+                  >
+                    <span className="flex items-center gap-1.5 text-eglux-primary">
+                      <svg className="w-4 h-4 text-eglux-secondary" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/><path d="M13 5v2"/><path d="M13 17v2"/><path d="M13 11v2"/></svg>
+                      <span className="font-medium">
+                        {myVouchersLoading ? 'Memuat voucher...' :
+                         myVouchers.length > 0 ? `Pilih dari ${myVouchers.length} voucher saya` :
+                         'Lihat voucher saya'}
+                      </span>
+                    </span>
+                    <svg className={`w-4 h-4 text-eglux-secondary transition-transform ${myVouchersOpen ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 12 15 18 9" /></svg>
+                  </button>
 
-          {/* Payment method info */}
-          <div className="text-xs text-neutral-500 text-center">
-            Bayar via DOKU: Transfer Bank (VA), DOKU e-Wallet, Alfamart, Indomaret
-          </div>
+                  {myVouchersOpen && (
+                    <div className="absolute z-30 top-full mt-1 left-0 right-0 bg-white border border-gray-200 rounded-md shadow-lg max-h-[280px] overflow-y-auto">
+                      {myVouchersLoading ? (
+                        <div className="py-6 text-center text-xs text-gray-500">⏳ Memuat voucher...</div>
+                      ) : myVouchers.length === 0 ? (
+                        <div className="py-6 px-3 text-center">
+                          <p className="text-xs text-gray-500 mb-2">Belum ada voucher aktif.</p>
+                          <button
+                            type="button"
+                            onClick={() => { setMyVouchersOpen(false); setShowVoucherClaimModal(true); }}
+                            className="text-xs text-eglux-secondary font-semibold hover:underline cursor-pointer border-none bg-transparent"
+                          >
+                            Klaim voucher sekarang →
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="py-1">
+                          {myVouchers.map((v) => {
+                            const meetsMinPurchase = !v.min_purchase || v.min_purchase === 0 || totalPrice >= v.min_purchase;
+                            return (
+                              <button
+                                key={v.id}
+                                type="button"
+                                onClick={() => meetsMinPurchase && applyVoucherFromList(v)}
+                                disabled={!meetsMinPurchase}
+                                className={`w-full text-left px-3 py-2 hover:bg-eglux-accent/30 cursor-pointer border-none bg-transparent transition-colors ${!meetsMinPurchase ? 'opacity-50 cursor-not-allowed' : ''}`}
+                              >
+                                <div className="flex items-start justify-between gap-2">
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-xs font-semibold text-eglux-primary truncate">
+                                      {formatVoucherPreview(v)}
+                                    </p>
+                                    <p className="text-[0.7rem] text-gray-500 truncate">{v.name}</p>
+                                    <p className="text-[0.65rem] text-gray-400 mt-0.5">
+                                      {formatMinPurchaseHint(v)} · Exp {new Date(v.expires_at).toLocaleDateString('id-ID', { day: '2-digit', month: 'short' })}
+                                    </p>
+                                    {!meetsMinPurchase && (
+                                      <p className="text-[0.65rem] text-amber-600 mt-0.5">⚠ Belum mencapai min. belanja</p>
+                                    )}
+                                  </div>
+                                  <span className="text-[0.6rem] font-bold text-white bg-eglux-secondary px-2 py-0.5 rounded flex-shrink-0 self-center uppercase tracking-wide">
+                                    {v.source === 'redeem' ? 'Poin' : 'Eglux'}
+                                  </span>
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
 
-          {/* Error display */}
-          {error && (
-            <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-sm text-red-700">
-              {error}
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={voucherCode}
+                    onChange={(e) => { setVoucherCode(e.target.value); setVoucherError(''); }}
+                    placeholder="Atau masukkan kode voucher"
+                    className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md uppercase"
+                  />
+                  <button
+                    onClick={handleApplyVoucher}
+                    disabled={voucherLoading || !voucherCode.trim()}
+                    className="px-4 py-2 text-sm font-semibold text-white bg-eglux-primary rounded-md hover:opacity-90 disabled:opacity-50 cursor-pointer border-none"
+                  >
+                    {voucherLoading ? '⏳' : 'Terapkan'}
+                  </button>
+                </div>
+              </div>
+            )}
+            {voucherError && (
+              <p className="text-[0.7rem] text-red-500">{voucherError}</p>
+            )}
+          </section>
+
+          {/* === Data Pembeli === */}
+          <section className="space-y-4">
+            <h4 className="text-[0.78rem] uppercase tracking-[1px] text-[#666] font-semibold flex items-center gap-1.5">
+              <User className="w-3.5 h-3.5" />Data Pembeli
+            </h4>
+
+            {/* Name */}
+            <div>
+              <label className="block text-[0.8rem] font-semibold text-eglux-primary uppercase tracking-[0.5px] mb-1.5">
+                Nama Lengkap <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                name="name"
+                value={form.name}
+                onChange={change}
+                placeholder="Masukkan nama lengkap"
+                disabled={isLocked}
+                className={`w-full py-3 px-4 border-[1.5px] rounded-[10px] text-[0.88rem] text-eglux-primary bg-white outline-none focus:border-eglux-secondary transition-colors disabled:bg-[#f5f5f5] disabled:text-[#999] ${
+                  formErrors.name ? 'border-red-500' : 'border-[#ddd]'
+                }`}
+              />
+              <InlineError msg={formErrors.name} />
             </div>
+
+            {/* Phone */}
+            <div>
+              <label className="block text-[0.8rem] font-semibold text-eglux-primary uppercase tracking-[0.5px] mb-1.5">
+                WhatsApp <span className="text-red-500">*</span>
+              </label>
+              <div className="relative" ref={countryDropdownRef}>
+                <button
+                  type="button"
+                  onClick={() => !isLocked && setCountryDropdownOpen((o) => !o)}
+                  disabled={isLocked}
+                  aria-label="Pilih kode negara"
+                  className={`absolute left-0 top-0 bottom-0 flex items-center gap-1.5 px-3 bg-[#faf6ef] border-r-[1.5px] rounded-l-[10px] transition-colors ${
+                    isLocked ? 'cursor-not-allowed opacity-60' : 'cursor-pointer hover:bg-[#f0e8d6]'
+                  } ${formErrors.phone ? 'border-red-500' : 'border-[#ddd]'}`}
+                >
+                  <span className="text-base leading-none" role="img" aria-label={selectedCountry.name}>
+                    {selectedCountry.flag}
+                  </span>
+                  <span className="text-[0.88rem] font-semibold text-eglux-primary whitespace-nowrap">
+                    +{selectedCountry.dial}
+                  </span>
+                  <ChevronDown className="w-3 h-3 text-gray-500" />
+                </button>
+
+                <input
+                  type="tel"
+                  name="phone"
+                  value={phoneDisplayValue}
+                  onChange={onPhoneChange}
+                  onBlur={onPhoneBlur}
+                  placeholder="812 3456 7890"
+                  inputMode="numeric"
+                  autoComplete="tel"
+                  disabled={isLocked}
+                  className={`w-full py-3 pl-[90px] md:pl-[100px] pr-4 border-[1.5px] rounded-[10px] text-[0.88rem] text-eglux-primary bg-white outline-none focus:border-eglux-secondary transition-colors disabled:bg-[#f5f5f5] disabled:text-[#999] ${
+                    formErrors.phone ? 'border-red-500' : 'border-[#ddd]'
+                  }`}
+                />
+
+                {countryDropdownOpen && (
+                  <div className="absolute top-full left-0 right-0 mt-1 max-w-[300px] bg-white rounded-[10px] shadow-2xl border border-[#eee] z-[100] max-h-[280px] flex flex-col overflow-hidden">
+                    <div className="p-2 border-b border-[#eee]">
+                      <input
+                        type="text"
+                        value={countrySearch}
+                        onChange={(e) => setCountrySearch(e.target.value)}
+                        placeholder="Cari negara atau kode..."
+                        autoFocus
+                        className="w-full px-3 py-2 text-[0.85rem] border border-[#ddd] rounded-md outline-none focus:border-eglux-secondary transition-colors"
+                      />
+                    </div>
+                    <div className="overflow-y-auto flex-1">
+                      {filteredCountries.length === 0 ? (
+                        <p className="text-center text-[0.8rem] text-gray-400 py-4">Negara tidak ditemukan</p>
+                      ) : (
+                        filteredCountries.map((c) => (
+                          <button
+                            key={c.code}
+                            type="button"
+                            onClick={() => onSelectCountry(c)}
+                            className={`w-full flex items-center gap-2.5 px-3 py-3 text-left hover:bg-[#faf6ef] transition-colors ${
+                              selectedCountry.code === c.code ? 'bg-[#faf6ef]' : ''
+                            }`}
+                          >
+                            <span className="text-base leading-none flex-shrink-0">{c.flag}</span>
+                            <span className="text-[0.85rem] text-eglux-primary flex-1 truncate">{c.name}</span>
+                            <span className="text-[0.78rem] text-gray-500 whitespace-nowrap flex-shrink-0">+{c.dial}</span>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+              <InlineError msg={formErrors.phone} />
+            </div>
+
+            {/* Email */}
+            <div>
+              <label className="block text-[0.8rem] font-semibold text-eglux-primary uppercase tracking-[0.5px] mb-1.5">
+                Email <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="email"
+                name="email"
+                value={form.email}
+                onChange={change}
+                onBlur={onEmailBlur}
+                placeholder="email@contoh.com"
+                required
+                disabled={isLocked}
+                autoComplete="email"
+                className={`w-full py-3 px-4 border-[1.5px] rounded-[10px] text-[0.88rem] text-eglux-primary bg-white outline-none focus:border-eglux-secondary transition-colors disabled:bg-[#f5f5f5] disabled:text-[#999] ${
+                  formErrors.email ? 'border-red-500' : 'border-[#ddd]'
+                }`}
+              />
+              <InlineError msg={formErrors.email} />
+            </div>
+          </section>
+
+          {/* === Alamat Pengiriman === */}
+          <section className="space-y-4">
+            <h4 className="text-[0.78rem] uppercase tracking-[1px] text-[#666] font-semibold flex items-center gap-1.5">
+              <MapPin className="w-3.5 h-3.5" />Alamat Pengiriman
+            </h4>
+
+            <div>
+              <label className="block text-[0.8rem] font-semibold text-eglux-primary uppercase tracking-[0.5px] mb-1.5">
+                Alamat Lengkap <span className="text-red-500">*</span>
+              </label>
+              <textarea
+                name="address"
+                value={form.address}
+                onChange={change}
+                placeholder="Jalan, nomor rumah, RT/RW, kelurahan, kecamatan..."
+                disabled={isLocked}
+                className={`w-full py-3 px-4 border-[1.5px] rounded-[10px] text-[0.88rem] text-eglux-primary bg-white outline-none resize-y min-h-[70px] focus:border-eglux-secondary transition-colors disabled:bg-[#f5f5f5] disabled:text-[#999] ${
+                  formErrors.address ? 'border-red-500' : 'border-[#ddd]'
+                }`}
+              />
+              <InlineError msg={formErrors.address} />
+            </div>
+
+            <div>
+              <label className="block text-[0.8rem] font-semibold text-eglux-primary uppercase tracking-[0.5px] mb-1.5">
+                Kota <span className="text-red-500">*</span>
+              </label>
+              <Select
+                options={INDONESIAN_CITIES}
+                value={INDONESIAN_CITIES.find((c) => c.value === form.city) || null}
+                onChange={onCityChange}
+                isDisabled={isLocked}
+                isSearchable
+                placeholder="Cari kota... (ketik nama kota atau provinsi)"
+                styles={selectStyles}
+                error={formErrors.city}
+                noOptionsMessage={() => 'Kota tidak ditemukan'}
+                className="text-[0.88rem]"
+                classNamePrefix="react-select"
+              />
+              <InlineError msg={formErrors.city} />
+            </div>
+
+            <div>
+              <label className="block text-[0.8rem] font-semibold text-eglux-primary uppercase tracking-[0.5px] mb-1.5">
+                Kode Pos <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                name="postal"
+                value={form.postal}
+                onChange={onPostalChange}
+                placeholder="12345"
+                inputMode="numeric"
+                maxLength={5}
+                disabled={isLocked}
+                className={`w-full py-3 px-4 border-[1.5px] rounded-[10px] text-[0.88rem] text-eglux-primary outline-none focus:border-eglux-secondary transition-colors disabled:bg-[#f5f5f5] disabled:text-[#999] ${
+                  formErrors.postal ? 'border-red-500' : 'border-[#ddd]'
+                }`}
+              />
+              <InlineError msg={formErrors.postal} />
+            </div>
+
+            {areasLoading && (
+              <div className="text-[0.78rem] text-gray-500 flex items-center gap-2">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" /> Mencari area...
+              </div>
+            )}
+
+            {showAreaDropdown && (
+              <div>
+                <label className="block text-[0.78rem] font-semibold text-eglux-primary mb-1.5">
+                  Pilih Area Tujuan *
+                </label>
+                <select
+                  value={selectedAreaId}
+                  onChange={(e) => setSelectedAreaId(e.target.value)}
+                  disabled={isLocked}
+                  className={`w-full py-3 px-4 border-[1.5px] rounded-[10px] text-[0.88rem] text-eglux-primary bg-white outline-none focus:border-eglux-secondary disabled:bg-[#f5f5f5] disabled:text-[#999] ${
+                    formErrors.area ? 'border-red-500' : 'border-[#ddd]'
+                  }`}
+                >
+                  <option value="">— Pilih area —</option>
+                  {areas.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name}
+                      {a.suburb_name ? ` · ${a.suburb_name}` : ''}
+                      {a.city_name ? ` · ${a.city_name}` : ''}
+                    </option>
+                  ))}
+                </select>
+                <InlineError msg={formErrors.area} />
+              </div>
+            )}
+
+            {showAreaAutoSelected && (
+              <div className="text-[0.78rem] text-gray-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
+                ✓ Area terpilih:{' '}
+                <strong>
+                  {areas[0].name}
+                  {areas[0].city_name ? `, ${areas[0].city_name}` : ''}
+                </strong>
+              </div>
+            )}
+
+            {showAreaNotFound && (
+              <p className="text-[0.78rem] text-red-500">Kode pos tidak ditemukan. Periksa kembali.</p>
+            )}
+          </section>
+
+          {/* === Pilih Kurir === */}
+          <section className="space-y-3">
+            <h4 className="text-[0.78rem] uppercase tracking-[1px] text-[#666] font-semibold flex items-center gap-1.5">
+              <Truck className="w-3.5 h-3.5" />Pilih Kurir
+            </h4>
+
+            {!selectedAreaId && (
+              <p className="text-[0.78rem] text-gray-500 italic">
+                Lengkapi kode pos & pilih area dulu untuk melihat opsi kurir.
+              </p>
+            )}
+
+            {shippingLoading && (
+              <div className="text-[0.82rem] text-gray-500 flex items-center gap-2 py-3">
+                <Loader2 className="w-4 h-4 animate-spin" /> Mengambil ongkir...
+              </div>
+            )}
+
+            {!shippingLoading && shippingOptions.length > 0 && (
+              <div className="space-y-2 max-h-[260px] overflow-y-auto pr-1">
+                {shippingOptions.map((opt) => {
+                  const optUniqueId = opt.unique_id || `${opt.company_code || opt.courier}:${opt.service_code || opt.service}`;
+                  const selectedUniqueId = selectedShipping?.unique_id ||
+                    `${selectedShipping?.company_code || selectedShipping?.courier}:${selectedShipping?.service_code || selectedShipping?.service}`;
+                  const isSelected = selectedUniqueId === optUniqueId;
+
+                  const courierCode = opt.company_code || opt.courier || '';
+                  const displayName = opt.display_name || `${opt.company || opt.courier || ''} - ${opt.service || ''}`;
+
+                  return (
+                    <label
+                      key={optUniqueId}
+                      className={`flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-all ${
+                        isSelected
+                          ? 'border-eglux-secondary bg-eglux-accent'
+                          : 'border-[#eee] hover:border-[#ccc]'
+                      } ${isLocked ? 'opacity-60 cursor-not-allowed' : ''}`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="radio"
+                          name="shipping"
+                          className="accent-[#c9a96e]"
+                          checked={isSelected}
+                          onChange={() => setSelectedShipping(opt)}
+                          disabled={isLocked}
+                        />
+                        <CourierLogo courierCode={courierCode} size={36} />
+                        <div>
+                          <p className="text-[0.82rem] font-semibold text-eglux-primary">
+                            {displayName}
+                          </p>
+                          <p className="text-[0.72rem] text-[#999]">
+                            {opt.duration}
+                            {opt.description ? ` · ${opt.description}` : ''}
+                          </p>
+                        </div>
+                      </div>
+                      <span className="text-[0.85rem] font-bold text-eglux-secondary whitespace-nowrap ml-2">
+                        {rupiah(opt.price)}
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+
+            {!shippingLoading && !selectedShipping && selectedAreaId && shippingOptions.length === 0 && (
+              <InlineError msg={formErrors.shipping} />
+            )}
+          </section>
+
+          {/* === Catatan === */}
+          <section>
+            <label className="block text-[0.8rem] font-semibold text-eglux-primary uppercase tracking-[0.5px] mb-1.5">
+              Catatan (opsional)
+            </label>
+            <textarea
+              name="notes"
+              value={form.notes}
+              onChange={change}
+              placeholder="Warna, ukuran, atau permintaan khusus..."
+              disabled={isLocked}
+              className="w-full py-3 px-4 border-[1.5px] border-[#ddd] rounded-[10px] text-[0.88rem] text-eglux-primary bg-white outline-none resize-y min-h-[60px] focus:border-eglux-secondary transition-colors disabled:bg-[#f5f5f5] disabled:text-[#999]"
+            />
+          </section>
+
+          {/* ⭐ DOKU Payment info banner */}
+          <section className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-[0.75rem] text-blue-800">
+            <p className="font-semibold mb-1">💳 Metode Pembayaran DOKU:</p>
+            <p>Transfer Bank (VA) · DOKU e-Wallet · Alfamart · Indomaret</p>
+            <p className="text-[0.7rem] text-blue-600 mt-1">
+              Pilih metode pembayaran di halaman DOKU setelah klik "Bayar Sekarang".
+            </p>
+          </section>
+
+          {orderId && (
+            <p className="text-[0.75rem] text-[#9ca3af] text-center">
+              Order tersimpan (ID: <code>{orderId.slice(0, 8)}</code>). Klik tombol di bawah untuk lanjut bayar via DOKU.
+            </p>
           )}
 
           {/* Submit */}
           <button
-            type="submit"
-            disabled={loading}
-            className="w-full py-3.5 bg-amber-600 hover:bg-amber-700 disabled:bg-neutral-300 text-white font-semibold rounded-xl transition-colors"
+            onClick={handlePay}
+            disabled={submitting}
+            className="w-full py-4 bg-eglux-primary text-white border-none rounded-xl text-[0.95rem] font-bold cursor-pointer transition-all duration-300 hover:opacity-90 flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
           >
-            {loading ? 'Memproses...' : `Bayar Rp ${total.toLocaleString('id-ID')}`}
+            {submitting
+              ? 'Memproses...'
+              : `Bayar Sekarang · ${rupiah(grandTotal)}`}
           </button>
-        </form>
+
+          <p className="text-[0.7rem] text-gray-400 text-center">
+            Dengan melanjutkan, kamu setuju dengan syarat & ketentuan kami. Pembayaran diproses aman oleh DOKU.
+          </p>
+        </div>
       </div>
+
+      <VoucherClaimModal
+        isOpen={showVoucherClaimModal}
+        onClose={() => setShowVoucherClaimModal(false)}
+        onUseVoucher={handleUseVoucherFromClaim}
+        subtotal={totalPrice}
+      />
     </div>
+    </>
   );
 };
 
