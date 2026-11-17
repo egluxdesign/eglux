@@ -65,8 +65,8 @@ const rawEnv = {
   SUPABASE_ANON_KEY: import.meta.env.VITE_SUPABASE_ANON_KEY,
 
   // DOKU (active)
-  DOKU_MODE: (import.meta.env.VITE_DOKU_MODE || 'production').toLowerCase(),  // default production
-  DOKU_IS_PRODUCTION: (import.meta.env.VITE_DOKU_MODE || 'production').toLowerCase() === 'production',
+  DOKU_MODE: (import.meta.env.VITE_DOKU_MODE || 'sandbox').toLowerCase(),  // default sandbox
+  DOKU_IS_PRODUCTION: (import.meta.env.VITE_DOKU_MODE || 'sandbox').toLowerCase() === 'production',
 
   // Midtrans (legacy — tetap dibaca untuk backward compat, tapi gak required)
   MIDTRANS_CLIENT_KEY: import.meta.env.VITE_MIDTRANS_CLIENT_KEY,

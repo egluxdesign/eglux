@@ -928,14 +928,43 @@ const CheckoutModalDoku = ({ isOpen, onClose, showToast }) => {
         customer_address: form.address.trim(),
         customer_city: form.city.trim(),
         customer_postcode: form.postal,
-        line_items: cart.map((item) => ({
-          id: String(item.productId || item.id || '').slice(0, 64),
-          name: String(item.name || 'Item').slice(0, 255),
-          price: Number(item.price || 0),
-          quantity: Number(item.qty || 1),
-          sku: String(item.variantId || '').slice(0, 64),
-          category: 'retail',
-        })),
+        line_items: [
+          ...cart.map((item) => ({
+            id: String(item.productId || item.id || '').slice(0, 64),
+            name: String(item.name || 'Item').slice(0, 255),
+            price: Number(item.price || 0),
+            quantity: Number(item.qty || 1),
+            sku: String(item.variantId || '').slice(0, 64),
+            category: 'retail',
+          })),
+          // ⭐ FIX v1.1: Add shipping + tax + voucher as line items
+          // DOKU validates: order.amount === sum(line_items[].price * quantity)
+          // Tanpa ini, amount (grandTotal) != sum(cart items only) → error "AMOUNT NOT MATCH"
+          ...(shippingCost > 0 ? [{
+            id: 'shipping',
+            name: 'Ongkos Kirim',
+            price: Number(shippingCost),
+            quantity: 1,
+            sku: 'SHIPPING',
+            category: 'shipping',
+          }] : []),
+          ...(taxAmount > 0 ? [{
+            id: 'tax',
+            name: 'Biaya Admin',
+            price: Number(taxAmount),
+            quantity: 1,
+            sku: 'TAX',
+            category: 'tax',
+          }] : []),
+          ...(voucherDiscount > 0 ? [{
+            id: 'voucher',
+            name: 'Diskon Voucher',
+            price: -Number(voucherDiscount),
+            quantity: 1,
+            sku: 'VOUCHER',
+            category: 'discount',
+          }] : []),
+        ],
         shipping_address: {
           first_name: form.name.trim(),
           address: form.address.trim(),
