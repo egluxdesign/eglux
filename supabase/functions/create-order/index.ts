@@ -6,7 +6,8 @@
 // Mengapa edge function ini ada?
 //   Setelah SQL 006 (tighten RLS), anon key TIDAK BISA INSERT ke
 //   customers/orders/order_items. Hanya service_role yang bisa.
-//   Frontend (CheckoutModalMidtrans) pakai anon key → akan FAIL.
+//   Frontend (CheckoutModalDoku / CheckoutModalMidtrans) pakai anon key
+//   → akan FAIL.
 //
 //   Solusi: frontend call edge function ini, edge function pakai
 //   service_role key untuk INSERT. Auth verify via JWT user (any role
@@ -24,8 +25,12 @@
 //       shipping_area_id?, shipping_area_name?,
 //       courier_code, courier_service?, courier_duration?, courier_rate,
 //       notes?,
+//       // ⭐ Payment method (v3 NEW): gateway yang dipilih customer
+//       payment_method_selected?,  // 'doku' | 'midtrans_snap' | etc.
 //       // ⭐ Tax (biaya admin) — optional, default 3% dari base price
-//       tax_percent?, tax_base?, tax_amount?
+//       tax_percent?, tax_base?, tax_amount?,
+//       // ⭐ Voucher fields (optional)
+//       voucher_code?, voucher_discount?
 //     },
 //     items: [
 //       { product_id, variant_id?, product_name_snapshot, variant_name_snapshot?,
@@ -36,6 +41,11 @@
 // Response:
 //   { success: true, order_id: "uuid", customer_id: "uuid" }
 //   { success: false, error: "..." }
+//
+// v3 CHANGES (this version):
+//   - FIXED: payment_method now reads from body.order.payment_method_selected
+//     (previously hardcoded to "midtrans_snap" → wrong for DOKU orders)
+//   - UPDATED: success message is gateway-agnostic (no longer mentions midtrans)
 // ============================================================================
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
@@ -59,6 +69,20 @@ function isE164(phone: string): boolean {
 
 function isEmail(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+// Normalize payment_method_selected → safe string for DB column
+// Accepts: 'doku', 'midtrans_snap', 'midtrans', 'qris', etc.
+// Default: 'midtrans_snap' (backward compat for existing Midtrans flow)
+function normalizePaymentMethod(value: any): string {
+  if (!value) return "midtrans_snap";
+  const s = String(value).trim().toLowerCase();
+  // Whitelist known gateways to prevent injection
+  const allowed = ["doku", "midtrans_snap", "midtrans", "qris", "manual"];
+  if (allowed.includes(s)) return s;
+  // Unknown → log warning but still accept (future-proof for new gateways)
+  console.warn(`[create-order] Unknown payment_method_selected: ${s}, defaulting to 'midtrans_snap'`);
+  return "midtrans_snap";
 }
 
 // ============================================================================
@@ -143,6 +167,10 @@ serve(async (req: Request) => {
     // ── Execute INSERT pakai service_role (bypass RLS) ──
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
+    // ⭐ v3 FIX: Normalize payment method from frontend (default = midtrans_snap for backward compat)
+    const paymentMethod = normalizePaymentMethod(order.payment_method_selected);
+    console.log("[create-order] payment_method_selected:", order.payment_method_selected, "→ normalized:", paymentMethod);
+
     // 1. Insert customer (generate UUID)
     // ⭐ Set user_id supaya orders bisa di-filter by user (untuk order history)
     const customerId = crypto.randomUUID();
@@ -207,7 +235,8 @@ serve(async (req: Request) => {
       customer_id: customerId,
       // user_id: authResult.user!.id,  // ← enable setelah migration
       status: "pending",
-      payment_method: "midtrans_snap",
+      // ⭐ v3 FIX: read from body instead of hardcoded "midtrans_snap"
+      payment_method: paymentMethod,
       payment_status: "unpaid",
       subtotal: Number(order.subtotal),
       shipping_cost: Number(order.shipping_cost),
@@ -236,9 +265,13 @@ serve(async (req: Request) => {
       return json({ error: "Failed to insert order", details: orderError.message }, 500);
     }
 
-    // ⭐ NEW: Mark voucher redemption as 'used' (kalau voucher fisik)
+    // ⭐ v3.1 FIX: Mark voucher redemption as 'used' + INSERT into voucher_usages for quota tracking
+    // Tanpa voucher_usages INSERT, validate-voucher gak bisa cek quota_total/quota_per_user
+    // → voucher bisa dipakai unlimited times meski quota di-set
     if (order.voucher_code) {
+      const normalizedVoucherCode = order.voucher_code.trim().toUpperCase();
       try {
+        // 1. Update voucher_redemptions (untuk physical voucher yang di-claim via WA)
         await supabase
           .from("voucher_redemptions")
           .update({
@@ -246,9 +279,46 @@ serve(async (req: Request) => {
             used_at: new Date().toISOString(),
             used_in_order: orderId,
           })
-          .eq("voucher_code", order.voucher_code.trim().toUpperCase())
+          .eq("voucher_code", normalizedVoucherCode)
           .eq("status", "claimed");
-        console.log("[create-order] ✓ Voucher redemption marked as used:", order.voucher_code);
+        console.log("[create-order] ✓ Voucher redemption marked as used:", normalizedVoucherCode);
+
+        // 2. ⭐ v3.1 NEW: Update point_redemptions status (untuk voucher dari redeem poin)
+        await supabase
+          .from("point_redemptions")
+          .update({ status: "used", used_at: new Date().toISOString() })
+          .eq("voucher_code", normalizedVoucherCode)
+          .eq("user_id", authResult.user!.id)
+          .in("status", ["claimed", "active"]);
+        console.log("[create-order] ✓ Point redemption marked as used:", normalizedVoucherCode);
+
+        // 3. ⭐ v3.1 NEW: INSERT into voucher_usages (untuk quota tracking di validate-voucher)
+        //    Cari voucher ID dulu dari vouchers table
+        const { data: voucherRow, error: voucherLookupErr } = await supabase
+          .from("vouchers")
+          .select("id")
+          .eq("code", normalizedVoucherCode)
+          .maybeSingle();
+
+        if (voucherLookupErr) {
+          console.warn("[create-order] Voucher lookup failed:", voucherLookupErr?.message);
+        } else if (voucherRow?.id) {
+          const { error: usageInsertErr } = await supabase.from("voucher_usages").insert({
+            voucher_id: voucherRow.id,
+            user_id: authResult.user!.id,
+            order_id: orderId,
+            used_at: new Date().toISOString(),
+          });
+          if (usageInsertErr) {
+            console.warn("[create-order] voucher_usages insert failed:", usageInsertErr?.message);
+          } else {
+            console.log("[create-order] ✓ voucher_usages inserted for quota tracking:", voucherRow.id);
+          }
+        } else {
+          // Voucher tidak ada di vouchers table — bisa jadi voucher fisik atau points voucher
+          // yang tidak terdaftar di vouchers table. Skip insert (quota tracking tidak berlaku).
+          console.log("[create-order] Voucher not in vouchers table — skip voucher_usages insert");
+        }
       } catch (redemptionErr) {
         console.warn("[create-order] Voucher redemption update failed (non-blocking):", redemptionErr?.message);
       }
@@ -291,11 +361,19 @@ serve(async (req: Request) => {
     }
 
     // ── Success ──
+    // ⭐ v3: gateway-agnostic message (was: "Lanjutkan ke create-midtrans-transaction")
+    const nextStepHint = paymentMethod === "doku"
+      ? "Lanjutkan ke create-doku-payment untuk dapat payment URL."
+      : paymentMethod === "midtrans_snap"
+        ? "Lanjutkan ke create-midtrans-transaction untuk dapat Snap token."
+        : `Lanjutkan ke payment integration untuk ${paymentMethod}.`;
+
     return json({
       success: true,
       order_id: orderId,
       customer_id: customerId,
-      message: "Order saved. Lanjutkan ke create-midtrans-transaction untuk dapat Snap token.",
+      payment_method: paymentMethod,
+      message: `Order saved. ${nextStepHint}`,
     });
   } catch (e) {
     console.error("[create-order]", e);

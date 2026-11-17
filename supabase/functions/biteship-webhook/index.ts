@@ -1,7 +1,14 @@
 // supabase/functions/biteship-webhook/index.ts
 // ============================================================================
-// Biteship Webhook Handler v3.7 (CLEAN REWRITE)
+// Biteship Webhook Handler v3.7.1 (SECURITY + BUGFIX PATCH)
 // ============================================================================
+// ⭐ v3.7.1 CHANGES (dari v3.7):
+//   - CRITICAL SECURITY FIX: verifyWebhookSecret() now strictly rejects requests
+//     without secret header when BITESHIP_WEBHOOK_SECRET is set (prevent forged webhooks)
+//   - MODERATE FIX: tracking_number fetched from Biteship API now persisted to orders table
+//   - MINOR: Removed dead code isUUID() function
+//   - Added BITESHIP_WEBHOOK_STRICT env var (default true, set false for backward compat)
+//
 // ⭐ v3.7 CHANGES (dari v3.6):
 //   - Clean rewrite: better code organization, readable comments
 //   - Install verification di-awal (sebelum secret check)
@@ -38,6 +45,8 @@
 //   - BITESHIP_API_KEY           — Biteship production API key
 //   - BITESHIP_WEBHOOK_SECRET    (OPTIONAL) — if NOT set, dev mode (allow all webhooks)
 //                                 if SET, validate x-webhook-secret header
+//   - BITESHIP_WEBHOOK_STRICT    (OPTIONAL) — "false" to allow missing secret header
+//                                 with warning (backward compat). Default: true (strict reject)
 //   - BITESHIP_IS_PRODUCTION     (OPTIONAL) — "true" or "false" (default sandbox)
 // ============================================================================
 
@@ -118,10 +127,6 @@ function isShipmentStarted(biteshipStatus: string | null | undefined): boolean {
   const normalized = String(biteshipStatus)
     .replace(/_([a-z])/g, (_, c) => c.toUpperCase());
   return ["allocated", "pickingUp", "picked", "inTransit", "droppingOff"].includes(normalized);
-}
-
-function isUUID(str: string): boolean {
-  return /^[0-9a-f]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(str);
 }
 
 // ============================================================================
@@ -663,12 +668,29 @@ function verifyWebhookSecret(req: Request): { allowed: boolean; response?: Respo
     return { allowed: true };
   }
 
+  // ⭐ v3.7.1 FIX: STRICT MODE (default true)
+  // Kalau BITESHIP_WEBHOOK_STRICT=false → allow missing header dengan warning (backward compat)
+  // Kalau true (default) → REJECT request tanpa secret header (prevent forged webhooks)
+  const STRICT_MODE = Deno.env.get("BITESHIP_WEBHOOK_STRICT") !== "false";
+
   // Production mode — verify signature
   const providedSecret = req.headers.get("x-webhook-secret") || req.headers.get("x-biteship-signature");
 
   if (!providedSecret) {
-    // Real event tanpa secret header — allow with warning (backward compat)
-    console.warn("[biteship-webhook] ⚠️ Real event without secret header. Allowing with warning.");
+    if (STRICT_MODE) {
+      // ⭐ v3.7.1: STRICT reject — prevent forged webhooks
+      // Tanpa ini, siapapun yang tahu webhook URL bisa forge fake status updates:
+      //   - Mark order mereka sendiri "delivered" tanpa barang sampai (dapat barang gratis)
+      //   - Mark order orang lain "cancelled" (sabotase bisnis)
+      //   - Trigger WA shipping_update spam (habisin Qiscus quota)
+      console.error("[biteship-webhook] ❌ REJECTED: Real event without secret header (strict mode). Potential forged webhook.");
+      return {
+        allowed: false,
+        response: json({ error: "Unauthorized: missing webhook secret header" }, 401),
+      };
+    }
+    // Non-strict mode — allow with warning (backward compat, NOT recommended for production)
+    console.warn("[biteship-webhook] ⚠️ Real event without secret header. Allowing (non-strict mode).");
     return { allowed: true };
   }
 
@@ -815,7 +837,13 @@ serve(async (req: Request) => {
         console.log(`[biteship-webhook] ✓ Fetched waybill_url (source: ${waybillUrlSource}):`, orderDetail.waybill_url);
       }
       if (!courierLink && orderDetail.courier_link) updatePayload.courier_link = orderDetail.courier_link;
-      if (orderDetail.tracking_number) fetchedTrackingNumber = orderDetail.tracking_number;
+      if (orderDetail.tracking_number) {
+        fetchedTrackingNumber = orderDetail.tracking_number;
+        // ⭐ v3.7.1 FIX: Persist tracking_number ke orders table
+        // Sebelumnya fetched tapi gak di-save → customer gak dapat AWB di WA notification
+        updatePayload.tracking_number = orderDetail.tracking_number;
+        console.log(`[biteship-webhook] ✓ Persisting tracking_number: ${orderDetail.tracking_number}`);
+      }
       if (orderDetail.courier_name && !courierName) updatePayload.courier_name = orderDetail.courier_name;
       if (orderDetail.courier_service && !courierService) updatePayload.courier_service = orderDetail.courier_service;
 

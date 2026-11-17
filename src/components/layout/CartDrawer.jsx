@@ -6,6 +6,14 @@
 //   - Import & render CheckoutModalDoku (bukan CheckoutModalMidtrans)
 //   - CHECKOUT_INTENT_KEY di-import dari CheckoutModalDoku (exported there)
 //
+// [v3.1 FIX] updateQty + removeItem call signature:
+//   - OLD (BUGGY): updateQty(item.id, item.variantId, item.qty - 1)
+//                  → CartContext expect 2 args (id, delta), variantId jadi delta
+//                  → "abc-uuid" + qty = string concat → qty NaN → cart break
+//   - NEW (FIXED): updateQty(item.id, -1)  /  updateQty(item.id, 1)
+//                  → matches CartContext signature: updateQty(id, delta)
+//   - Same for removeItem: was removeItem(item.id, item.variantId) → now removeItem(item.id)
+//
 // Fitur auth-gated checkout:
 //   - Tombol "Bayar Sekarang" cek auth terlebih dahulu.
 //   - Kalau belum login → simpan intent di sessionStorage, redirect ke /admin.
@@ -222,8 +230,15 @@ const CartDrawer = ({ isOpen, onClose, showToast }) => {
 
                     <div className="flex items-center justify-between mt-2">
                       <div className="flex items-center border border-[#eee] rounded-lg overflow-hidden">
+                        {/* ────────────────────────────────────────────────────────────────
+                            v3.1 FIX: updateQty call signature
+                            OLD (BUGGY): updateQty(item.id, item.variantId, item.qty - 1)
+                                         → CartContext expect 2 args (id, delta)
+                                         → variantId (UUID) jadi delta → qty + "uuid" = NaN
+                            NEW (FIXED): updateQty(item.id, -1)  ← matches CartContext
+                            ──────────────────────────────────────────────────────────────── */}
                         <button
-                          onClick={() => updateQty(item.id, item.variantId, item.qty - 1)}
+                          onClick={() => updateQty(item.id, -1)}
                           aria-label="Kurangi jumlah"
                           className="w-11 h-11 min-w-[44px] min-h-[44px] flex items-center justify-center text-eglux-primary hover:bg-[#faf6ef] transition-colors cursor-pointer border-none bg-transparent"
                         >
@@ -232,8 +247,9 @@ const CartDrawer = ({ isOpen, onClose, showToast }) => {
                         <span className="w-8 text-center text-[0.82rem] font-semibold text-eglux-primary">
                           {item.qty}
                         </span>
+                        {/* v3.1 FIX: updateQty(item.id, 1) instead of (item.id, variantId, qty+1) */}
                         <button
-                          onClick={() => updateQty(item.id, item.variantId, item.qty + 1)}
+                          onClick={() => updateQty(item.id, 1)}
                           aria-label="Tambah jumlah"
                           className="w-11 h-11 min-w-[44px] min-h-[44px] flex items-center justify-center text-eglux-primary hover:bg-[#faf6ef] transition-colors cursor-pointer border-none bg-transparent"
                         >
@@ -241,8 +257,9 @@ const CartDrawer = ({ isOpen, onClose, showToast }) => {
                         </button>
                       </div>
 
+                      {/* v3.1 FIX: removeItem(item.id) instead of (item.id, variantId) */}
                       <button
-                        onClick={() => removeItem(item.id, item.variantId)}
+                        onClick={() => removeItem(item.id)}
                         aria-label="Hapus item"
                         className="p-2.5 min-w-[44px] min-h-[44px] flex items-center justify-center text-gray-400 hover:text-red-500 transition-colors cursor-pointer border-none bg-transparent"
                       >

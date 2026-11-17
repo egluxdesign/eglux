@@ -17,6 +17,13 @@
 //   DOKU_WEBHOOK_PATH  e.g. /functions/v1/doku-webhook (used in signature verification)
 //   SUPABASE_URL       auto-injected
 //   SUPABASE_SERVICE_ROLE_KEY  auto-injected
+//
+// v3 CHANGES (this version):
+//   - FIXED triggerPaidActions: query order_items table (separate from orders)
+//   - FIXED triggerPaidActions: join customers table for email/phone/name
+//   - Stock decrement now works correctly
+//   - notification_queue payload now has correct customer_email/phone/name
+//   - Optional: amount verification against stored order_payments.amount
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -147,31 +154,49 @@ Deno.serve(async (req) => {
     });
   }
 
+  console.log("[DOKU-WH] Received notification:", {
+    invoice_number: invoiceNumber,
+    amount,
+    tx_status: txStatus,
+    tx_id: txId,
+    payment_type: paymentType,
+    payment_channel: paymentChannel,
+  });
+
   // ---------- Update database ----------
+  let newStatus = "pending";
   if (supabaseUrl && serviceKey) {
     const supabase = createClient(supabaseUrl, serviceKey);
 
     // Map DOKU status → our status
-    let newStatus = "pending";
     if (txStatus === "SUCCESS") newStatus = "paid";
-  else if (txStatus === "FAIL" || txStatus === "FAILED") newStatus = "failed";
-  else if (txStatus === "EXPIRED") newStatus = "expired";
-  else if (txStatus === "PENDING") newStatus = "pending";
+    else if (txStatus === "FAIL" || txStatus === "FAILED") newStatus = "failed";
+    else if (txStatus === "EXPIRED") newStatus = "expired";
+    else if (txStatus === "PENDING") newStatus = "pending";
 
     try {
       // 1. Find payment session by invoice_number
       const { data: paymentRow, error: lookupError } = await supabase
         .from("order_payments")
-        .select("order_id, status")
+        .select("order_id, status, amount")
         .eq("invoice_number", invoiceNumber)
         .limit(1)
         .maybeSingle();
 
       if (lookupError) {
-        console.error("Payment lookup error:", lookupError);
+        console.error("[DOKU-WH] Payment lookup error:", lookupError);
       }
 
       if (paymentRow?.order_id) {
+        // Optional: verify amount matches (defensive against tampering)
+        if (amount > 0 && paymentRow.amount && Number(paymentRow.amount) !== amount) {
+          console.warn("[DOKU-WH] Amount mismatch!", {
+            stored: paymentRow.amount,
+            received: amount,
+          });
+          // Don't fail — just warn. DOKU amount is authoritative for paid transactions.
+        }
+
         // 2. Update payment session
         await supabase
           .from("order_payments")
@@ -215,6 +240,12 @@ Deno.serve(async (req) => {
               updated_at: new Date().toISOString(),
             })
             .eq("id", paymentRow.order_id);
+          console.log("[DOKU-WH] Order status updated:", paymentRow.order_id, "→", newOrderStatus);
+        } else {
+          console.log("[DOKU-WH] Order status already higher, skipping update:", {
+            current: currentOrder?.status,
+            new: newOrderStatus,
+          });
         }
 
         // 4. If paid — trigger downstream actions (email, WhatsApp, decrement stock)
@@ -222,10 +253,10 @@ Deno.serve(async (req) => {
           await triggerPaidActions(supabase, paymentRow.order_id);
         }
       } else {
-        console.warn("No payment session found for invoice:", invoiceNumber);
+        console.warn("[DOKU-WH] No payment session found for invoice:", invoiceNumber);
       }
     } catch (e) {
-      console.error("DB update failed:", e);
+      console.error("[DOKU-WH] DB update failed:", e);
       // Still return 200 to DOKU
     }
   }
@@ -244,46 +275,115 @@ Deno.serve(async (req) => {
 
 // ---------- helpers ----------
 
+// ─────────────────────────────────────────────────────────────────────────────
+// v3 FIXED: triggerPaidActions
+//
+// Previously (BUGGY):
+//   - Queried orders.items (which doesn't exist — items are in order_items table)
+//   - Queried orders.email / orders.phone (which don't exist — customer info in customers table)
+//   - Result: stock never decremented, notification_queue had null email/phone
+//
+// Now (FIXED):
+//   - Join customers table via customer_id to get email/phone/name
+//   - Query order_items table separately for line items
+//   - Stock decrement works correctly
+//   - notification_queue payload has correct customer info
+// ─────────────────────────────────────────────────────────────────────────────
 async function triggerPaidActions(supabase: any, orderId: string): Promise<void> {
   try {
-    // Fetch order + customer details
-    const { data: order } = await supabase
+    console.log("[DOKU-WH] triggerPaidActions for order:", orderId);
+
+    // 1. Get order + customer info (join customers table)
+    const { data: order, error: orderErr } = await supabase
       .from("orders")
-      .select("id, customer_id, total, email, phone, items")
+      .select(`
+        id,
+        customer_id,
+        total_amount,
+        customers ( email, phone, name )
+      `)
       .eq("id", orderId)
       .maybeSingle();
 
-    if (!order) return;
+    if (orderErr) {
+      console.error("[DOKU-WH] Order lookup error:", orderErr);
+      return;
+    }
+    if (!order) {
+      console.warn("[DOKU-WH] Order not found:", orderId);
+      return;
+    }
 
-    // 1. Insert notification log row (will be processed by separate worker)
-    await supabase.from("notification_queue").insert({
+    // Extract customer info from joined customers table
+    const customerData = Array.isArray(order.customers) ? order.customers[0] : order.customers;
+    const customerEmail = customerData?.email || null;
+    const customerPhone = customerData?.phone || null;
+    const customerName = customerData?.name || null;
+
+    console.log("[DOKU-WH] Customer info:", {
+      email: customerEmail ? `${customerEmail.slice(0, 5)}...` : "null",
+      phone: customerPhone ? `${customerPhone.slice(0, 5)}...` : "null",
+      name: customerName,
+    });
+
+    // 2. Insert notification log row (will be processed by separate worker)
+    const { error: notifError } = await supabase.from("notification_queue").insert({
       type: "payment_success",
       order_id: orderId,
       payload: {
-        customer_email: order.email,
-        customer_phone: order.phone,
-        total: order.total,
+        customer_email: customerEmail,
+        customer_phone: customerPhone,
+        customer_name: customerName,
+        total: order.total_amount,
       },
       status: "pending",
       created_at: new Date().toISOString(),
-    }).then(({ error }: { error: any }) => {
-      if (error) console.warn("notification_queue insert failed:", error);
     });
 
-    // 2. Decrement product stock
-    if (Array.isArray(order.items)) {
-      for (const item of order.items) {
-        if (item.product_id && item.quantity) {
-          await supabase.rpc("decrement_stock", {
-            p_product_id: item.product_id,
-            p_qty: item.quantity,
-          });
+    if (notifError) {
+      console.warn("[DOKU-WH] notification_queue insert failed:", notifError);
+    } else {
+      console.log("[DOKU-WH] ✓ notification_queue inserted");
+    }
+
+    // 3. Get order_items (separate table — NOT orders.items)
+    const { data: orderItems, error: itemsErr } = await supabase
+      .from("order_items")
+      .select("product_id, quantity, product_name_snapshot")
+      .eq("order_id", orderId);
+
+    if (itemsErr) {
+      console.error("[DOKU-WH] order_items lookup error:", itemsErr);
+      return;
+    }
+
+    if (!Array.isArray(orderItems) || orderItems.length === 0) {
+      console.warn("[DOKU-WH] No order_items found for order:", orderId);
+      return;
+    }
+
+    console.log(`[DOKU-WH] Found ${orderItems.length} items to decrement stock`);
+
+    // 4. Decrement product stock for each item
+    let decrementedCount = 0;
+    for (const item of orderItems) {
+      if (item.product_id && item.quantity) {
+        const { error: stockError } = await supabase.rpc("decrement_stock", {
+          p_product_id: item.product_id,
+          p_qty: item.quantity,
+        });
+
+        if (stockError) {
+          console.error(`[DOKU-WH] Failed to decrement stock for ${item.product_name_snapshot}:`, stockError);
+        } else {
+          decrementedCount++;
+          console.log(`[DOKU-WH] ✓ Stock decremented: ${item.product_name_snapshot} × ${item.quantity}`);
         }
       }
     }
 
-    console.log(`Paid actions queued for order ${orderId}`);
+    console.log(`[DOKU-WH] ✓ Paid actions complete for order ${orderId}: ${decrementedCount}/${orderItems.length} items stock-decremented`);
   } catch (e) {
-    console.error("triggerPaidActions failed:", e);
+    console.error("[DOKU-WH] triggerPaidActions failed:", e);
   }
 }
