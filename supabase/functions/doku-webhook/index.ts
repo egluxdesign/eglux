@@ -147,16 +147,27 @@ Deno.serve(async (req) => {
     });
   }
 
+  // ⭐ FIX v3.4: Map DOKU status → EGLUX statuses (mirror midtrans-webhook EXACTLY)
+  //   payment_status: unpaid/paid/failed (tracks PAYMENT state)
+  //   orders.status: pending/processing/cancelled (tracks ORDER fulfillment state)
+  //   DOKU SUCCESS → payment_status=paid, orders.status=processing (NOT "paid"!)
+  //   (midtrans-webhook also maps settlement→processing, NOT→paid)
+  let paymentStatus = "unpaid";
+  let orderStatus = "pending";
+  if (txStatus === "SUCCESS") {
+    paymentStatus = "paid";
+    orderStatus = "processing";  // payment success → order enters processing
+  } else if (txStatus === "FAIL" || txStatus === "FAILED") {
+    paymentStatus = "failed";
+    orderStatus = "cancelled";
+  } else if (txStatus === "EXPIRED") {
+    paymentStatus = "failed";
+    orderStatus = "cancelled";
+  }
+
   // ---------- Update database ----------
   if (supabaseUrl && serviceKey) {
     const supabase = createClient(supabaseUrl, serviceKey);
-
-    // Map DOKU status → our status
-    let newStatus = "pending";
-    if (txStatus === "SUCCESS") newStatus = "paid";
-  else if (txStatus === "FAIL" || txStatus === "FAILED") newStatus = "failed";
-  else if (txStatus === "EXPIRED") newStatus = "expired";
-  else if (txStatus === "PENDING") newStatus = "pending";
 
     try {
       // 1. Find payment session by invoice_number
@@ -168,22 +179,23 @@ Deno.serve(async (req) => {
         .maybeSingle();
 
       if (lookupError) {
-        console.error("Payment lookup error:", lookupError);
+        console.error("[webhook] Payment lookup error:", lookupError);
       }
 
       if (paymentRow?.order_id) {
-        console.log(`[webhook] Found payment session: order_id=${paymentRow.order_id}, current_status=${paymentRow.status}`);
+        const orderId = paymentRow.order_id;
+        console.log(`[webhook] Found payment session: order_id=${orderId}, tx=${txStatus}`);
 
-        // 2. Update payment session
+        // 2. Update order_payments (for frontend polling)
         const { error: updatePayErr } = await supabase
           .from("order_payments")
           .update({
-            status: newStatus,
+            status: paymentStatus,
             transaction_id: txId,
             transaction_date: txDate,
             payment_type: paymentType,
             payment_channel: paymentChannel,
-            paid_at: newStatus === "paid" ? new Date().toISOString() : null,
+            paid_at: paymentStatus === "paid" ? new Date().toISOString() : null,
             updated_at: new Date().toISOString(),
             raw_notification: payload,
           })
@@ -192,63 +204,48 @@ Deno.serve(async (req) => {
         if (updatePayErr) {
           console.error("[webhook] Failed to update order_payments:", updatePayErr);
         } else {
-          console.log(`[webhook] order_payments updated: status=${newStatus}`);
+          console.log(`[webhook] ✓ order_payments updated: status=${paymentStatus}`);
         }
 
-        // 3. Update order status (idempotent — only move forward)
-        const { data: currentOrder, error: orderLookupErr } = await supabase
+        // 3. Update orders table — BOTH status + payment_status (mirror midtrans-webhook)
+        const { data: currentOrder } = await supabase
           .from("orders")
-          .select("status")
-          .eq("id", paymentRow.order_id)
+          .select("id, status, payment_status")
+          .eq("id", orderId)
           .maybeSingle();
 
-        if (orderLookupErr) {
-          console.error("[webhook] Failed to lookup orders:", orderLookupErr);
-        }
+        const wasAlreadyPaid = currentOrder?.payment_status === "paid";
+        console.log(`[webhook] Order: status=${currentOrder?.status}, payment_status=${currentOrder?.payment_status}, wasAlreadyPaid=${wasAlreadyPaid}`);
 
-        const orderStatusMap: Record<string, string> = {
-          paid: "paid",
-          failed: "cancelled",
-          expired: "cancelled",
-          pending: "pending_payment",
-        };
-        const newOrderStatus = orderStatusMap[newStatus] || "pending_payment";
-
-        // Only update if it improves status (pending → paid, never paid → pending)
-        const statusRank = ["pending_payment", "paid", "cancelled", "expired"];
-        const currentRank = statusRank.indexOf(currentOrder?.status || "pending_payment");
-        const newRank = statusRank.indexOf(newOrderStatus);
-        const shouldUpdate = newRank >= currentRank || !currentOrder;
-
-        console.log(`[webhook] Order status: current=${currentOrder?.status} → new=${newOrderStatus} (shouldUpdate=${shouldUpdate})`);
-
-        if (shouldUpdate) {
+        if (!wasAlreadyPaid) {
           const { error: orderUpdateErr } = await supabase
             .from("orders")
             .update({
-              status: newOrderStatus,
+              status: orderStatus,              // processing / cancelled / pending
+              payment_status: paymentStatus,    // paid / failed / unpaid  ⭐ NEW — was missing!
               payment_method: paymentChannel || "doku",
               updated_at: new Date().toISOString(),
             })
-            .eq("id", paymentRow.order_id);
+            .eq("id", orderId);
 
           if (orderUpdateErr) {
             console.error("[webhook] ⚠️ Failed to update orders:", orderUpdateErr);
           } else {
-            console.log(`[webhook] ✓ orders updated: status=${newOrderStatus}, payment_method=${paymentChannel || "doku"}`);
+            console.log(`[webhook] ✓ orders updated: status=${orderStatus}, payment_status=${paymentStatus}`);
           }
+        } else {
+          console.log(`[webhook] Order already paid — skipping (idempotent)`);
         }
 
-        // 4. If paid — trigger downstream actions (email, WhatsApp, decrement stock)
-        if (newStatus === "paid") {
-          await triggerPaidActions(supabase, paymentRow.order_id);
+        // 4. If paid — trigger ALL downstream actions (mirror midtrans-webhook)
+        if (paymentStatus === "paid" && !wasAlreadyPaid) {
+          await triggerPaidActions(supabase, orderId, supabaseUrl!, serviceKey!, paymentChannel);
         }
       } else {
         console.warn("[webhook] No payment session found for invoice:", invoiceNumber);
       }
     } catch (e) {
-      console.error("DB update failed:", e);
-      // Still return 200 to DOKU
+      console.error("[webhook] DB update failed:", e);
     }
   }
 
@@ -257,7 +254,8 @@ Deno.serve(async (req) => {
     status: "ok",
     invoice_number: invoiceNumber,
     transaction_status: txStatus,
-    new_status: newStatus,
+    payment_status: paymentStatus,
+    order_status: orderStatus,
   }), {
     status: 200,
     headers: { "Content-Type": "application/json" },
@@ -266,95 +264,160 @@ Deno.serve(async (req) => {
 
 // ---------- helpers ----------
 
-async function triggerPaidActions(supabase: any, orderId: string): Promise<void> {
+// ⭐ FIX v3.4: Mirror midtrans-webhook downstream actions EXACTLY
+//   1. Decrement stock via atomic RPC (decrement_order_stock — idempotent)
+//   2. Send email notification DIRECTLY via send-email-notification (NOT queue!)
+//   3. Auto-create Biteship order
+//   4. Create admin notification
+//   5. Add loyalty points (1 poin = Rp 1.000)
+//
+// ROOT CAUSE v3.3: notification_queue has NO worker processing it.
+// midtrans-webhook calls send-email-notification DIRECTLY via fetch — that's the working pattern.
+async function triggerPaidActions(
+  supabase: any,
+  orderId: string,
+  supabaseUrl: string,
+  serviceKey: string,
+  paymentChannel: string
+): Promise<void> {
   try {
-    // ⭐ FIX v3.2: Query CORRECT columns from orders table
-    // orders has: id, customer_id, total_amount (NOT "total"), status, payment_status
-    // orders does NOT have email/phone/items — those are in customers + order_items tables
-    const { data: order, error: orderErr } = await supabase
-      .from("orders")
-      .select("id, customer_id, total_amount, status, payment_status")
-      .eq("id", orderId)
-      .maybeSingle();
+    console.log(`[webhook] === PAID ACTIONS for order ${orderId} ===`);
 
-    if (orderErr) {
-      console.error("[webhook] triggerPaidActions: Failed to fetch order:", orderErr);
-      return;
-    }
-    if (!order) {
-      console.warn(`[webhook] triggerPaidActions: Order not found: ${orderId}`);
-      return;
+    // 1. Decrement stock via atomic RPC (idempotent — same as midtrans-webhook)
+    const { data: stockResult, error: stockError } = await supabase.rpc(
+      "decrement_order_stock",
+      { p_order_id: orderId }
+    );
+    if (stockError) {
+      console.warn("[webhook] Stock decrement error:", stockError.message);
+    } else if (stockResult?.success) {
+      console.log(`[webhook] ✓ Stock decremented: ${stockResult.success_count} items`);
+    } else if (stockResult?.skipped) {
+      console.log("[webhook] Stock already decremented (idempotent skip)");
     }
 
-    // ⭐ FIX: Get customer email/phone from customers table (orders doesn't have them)
-    let customerEmail = "";
-    let customerPhone = "";
-    let customerName = "";
-    if (order.customer_id) {
-      const { data: customer, error: custErr } = await supabase
-        .from("customers")
-        .select("name, phone, email")
-        .eq("id", order.customer_id)
-        .maybeSingle();
-      if (custErr) {
-        console.warn("[webhook] Failed to fetch customer:", custErr);
-      } else if (customer) {
-        customerEmail = customer.email || "";
-        customerPhone = customer.phone || "";
-        customerName = customer.name || "";
+    // 2. Send email notification DIRECTLY (NOT via notification_queue — no worker!)
+    //    Mirror midtrans-webhook: fetch send-email-notification edge function
+    try {
+      const emailResp = await fetch(`${supabaseUrl}/functions/v1/send-email-notification`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${serviceKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          event: "payment_success",
+          order_id: orderId,
+        }),
+      });
+      const emailText = await emailResp.text();
+      let emailResult: any;
+      try { emailResult = JSON.parse(emailText); } catch { emailResult = { raw: emailText }; }
+
+      const emailStatus = emailResult.success
+        ? (emailResult.skipped ? "email_skipped" : "email_sent")
+        : "email_failed";
+      console.log(`[webhook] Email: ${emailStatus}${emailResult.resend_id ? ` (id: ${emailResult.resend_id})` : ""}`);
+
+      // Update orders with notification tracking (same as midtrans-webhook)
+      await supabase.from("orders").update({
+        waba_last_event: "payment_success",
+        waba_last_status: emailStatus,
+        waba_last_sent_at: new Date().toISOString(),
+      }).eq("id", orderId);
+    } catch (e: any) {
+      console.error("[webhook] Email notification exception:", e.message);
+    }
+
+    // 3. Auto-create Biteship order (same as midtrans-webhook)
+    try {
+      const { data: biteshipResult, error: biteshipError } = await supabase.functions.invoke(
+        "create-biteship-order",
+        { body: { order_id: orderId } }
+      );
+      if (biteshipError) {
+        console.warn("[webhook] create-biteship-order failed:", biteshipError.message);
+      } else if (biteshipResult?.already_exists) {
+        console.log("[webhook] ✓ Biteship order already exists:", biteshipResult.biteship_order_id);
+      } else {
+        console.log("[webhook] ✓ Biteship order created:", biteshipResult?.biteship_order_id);
       }
+    } catch (e: any) {
+      console.warn("[webhook] create-biteship-order error:", e.message);
     }
 
-    // ⭐ FIX: Get order items from order_items table (orders doesn't have items array)
-    const { data: orderItems, error: itemsErr } = await supabase
-      .from("order_items")
-      .select("product_id, quantity, name, price")
-      .eq("order_id", orderId);
+    // 4. Create admin notification (same as midtrans-webhook)
+    try {
+      const { data: orderData } = await supabase
+        .from("orders")
+        .select("id, total_amount, customer:customers(name)")
+        .eq("id", orderId)
+        .single();
 
-    if (itemsErr) {
-      console.warn("[webhook] Failed to fetch order_items:", itemsErr);
+      if (orderData) {
+        const customerName = (orderData.customer as any)?.name || "Customer";
+        const totalAmount = Number(orderData.total_amount) || 0;
+        await supabase.from("notifications").insert({
+          type: "payment",
+          title: "Pembayaran Diterima (DOKU)",
+          message: `${customerName} membayar Rp ${totalAmount.toLocaleString("id-ID")} (${paymentChannel || "doku"})`,
+          reference_id: orderId,
+          is_read: false,
+        });
+        console.log("[webhook] ✓ Admin notification created");
+      }
+    } catch (e: any) {
+      console.warn("[webhook] Admin notification failed:", e.message);
     }
 
-    console.log(`[webhook] triggerPaidActions: phone=${customerPhone}, email=${customerEmail}, items=${orderItems?.length || 0}`);
+    // 5. Add loyalty points (1 poin = Rp 1.000 — same as midtrans-webhook)
+    try {
+      const { data: pointsOrder } = await supabase
+        .from("orders")
+        .select("id, total_amount, customer:customers(user_id)")
+        .eq("id", orderId)
+        .single();
 
-    // 1. Insert notification queue row (WABA + email worker will pick this up)
-    const { error: notifError } = await supabase.from("notification_queue").insert({
-      type: "payment_success",
-      order_id: orderId,
-      payload: {
-        customer_email: customerEmail,
-        customer_phone: customerPhone,
-        customer_name: customerName,
-        total: order.total_amount,
-        items: orderItems || [],
-      },
-      status: "pending",
-      created_at: new Date().toISOString(),
-    });
+      const userId = (pointsOrder?.customer as any)?.user_id;
+      const totalAmount = Number(pointsOrder?.total_amount) || 0;
 
-    if (notifError) {
-      console.warn("[webhook] notification_queue insert failed:", notifError);
-    } else {
-      console.log(`[webhook] ✓ Notification queued for order ${orderId} (phone=${customerPhone})`);
-    }
+      if (userId && totalAmount > 0) {
+        const points = Math.floor(totalAmount / 1000);
+        if (points > 0) {
+          // Idempotent check — prevent double-add on webhook retry
+          const { data: existingTxn } = await supabase
+            .from("point_transactions")
+            .select("id")
+            .eq("user_id", userId)
+            .eq("source", "website_purchase")
+            .eq("order_id", orderId)
+            .maybeSingle();
 
-    // 2. Decrement product stock
-    if (Array.isArray(orderItems)) {
-      for (const item of orderItems) {
-        if (item.product_id && item.quantity) {
-          const { error: stockErr } = await supabase.rpc("decrement_stock", {
-            p_product_id: item.product_id,
-            p_qty: item.quantity,
-          });
-          if (stockErr) {
-            console.warn(`[webhook] Stock decrement failed for ${item.product_id}:`, stockErr);
+          if (!existingTxn) {
+            const { error: pointsErr } = await supabase.rpc("add_points", {
+              p_user_id: userId,
+              p_amount: points,
+              p_source: "website_purchase",
+              p_description: `Pembelian order #${orderId.slice(0, 8).toUpperCase()}`,
+              p_order_id: orderId,
+              p_expires_at: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+            });
+            if (pointsErr) {
+              console.warn("[webhook] Points add failed:", pointsErr.message);
+            } else {
+              console.log(`[webhook] ✓ Added ${points} loyalty points`);
+            }
+          } else {
+            console.log("[webhook] Points already added (idempotent skip)");
           }
         }
       }
+    } catch (e: any) {
+      console.warn("[webhook] Loyalty points error:", e.message);
     }
 
-    console.log(`[webhook] ✓ triggerPaidActions completed for order ${orderId}`);
-  } catch (e) {
+    console.log(`[webhook] ✓ All paid actions completed for order ${orderId}`);
+  } catch (e: any) {
     console.error("[webhook] triggerPaidActions failed:", e);
   }
 }
