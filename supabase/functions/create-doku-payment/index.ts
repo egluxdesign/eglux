@@ -237,7 +237,7 @@ Deno.serve(async (req) => {
   // know where to send the webhook → order status never updates, no WABA notification.
   //
   // Override via DOKU_NOTIFICATION_URL env var if needed (e.g. custom domain proxy).
-  const supabaseUrl = Deno.env.get("SUPABASE_URL") || Deno.env.get("SUPABASE_PROJECT_URL");
+  // NOTE: supabaseUrl already declared at top of handler (line ~131) — reuse it!
   const notificationUrl = Deno.env.get("DOKU_NOTIFICATION_URL") ||
     `${supabaseUrl}/functions/v1/doku-webhook`;
   console.log("[create-doku-payment] notification_url (server webhook):", notificationUrl);
