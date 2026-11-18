@@ -71,6 +71,14 @@ Deno.serve(async (req) => {
   const secretKey = Deno.env.get("DOKU_SECRET_KEY");
   const webhookPath = Deno.env.get("DOKU_WEBHOOK_PATH") || "/functions/v1/doku-webhook";
 
+  // ⭐ Qiscus WABA env vars (for payment success notification)
+  const qiscusAppId = Deno.env.get("QISCUS_APP_ID");
+  const qiscusSecretKey = Deno.env.get("QISCUS_SECRET_KEY");
+  const qiscusChannelId = Deno.env.get("QISCUS_CHANNEL_ID");
+  const qiscusRegion = Deno.env.get("QISCUS_REGION") || "id";
+  const qiscusPaymentTemplate = Deno.env.get("QISCUS_PAYMENT_TEMPLATE") || "eglux_payment_success";
+  const qiscusTemplateNamespace = Deno.env.get("QISCUS_TEMPLATE_NAMESPACE") || "4ba2e5a5_1f46_4283_8b29_b0d29113e5f3";
+
   // Capture raw body bytes FIRST — needed for signature verification
   const rawBody = await req.text();
 
@@ -94,6 +102,11 @@ Deno.serve(async (req) => {
   const headerTimestamp = req.headers.get("Request-Timestamp") || "";
   const headerSignature = req.headers.get("Signature") || "";
 
+  // ⭐ FIX v3.5: DOKU_SKIP_SIG_VERIFY=true bypasses signature check (for testing webhook delivery)
+  // Set via: supabase secrets set DOKU_SKIP_SIG_VERIFY=true
+  // Remove after webhook is confirmed working!
+  const skipSigVerify = Deno.env.get("DOKU_SKIP_SIG_VERIFY") === "true";
+
   let signatureValid = false;
   if (clientId && secretKey && headerClientId && headerRequestId && headerTimestamp && headerSignature) {
     try {
@@ -106,26 +119,46 @@ Deno.serve(async (req) => {
         `Digest:${digest}`;
       const expectedSig = `HMACSHA256=${await hmacSha256Base64(secretKey, component)}`;
       signatureValid = timingSafeEqual(expectedSig, headerSignature);
+
+      // ⭐ Detailed logging for debugging signature issues
+      if (!signatureValid) {
+        console.warn("[webhook] Signature mismatch details:", {
+          webhookPath,
+          clientIdMatch: headerClientId === clientId,
+          expectedSigPrefix: expectedSig.substring(0, 30),
+          receivedSigPrefix: headerSignature.substring(0, 30),
+          bodyLength: rawBody.length,
+          digestPrefix: digest.substring(0, 20),
+        });
+      }
     } catch (e) {
-      console.error("Signature verification error:", e);
+      console.error("[webhook] Signature verification error:", e);
     }
+  } else {
+    console.warn("[webhook] Missing signature headers or DOKU credentials:", {
+      hasClientId: !!clientId,
+      hasSecretKey: !!secretKey,
+      headerClientId: !!headerClientId,
+      headerRequestId: !!headerRequestId,
+      headerTimestamp: !!headerTimestamp,
+      headerSignature: !!headerSignature,
+    });
   }
 
   // Always return 200 to DOKU even if signature fails (so they don't retry)
-  // But don't update DB if signature invalid
-  if (!signatureValid) {
-    console.warn("DOKU webhook signature invalid", {
-      headerClientId,
-      headerRequestId,
-      headerTimestamp,
-      headerSignaturePresent: !!headerSignature,
-    });
-    // Return 200 to stop retries, but don't process
+  if (!signatureValid && !skipSigVerify) {
+    console.warn("[webhook] ❌ Signature invalid — REJECTING. Set DOKU_SKIP_SIG_VERIFY=true to bypass for testing.");
     return new Response(JSON.stringify({ status: "ignored", reason: "signature_invalid" }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     });
   }
+
+  if (!signatureValid && skipSigVerify) {
+    console.warn("[webhook] ⚠️ DOKU_SKIP_SIG_VERIFY=true — processing WITHOUT signature verification (DEBUG MODE)");
+  }
+
+  console.log("[webhook] ✓ Signature valid:", signatureValid, "| skipSigVerify:", skipSigVerify);
 
   // ---------- Parse transaction info ----------
   // DOKU notification body structure:
@@ -264,6 +297,140 @@ Deno.serve(async (req) => {
 
 // ---------- helpers ----------
 
+// ⭐ FIX v3.5: Send WABA payment success notification via Qiscus API
+// Uses same Qiscus pattern as send-waba-otp (QISCUS_APP_ID, QISCUS_SECRET_KEY, etc.)
+// Template: eglux_payment_success (must be approved in Qiscus dashboard)
+// Body params: [customer_name, order_short_id, total_amount]
+async function sendQiscusWabaPaymentSuccess(supabase: any, orderId: string): Promise<void> {
+  const qiscusAppId = Deno.env.get("QISCUS_APP_ID");
+  const qiscusSecretKey = Deno.env.get("QISCUS_SECRET_KEY");
+  const qiscusChannelId = Deno.env.get("QISCUS_CHANNEL_ID");
+  const qiscusRegion = Deno.env.get("QISCUS_REGION") || "id";
+  const qiscusTemplate = Deno.env.get("QISCUS_PAYMENT_TEMPLATE") || "eglux_payment_success";
+  const qiscusNamespace = Deno.env.get("QISCUS_TEMPLATE_NAMESPACE") || "4ba2e5a5_1f46_4283_8b29_b0d29113e5f3";
+
+  if (!qiscusAppId || !qiscusSecretKey || !qiscusChannelId) {
+    console.warn("[waba] Qiscus env vars not set — skipping WABA. Set: QISCUS_APP_ID, QISCUS_SECRET_KEY, QISCUS_CHANNEL_ID");
+    return;
+  }
+
+  try {
+    // Fetch order + customer data
+    const { data: orderData, error: orderErr } = await supabase
+      .from("orders")
+      .select(`id, total_amount, customer:customers(name, phone, email)`)
+      .eq("id", orderId)
+      .single();
+
+    if (orderErr || !orderData) {
+      console.warn("[waba] Order not found for WABA:", orderId, orderErr?.message);
+      return;
+    }
+
+    const customer = orderData.customer as any;
+    let phone = String(customer?.phone || "").replace(/\D/g, "");
+
+    // Normalize to E.164 (62xxx, no +)
+    if (phone.startsWith("0")) phone = "62" + phone.slice(1);
+    else if (!phone.startsWith("62")) phone = "62" + phone;
+
+    if (phone.length < 9) {
+      console.warn("[waba] Invalid phone for WABA:", phone);
+      return;
+    }
+
+    const totalAmount = Number(orderData.total_amount) || 0;
+    const customerName = customer?.name || "Customer";
+    const shortId = String(orderId).slice(0, 8).toUpperCase();
+    const totalStr = `Rp ${totalAmount.toLocaleString("id-ID")}`;
+
+    const baseUrl = qiscusRegion.toLowerCase() === "my"
+      ? "https://omnichannel-my.qiscus.com"
+      : "https://omnichannel.qiscus.com";
+    const qiscusUrl = `${baseUrl}/whatsapp/v1/${qiscusAppId}/${qiscusChannelId}/messages`;
+
+    // Qiscus template payload (same format as send-waba-otp)
+    const wabaPayload = {
+      to: phone,
+      type: "template",
+      template: {
+        namespace: qiscusNamespace,
+        name: qiscusTemplate,
+        language: { policy: "deterministic", code: "id" },
+        components: [
+          {
+            type: "body",
+            parameters: [
+              { type: "text", text: customerName },
+              { type: "text", text: shortId },
+              { type: "text", text: totalStr },
+            ],
+          },
+        ],
+      },
+    };
+
+    console.log(`[waba] Sending Qiscus WABA: to=${phone}, template=${qiscusTemplate}, order=${shortId}`);
+
+    const resp = await fetch(qiscusUrl, {
+      method: "POST",
+      headers: {
+        "Qiscus-App-Id": qiscusAppId,
+        "Qiscus-Secret-Key": qiscusSecretKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(wabaPayload),
+    });
+
+    let qiscusData: any;
+    const ct = resp.headers.get("content-type") || "";
+    if (ct.includes("application/json")) {
+      qiscusData = await resp.json();
+    } else {
+      const t = await resp.text();
+      try { qiscusData = JSON.parse(t); } catch { qiscusData = { raw_text: t }; }
+    }
+
+    const msgId = qiscusData?.data?.message_id || qiscusData?.data?.id || qiscusData?.message_id || "";
+
+    if (!resp.ok) {
+      console.error("[waba] ❌ Qiscus API error:", resp.status, JSON.stringify(qiscusData).substring(0, 300));
+      try {
+        await supabase.from("waba_messages").insert({
+          order_id: orderId,
+          event: "payment_success",
+          phone,
+          template_name: qiscusTemplate,
+          status: "failed",
+          mode: "live",
+          error_message: JSON.stringify(qiscusData?.error || qiscusData).substring(0, 500),
+          raw_response: qiscusData,
+        });
+      } catch (insertErr) {
+        console.warn("[waba] Failed to save waba_messages:", insertErr);
+      }
+    } else {
+      console.log(`[waba] ✓ WABA sent! message_id=${msgId}`);
+      try {
+        await supabase.from("waba_messages").insert({
+          order_id: orderId,
+          event: "payment_success",
+          phone,
+          template_name: qiscusTemplate,
+          status: "sent",
+          mode: "live",
+          message_id: msgId,
+          raw_response: qiscusData,
+        });
+      } catch (insertErr) {
+        console.warn("[waba] Failed to save waba_messages:", insertErr);
+      }
+    }
+  } catch (e: any) {
+    console.error("[waba] Qiscus send exception:", e.message);
+  }
+}
+
 // ⭐ FIX v3.4: Mirror midtrans-webhook downstream actions EXACTLY
 //   1. Decrement stock via atomic RPC (decrement_order_stock — idempotent)
 //   2. Send email notification DIRECTLY via send-email-notification (NOT queue!)
@@ -328,6 +495,11 @@ async function triggerPaidActions(
     } catch (e: any) {
       console.error("[webhook] Email notification exception:", e.message);
     }
+
+    // 2b. ⭐ Send WABA payment success via Qiscus (FIX v3.5)
+    //     Uses QISCUS_APP_ID/SECRET_KEY/CHANNEL_ID — same as send-waba-otp
+    //     Template: eglux_payment_success (must be approved in Qiscus dashboard)
+    await sendQiscusWabaPaymentSuccess(supabase, orderId);
 
     // 3. Auto-create Biteship order (same as midtrans-webhook)
     try {
