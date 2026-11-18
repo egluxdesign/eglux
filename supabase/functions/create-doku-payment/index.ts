@@ -20,9 +20,7 @@
 //   Component = "Client-Id:{cid}\nRequest-Id:{rid}\nRequest-Timestamp:{ts}\nRequest-Target:{path}\nDigest:{base64(sha256(body))"
 //   Signature = "HMACSHA256=" + base64(hmac-sha256(secret_key, component))
 //
-// v3 CHANGES (this version):
-//   - FIXED shouldRetry logic: use || instead of && for "payment method" check
-//   - Added "please use another" + "use another payment" triggers
+// v2 CHANGES:
 //   - Verbose console logging for every request + response
 //   - Auto-retry WITHOUT payment_method_types if first attempt fails with "not activated"
 //   - Better error extraction (handle different DOKU error formats)
@@ -218,9 +216,10 @@ Deno.serve(async (req) => {
   }));
 
   // ── Build callback URLs ──
-  const callbackUrl = `${storefrontUrl}/payment-success`;
-  const callbackUrlCancel = `${storefrontUrl}/payment-failed`;
-  const callbackUrlResult = `${storefrontUrl}/payment-success`;
+  // ⭐ FIX v3.2: Redirect to /orders (was /payment-success → /order-history)
+  const callbackUrl = `${storefrontUrl}/orders`;
+  const callbackUrlCancel = `${storefrontUrl}/orders`;
+  const callbackUrlResult = `${storefrontUrl}/orders`;
 
   // ── Build DOKU request body ──
   const dokuBody: any = {
@@ -238,7 +237,13 @@ Deno.serve(async (req) => {
     },
     payment: {
       payment_due_date: 60,
-      payment_method_types: body.payment_method_types || defaultPaymentMethods(),
+      // ⭐ FIX v3.2: Don't send payment_method_types — let DOKU show ALL activated methods
+      // (QRIS, Credit Card, VA BCA/Mandiri/BRI/BNI, e-Wallet OVO/ShopeePay/DANA, minimarket)
+      // Previously only sent 4 methods (VA_DOKU, EMONEY_DOKU, ALFA, INDOMARET) → no QRIS/CC/OVO
+      // Only send payment_method_types if frontend explicitly passes it (for filtering)
+      ...(body.payment_method_types && Array.isArray(body.payment_method_types) && body.payment_method_types.length > 0
+        ? { payment_method_types: body.payment_method_types }
+        : {}),
     },
     customer,
     additional_info: {},
@@ -272,7 +277,7 @@ Deno.serve(async (req) => {
     Math.round(amount), supabaseUrl, serviceKey
   );
 
-  // ── Auto-retry WITHOUT payment_method_types if "not activated" or "use another" error ──
+  // ── Auto-retry WITHOUT payment_method_types if "not activated" error ──
   if (!result.success && result.shouldRetryWithoutMethods) {
     console.log("[DOKU] Retrying WITHOUT payment_method_types (let DOKU show all available)...");
     const dokuBodyRetry = { ...dokuBody };
@@ -435,12 +440,7 @@ async function sendDokuRequest(
     errorMessage = `DOKU request failed (HTTP ${dokuStatus})`;
   }
 
-  // ────────────────────────────────────────────────────────────────────────────
-  // FIXED shouldRetry logic (v3):
-  // - Use || (OR) for all conditions (not && which required BOTH keywords)
-  // - Add triggers for "please use another" and "use another payment"
-  // - This handles: "PLEASE USE ANOTHER PAYMENT METHOD" error from DOKU
-  // ────────────────────────────────────────────────────────────────────────────
+  // Check if error is about payment method → retry without payment_method_types
   const errorLower = (errorMessage + " " + dokuText).toLowerCase();
   const shouldRetry = (
     errorLower.includes("not activated") ||
@@ -448,9 +448,7 @@ async function sendDokuRequest(
     errorLower.includes("payment_method_types") ||
     errorLower.includes("payment method") ||
     errorLower.includes("please use another") ||
-    errorLower.includes("use another payment") ||
-    errorLower.includes("channel is not available") ||
-    errorLower.includes("no available payment")
+    errorLower.includes("use another payment")
   );
 
   console.log("[DOKU] Should retry without methods?", shouldRetry);
@@ -518,9 +516,6 @@ function diagnoseError(status: number, message: string): string {
     if (msg.includes("amount")) {
       return "Amount issue. Must be positive integer in IDR (no decimals).";
     }
-    if (msg.includes("please use another") || msg.includes("use another payment")) {
-      return "DOKU rejected the requested payment_method_types. The function will auto-retry WITHOUT payment_method_types (let DOKU show all available methods). If this still fails, your account may not be fully approved yet.";
-    }
     return "Bad request: " + message;
   }
   if (status === 404) {
@@ -556,15 +551,14 @@ function normalizePhone(phone: string): string {
 
 function defaultPaymentMethods(): string[] {
   // ────────────────────────────────────────────────────────────
-  // ACTIVE METHODS (per DOKU dashboard):
+  // ACTIVE METHODS (per DOKU dashboard as of 2026-10-29):
   //   1. Transfer Bank    → VIRTUAL_ACCOUNT_DOKU
   //   2. DOKU e-Wallet    → EMONEY_DOKU
   //   3. Minimarket       → ONLINE_TO_OFFLINE_ALFA + ONLINE_TO_OFFLINE_INDOMARET
   //
   // If a method is not yet activated, DOKU returns 400 with
-  // "Payment method X not activated" OR "PLEASE USE ANOTHER PAYMENT METHOD".
-  // The function will auto-retry WITHOUT payment_method_types
-  // (letting DOKU show all available).
+  // "Payment method X not activated". The function will auto-retry
+  // WITHOUT payment_method_types (letting DOKU show all available).
   // ────────────────────────────────────────────────────────────
   return [
     "VIRTUAL_ACCOUNT_DOKU",

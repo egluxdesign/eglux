@@ -17,13 +17,6 @@
 //   DOKU_WEBHOOK_PATH  e.g. /functions/v1/doku-webhook (used in signature verification)
 //   SUPABASE_URL       auto-injected
 //   SUPABASE_SERVICE_ROLE_KEY  auto-injected
-//
-// v3 CHANGES (this version):
-//   - FIXED triggerPaidActions: query order_items table (separate from orders)
-//   - FIXED triggerPaidActions: join customers table for email/phone/name
-//   - Stock decrement now works correctly
-//   - notification_queue payload now has correct customer_email/phone/name
-//   - Optional: amount verification against stored order_payments.amount
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -154,51 +147,35 @@ Deno.serve(async (req) => {
     });
   }
 
-  console.log("[DOKU-WH] Received notification:", {
-    invoice_number: invoiceNumber,
-    amount,
-    tx_status: txStatus,
-    tx_id: txId,
-    payment_type: paymentType,
-    payment_channel: paymentChannel,
-  });
-
   // ---------- Update database ----------
-  let newStatus = "pending";
   if (supabaseUrl && serviceKey) {
     const supabase = createClient(supabaseUrl, serviceKey);
 
     // Map DOKU status → our status
+    let newStatus = "pending";
     if (txStatus === "SUCCESS") newStatus = "paid";
-    else if (txStatus === "FAIL" || txStatus === "FAILED") newStatus = "failed";
-    else if (txStatus === "EXPIRED") newStatus = "expired";
-    else if (txStatus === "PENDING") newStatus = "pending";
+  else if (txStatus === "FAIL" || txStatus === "FAILED") newStatus = "failed";
+  else if (txStatus === "EXPIRED") newStatus = "expired";
+  else if (txStatus === "PENDING") newStatus = "pending";
 
     try {
       // 1. Find payment session by invoice_number
       const { data: paymentRow, error: lookupError } = await supabase
         .from("order_payments")
-        .select("order_id, status, amount")
+        .select("order_id, status")
         .eq("invoice_number", invoiceNumber)
         .limit(1)
         .maybeSingle();
 
       if (lookupError) {
-        console.error("[DOKU-WH] Payment lookup error:", lookupError);
+        console.error("Payment lookup error:", lookupError);
       }
 
       if (paymentRow?.order_id) {
-        // Optional: verify amount matches (defensive against tampering)
-        if (amount > 0 && paymentRow.amount && Number(paymentRow.amount) !== amount) {
-          console.warn("[DOKU-WH] Amount mismatch!", {
-            stored: paymentRow.amount,
-            received: amount,
-          });
-          // Don't fail — just warn. DOKU amount is authoritative for paid transactions.
-        }
+        console.log(`[webhook] Found payment session: order_id=${paymentRow.order_id}, current_status=${paymentRow.status}`);
 
         // 2. Update payment session
-        await supabase
+        const { error: updatePayErr } = await supabase
           .from("order_payments")
           .update({
             status: newStatus,
@@ -212,12 +189,22 @@ Deno.serve(async (req) => {
           })
           .eq("invoice_number", invoiceNumber);
 
+        if (updatePayErr) {
+          console.error("[webhook] Failed to update order_payments:", updatePayErr);
+        } else {
+          console.log(`[webhook] order_payments updated: status=${newStatus}`);
+        }
+
         // 3. Update order status (idempotent — only move forward)
-        const { data: currentOrder } = await supabase
+        const { data: currentOrder, error: orderLookupErr } = await supabase
           .from("orders")
           .select("status")
           .eq("id", paymentRow.order_id)
           .maybeSingle();
+
+        if (orderLookupErr) {
+          console.error("[webhook] Failed to lookup orders:", orderLookupErr);
+        }
 
         const orderStatusMap: Record<string, string> = {
           paid: "paid",
@@ -231,8 +218,12 @@ Deno.serve(async (req) => {
         const statusRank = ["pending_payment", "paid", "cancelled", "expired"];
         const currentRank = statusRank.indexOf(currentOrder?.status || "pending_payment");
         const newRank = statusRank.indexOf(newOrderStatus);
-        if (newRank >= currentRank || !currentOrder) {
-          await supabase
+        const shouldUpdate = newRank >= currentRank || !currentOrder;
+
+        console.log(`[webhook] Order status: current=${currentOrder?.status} → new=${newOrderStatus} (shouldUpdate=${shouldUpdate})`);
+
+        if (shouldUpdate) {
+          const { error: orderUpdateErr } = await supabase
             .from("orders")
             .update({
               status: newOrderStatus,
@@ -240,12 +231,12 @@ Deno.serve(async (req) => {
               updated_at: new Date().toISOString(),
             })
             .eq("id", paymentRow.order_id);
-          console.log("[DOKU-WH] Order status updated:", paymentRow.order_id, "→", newOrderStatus);
-        } else {
-          console.log("[DOKU-WH] Order status already higher, skipping update:", {
-            current: currentOrder?.status,
-            new: newOrderStatus,
-          });
+
+          if (orderUpdateErr) {
+            console.error("[webhook] ⚠️ Failed to update orders:", orderUpdateErr);
+          } else {
+            console.log(`[webhook] ✓ orders updated: status=${newOrderStatus}, payment_method=${paymentChannel || "doku"}`);
+          }
         }
 
         // 4. If paid — trigger downstream actions (email, WhatsApp, decrement stock)
@@ -253,10 +244,10 @@ Deno.serve(async (req) => {
           await triggerPaidActions(supabase, paymentRow.order_id);
         }
       } else {
-        console.warn("[DOKU-WH] No payment session found for invoice:", invoiceNumber);
+        console.warn("[webhook] No payment session found for invoice:", invoiceNumber);
       }
     } catch (e) {
-      console.error("[DOKU-WH] DB update failed:", e);
+      console.error("DB update failed:", e);
       // Still return 200 to DOKU
     }
   }
@@ -275,58 +266,58 @@ Deno.serve(async (req) => {
 
 // ---------- helpers ----------
 
-// ─────────────────────────────────────────────────────────────────────────────
-// v3 FIXED: triggerPaidActions
-//
-// Previously (BUGGY):
-//   - Queried orders.items (which doesn't exist — items are in order_items table)
-//   - Queried orders.email / orders.phone (which don't exist — customer info in customers table)
-//   - Result: stock never decremented, notification_queue had null email/phone
-//
-// Now (FIXED):
-//   - Join customers table via customer_id to get email/phone/name
-//   - Query order_items table separately for line items
-//   - Stock decrement works correctly
-//   - notification_queue payload has correct customer info
-// ─────────────────────────────────────────────────────────────────────────────
 async function triggerPaidActions(supabase: any, orderId: string): Promise<void> {
   try {
-    console.log("[DOKU-WH] triggerPaidActions for order:", orderId);
-
-    // 1. Get order + customer info (join customers table)
+    // ⭐ FIX v3.2: Query CORRECT columns from orders table
+    // orders has: id, customer_id, total_amount (NOT "total"), status, payment_status
+    // orders does NOT have email/phone/items — those are in customers + order_items tables
     const { data: order, error: orderErr } = await supabase
       .from("orders")
-      .select(`
-        id,
-        customer_id,
-        total_amount,
-        customers ( email, phone, name )
-      `)
+      .select("id, customer_id, total_amount, status, payment_status")
       .eq("id", orderId)
       .maybeSingle();
 
     if (orderErr) {
-      console.error("[DOKU-WH] Order lookup error:", orderErr);
+      console.error("[webhook] triggerPaidActions: Failed to fetch order:", orderErr);
       return;
     }
     if (!order) {
-      console.warn("[DOKU-WH] Order not found:", orderId);
+      console.warn(`[webhook] triggerPaidActions: Order not found: ${orderId}`);
       return;
     }
 
-    // Extract customer info from joined customers table
-    const customerData = Array.isArray(order.customers) ? order.customers[0] : order.customers;
-    const customerEmail = customerData?.email || null;
-    const customerPhone = customerData?.phone || null;
-    const customerName = customerData?.name || null;
+    // ⭐ FIX: Get customer email/phone from customers table (orders doesn't have them)
+    let customerEmail = "";
+    let customerPhone = "";
+    let customerName = "";
+    if (order.customer_id) {
+      const { data: customer, error: custErr } = await supabase
+        .from("customers")
+        .select("name, phone, email")
+        .eq("id", order.customer_id)
+        .maybeSingle();
+      if (custErr) {
+        console.warn("[webhook] Failed to fetch customer:", custErr);
+      } else if (customer) {
+        customerEmail = customer.email || "";
+        customerPhone = customer.phone || "";
+        customerName = customer.name || "";
+      }
+    }
 
-    console.log("[DOKU-WH] Customer info:", {
-      email: customerEmail ? `${customerEmail.slice(0, 5)}...` : "null",
-      phone: customerPhone ? `${customerPhone.slice(0, 5)}...` : "null",
-      name: customerName,
-    });
+    // ⭐ FIX: Get order items from order_items table (orders doesn't have items array)
+    const { data: orderItems, error: itemsErr } = await supabase
+      .from("order_items")
+      .select("product_id, quantity, name, price")
+      .eq("order_id", orderId);
 
-    // 2. Insert notification log row (will be processed by separate worker)
+    if (itemsErr) {
+      console.warn("[webhook] Failed to fetch order_items:", itemsErr);
+    }
+
+    console.log(`[webhook] triggerPaidActions: phone=${customerPhone}, email=${customerEmail}, items=${orderItems?.length || 0}`);
+
+    // 1. Insert notification queue row (WABA + email worker will pick this up)
     const { error: notifError } = await supabase.from("notification_queue").insert({
       type: "payment_success",
       order_id: orderId,
@@ -335,55 +326,35 @@ async function triggerPaidActions(supabase: any, orderId: string): Promise<void>
         customer_phone: customerPhone,
         customer_name: customerName,
         total: order.total_amount,
+        items: orderItems || [],
       },
       status: "pending",
       created_at: new Date().toISOString(),
     });
 
     if (notifError) {
-      console.warn("[DOKU-WH] notification_queue insert failed:", notifError);
+      console.warn("[webhook] notification_queue insert failed:", notifError);
     } else {
-      console.log("[DOKU-WH] ✓ notification_queue inserted");
+      console.log(`[webhook] ✓ Notification queued for order ${orderId} (phone=${customerPhone})`);
     }
 
-    // 3. Get order_items (separate table — NOT orders.items)
-    const { data: orderItems, error: itemsErr } = await supabase
-      .from("order_items")
-      .select("product_id, quantity, product_name_snapshot")
-      .eq("order_id", orderId);
-
-    if (itemsErr) {
-      console.error("[DOKU-WH] order_items lookup error:", itemsErr);
-      return;
-    }
-
-    if (!Array.isArray(orderItems) || orderItems.length === 0) {
-      console.warn("[DOKU-WH] No order_items found for order:", orderId);
-      return;
-    }
-
-    console.log(`[DOKU-WH] Found ${orderItems.length} items to decrement stock`);
-
-    // 4. Decrement product stock for each item
-    let decrementedCount = 0;
-    for (const item of orderItems) {
-      if (item.product_id && item.quantity) {
-        const { error: stockError } = await supabase.rpc("decrement_stock", {
-          p_product_id: item.product_id,
-          p_qty: item.quantity,
-        });
-
-        if (stockError) {
-          console.error(`[DOKU-WH] Failed to decrement stock for ${item.product_name_snapshot}:`, stockError);
-        } else {
-          decrementedCount++;
-          console.log(`[DOKU-WH] ✓ Stock decremented: ${item.product_name_snapshot} × ${item.quantity}`);
+    // 2. Decrement product stock
+    if (Array.isArray(orderItems)) {
+      for (const item of orderItems) {
+        if (item.product_id && item.quantity) {
+          const { error: stockErr } = await supabase.rpc("decrement_stock", {
+            p_product_id: item.product_id,
+            p_qty: item.quantity,
+          });
+          if (stockErr) {
+            console.warn(`[webhook] Stock decrement failed for ${item.product_id}:`, stockErr);
+          }
         }
       }
     }
 
-    console.log(`[DOKU-WH] ✓ Paid actions complete for order ${orderId}: ${decrementedCount}/${orderItems.length} items stock-decremented`);
+    console.log(`[webhook] ✓ triggerPaidActions completed for order ${orderId}`);
   } catch (e) {
-    console.error("[DOKU-WH] triggerPaidActions failed:", e);
+    console.error("[webhook] triggerPaidActions failed:", e);
   }
 }
