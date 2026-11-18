@@ -221,6 +221,18 @@ Deno.serve(async (req) => {
   const callbackUrlCancel = `${storefrontUrl}/orders`;
   const callbackUrlResult = `${storefrontUrl}/orders`;
 
+  // ⭐ FIX v3.6: notification_url — SERVER-TO-SERVER webhook URL (CRITICAL!)
+  // This is DIFFERENT from callback_url (which is browser redirect after payment).
+  // DOKU sends HTTP POST to notification_url when payment status changes (SUCCESS/FAIL).
+  // Without this, DOKU dashboard shows "Delivery Status: GAGAL" because it doesn't
+  // know where to send the webhook → order status never updates, no WABA notification.
+  //
+  // Override via DOKU_NOTIFICATION_URL env var if needed (e.g. custom domain proxy).
+  const supabaseUrl = Deno.env.get("SUPABASE_URL") || Deno.env.get("SUPABASE_PROJECT_URL");
+  const notificationUrl = Deno.env.get("DOKU_NOTIFICATION_URL") ||
+    `${supabaseUrl}/functions/v1/doku-webhook`;
+  console.log("[create-doku-payment] notification_url (server webhook):", notificationUrl);
+
   // ── Build DOKU request body ──
   const dokuBody: any = {
     order: {
@@ -230,6 +242,8 @@ Deno.serve(async (req) => {
       callback_url: callbackUrl,
       callback_url_cancel: callbackUrlCancel,
       callback_url_result: callbackUrlResult,
+      // ⭐ FIX v3.6: Server-to-server webhook URL — DOKU POSTs payment status here
+      notification_url: notificationUrl,
       language: "EN",
       auto_redirect: true,
       disable_retry_payment: false,
