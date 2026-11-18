@@ -31,8 +31,11 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization, apikey",
+  "Access-Control-Allow-Methods": "POST, OPTIONS, GET, HEAD",
+  // ⭐ FIX v3.7: Include x-client-info (Supabase JS client sends this automatically)
+  // Without it, browser blocks preflight → "It does not have HTTP ok status"
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, apikey, x-client-info, X-Client-Info",
+  "Access-Control-Max-Age": "86400",
 };
 
 // ============================================================================
@@ -111,8 +114,14 @@ async function buildDokuSignature(
 // ============================================================================
 
 Deno.serve(async (req) => {
+  // ⭐ FIX v3.7: Explicit 200 + full CORS headers for OPTIONS preflight
+  // Browser rejects preflight if status != 200 or missing CORS headers
   if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: CORS_HEADERS });
+    return new Response(null, {
+      status: 200,
+      statusText: "OK",
+      headers: CORS_HEADERS,
+    });
   }
   if (req.method !== "POST") {
     return json({ error: "Method not allowed" }, 405);
