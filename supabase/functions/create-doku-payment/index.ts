@@ -185,22 +185,22 @@ Deno.serve(async (req) => {
 
   const customer = {
     id: body.customer_id ? String(body.customer_id) : `EGLUX-${orderId.slice(0, 20)}`,
-    name: String(body.customer_name || "").slice(0, 50),
-    last_name: String(body.customer_last_name || "").slice(0, 16),
+    name: sanitizeForDoku(String(body.customer_name || "").slice(0, 50)),
+    last_name: sanitizeForDoku(String(body.customer_last_name || "").slice(0, 16)),
     phone: normalizePhone(body.customer_phone),
-    email: String(body.customer_email || "").slice(0, 128),
-    address: String(body.customer_address || "").slice(0, 400),
-    postcode: String(body.customer_postcode || "").slice(0, 10),
-    city: String(body.customer_city || "").slice(0, 50),
-    state: String(body.customer_state || "").slice(0, 50),
+    email: String(body.customer_email || "").slice(0, 128),  // @ and . are allowed by DOKU
+    address: sanitizeForDoku(String(body.customer_address || "").slice(0, 400)),
+    postcode: String(body.customer_postcode || "").slice(0, 10),  // digits only
+    city: sanitizeForDoku(String(body.customer_city || "").slice(0, 50)),
+    state: sanitizeForDoku(String(body.customer_state || "").slice(0, 50)),
     country: "ID",
   };
 
   const shippingAddress = body.shipping_address ? {
-    first_name: String(body.shipping_address.first_name || body.customer_name || "").slice(0, 50),
-    last_name: String(body.shipping_address.last_name || "").slice(0, 50),
-    address: String(body.shipping_address.address || "").slice(0, 255),
-    city: String(body.shipping_address.city || "").slice(0, 50),
+    first_name: sanitizeForDoku(String(body.shipping_address.first_name || body.customer_name || "").slice(0, 50)),
+    last_name: sanitizeForDoku(String(body.shipping_address.last_name || "").slice(0, 50)),
+    address: sanitizeForDoku(String(body.shipping_address.address || "").slice(0, 255)),
+    city: sanitizeForDoku(String(body.shipping_address.city || "").slice(0, 50)),
     postal_code: String(body.shipping_address.postal_code || "").slice(0, 10),
     phone: normalizePhone(body.shipping_address.phone || body.customer_phone),
     country_code: "IDN",
@@ -208,11 +208,11 @@ Deno.serve(async (req) => {
 
   const lineItems = (body.line_items as any[]).map((it, i) => ({
     id: String(it.id || `ITEM-${i + 1}`).slice(0, 64),
-    name: String(it.name || "Item").slice(0, 255),
+    name: sanitizeForDoku(String(it.name || "Item").slice(0, 255)),  // ⭐ strip ° × ² ™ etc.
     quantity: Number(it.quantity || 1),
     price: Number(it.price || 0),
     sku: String(it.sku || "").slice(0, 64),
-    category: String(it.category || "retail").slice(0, 100),
+    category: sanitizeForDoku(String(it.category || "retail").slice(0, 100)),
   }));
 
   // ── Build callback URLs ──
@@ -251,10 +251,10 @@ Deno.serve(async (req) => {
 
   if (shippingAddress) dokuBody.shipping_address = shippingAddress;
   if (body.billing_address) dokuBody.billing_address = {
-    first_name: String(body.billing_address.first_name || "").slice(0, 50),
-    last_name: String(body.billing_address.last_name || "").slice(0, 50),
-    address: String(body.billing_address.address || "").slice(0, 255),
-    city: String(body.billing_address.city || "").slice(0, 50),
+    first_name: sanitizeForDoku(String(body.billing_address.first_name || "").slice(0, 50)),
+    last_name: sanitizeForDoku(String(body.billing_address.last_name || "").slice(0, 50)),
+    address: sanitizeForDoku(String(body.billing_address.address || "").slice(0, 255)),
+    city: sanitizeForDoku(String(body.billing_address.city || "").slice(0, 50)),
     postal_code: String(body.billing_address.postal_code || "").slice(0, 10),
     phone: normalizePhone(body.billing_address.phone || body.customer_phone),
     country_code: "IDN",
@@ -547,6 +547,17 @@ function normalizePhone(phone: string): string {
   else if (p.startsWith("08")) p = "62" + p.slice(1);
   else if (p.startsWith("8")) p = "62" + p;
   return p.slice(0, 16);
+}
+
+// ⭐ FIX v3.3: DOKU only accepts a-z A-Z 0-9 and these symbols: . - / + , = _ : ' @ % ( )
+// Product names with ° × ² ™ ® — " " … etc. → 400 "Invalid character"
+// This function strips disallowed chars → replace with space → collapse multiple spaces
+function sanitizeForDoku(text: string): string {
+  if (!text) return "";
+  return String(text)
+    .replace(/[^a-zA-Z0-9.\/+,=_'@%()\- ]/g, " ")  // strip invalid chars → space
+    .replace(/\s+/g, " ")                           // collapse multiple spaces
+    .trim();
 }
 
 function defaultPaymentMethods(): string[] {
