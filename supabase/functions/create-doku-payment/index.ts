@@ -486,7 +486,10 @@ async function sendDokuRequest(
     };
   }
 
-  // ── Return detailed error to frontend ──
+  // ── Return error to frontend (NO signature_debug — security) ──
+  // ⭐ FIX v3.10 (Phase 1): Remove signature_debug from public response.
+  // Exposing client_id, signature, digest, component = credential leak risk.
+  // Internal debug info stays in server-side console.log (lines 352-361).
   return {
     success: false,
     shouldRetryWithoutMethods: false,
@@ -496,18 +499,6 @@ async function sendDokuRequest(
       error: errorMessage,
       raw: dokuResponse,
       raw_text: dokuText.slice(0, 2000),
-      signature_debug: {
-        request_id: requestId,
-        request_timestamp: requestTimestamp,
-        request_target: requestTarget,
-        client_id: clientId,
-        base_url: baseUrl,
-        digest: digest,
-        signature: signature,
-        component: component,
-        body_preview: bodyStr.slice(0, 500),
-        body_length: bodyStr.length,
-      },
       diagnosis: diagnoseError(dokuStatus, errorMessage),
     }, 400),
   };

@@ -102,11 +102,8 @@ Deno.serve(async (req) => {
   const headerTimestamp = req.headers.get("Request-Timestamp") || "";
   const headerSignature = req.headers.get("Signature") || "";
 
-  // ⭐ FIX v3.5: DOKU_SKIP_SIG_VERIFY=true bypasses signature check (for testing webhook delivery)
-  // Set via: supabase secrets set DOKU_SKIP_SIG_VERIFY=true
-  // Remove after webhook is confirmed working!
-  const skipSigVerify = Deno.env.get("DOKU_SKIP_SIG_VERIFY") === "true";
-
+  // ⭐ FIX v3.10 (Phase 1): Signature verification is ALWAYS required (fail-closed).
+  // No bypass env var. Invalid/missing signature → reject. DOKU creds must be set.
   let signatureValid = false;
   if (clientId && secretKey && headerClientId && headerRequestId && headerTimestamp && headerSignature) {
     try {
@@ -145,20 +142,17 @@ Deno.serve(async (req) => {
     });
   }
 
-  // Always return 200 to DOKU even if signature fails (so they don't retry)
-  if (!signatureValid && !skipSigVerify) {
-    console.warn("[webhook] ❌ Signature invalid — REJECTING. Set DOKU_SKIP_SIG_VERIFY=true to bypass for testing.");
+  // Always return 200 to DOKU even if signature fails (so they don't retry endlessly)
+  // ⭐ FIX v3.10 (Phase 1): No bypass path. Invalid/missing signature = REJECT (fail-closed).
+  if (!signatureValid) {
+    console.warn("[webhook] ❌ Signature invalid or missing — REJECTING (fail-closed, no bypass).");
     return new Response(JSON.stringify({ status: "ignored", reason: "signature_invalid" }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     });
   }
 
-  if (!signatureValid && skipSigVerify) {
-    console.warn("[webhook] ⚠️ DOKU_SKIP_SIG_VERIFY=true — processing WITHOUT signature verification (DEBUG MODE)");
-  }
-
-  console.log("[webhook] ✓ Signature valid:", signatureValid, "| skipSigVerify:", skipSigVerify);
+  console.log("[webhook] ✓ Signature valid — processing webhook");
 
   // ---------- Parse transaction info ----------
   // DOKU notification body structure:
@@ -206,7 +200,7 @@ Deno.serve(async (req) => {
       // 1. Find payment session by invoice_number
       const { data: paymentRow, error: lookupError } = await supabase
         .from("order_payments")
-        .select("order_id, status")
+        .select("order_id, status, amount")  // ⭐ v3.9: +amount for server-side validation
         .eq("invoice_number", invoiceNumber)
         .limit(1)
         .maybeSingle();
@@ -218,6 +212,24 @@ Deno.serve(async (req) => {
       if (paymentRow?.order_id) {
         const orderId = paymentRow.order_id;
         console.log(`[webhook] Found payment session: order_id=${orderId}, tx=${txStatus}`);
+
+        // ⭐ FIX v3.9: Server-side amount validation (ChatGPT point #8 — fraud prevention)
+        // Compare DOKU-reported amount with stored amount. Reject if mismatch.
+        const expectedAmount = Number(paymentRow?.amount || 0);
+        if (txStatus === "SUCCESS" && expectedAmount > 0 && amount !== expectedAmount) {
+          console.error(`[webhook] ❌ AMOUNT MISMATCH! DOKU=${amount}, expected=${expectedAmount} — REJECTING (possible fraud/manipulation)`);
+          // Still return 200 so DOKU doesn't retry, but DON'T mark as paid
+          return new Response(JSON.stringify({
+            status: "rejected",
+            reason: "amount_mismatch",
+            doku_amount: amount,
+            expected_amount: expectedAmount,
+          }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        console.log(`[webhook] Amount check: DOKU=${amount}, expected=${expectedAmount}, match=${amount === expectedAmount}`);
 
         // 2. Update order_payments (for frontend polling)
         const { error: updatePayErr } = await supabase
