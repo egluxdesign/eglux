@@ -2,9 +2,9 @@
 // ============================================================================
 // CartDrawer — slide-out panel dari kanan, menampilkan item keranjang.
 //
-// [v3] Switch dari Midtrans → DOKU Checkout:
-//   - Import & render CheckoutModalDoku (bukan CheckoutModalMidtrans)
-//   - CHECKOUT_INTENT_KEY di-import dari CheckoutModalDoku (exported there)
+// [v3.10] Switch kembali ke Midtrans Snap Checkout (dari DOKU):
+//   - Import & render CheckoutModalMidtrans (bukan CheckoutModalDoku)
+//   - CHECKOUT_INTENT_KEY di-import dari CheckoutModalMidtrans (exported there)
 //
 // [v3.1 FIX] updateQty + removeItem call signature:
 //   - OLD (BUGGY): updateQty(item.id, item.variantId, item.qty - 1)
@@ -18,7 +18,7 @@
 //   - Tombol "Bayar Sekarang" cek auth terlebih dahulu.
 //   - Kalau belum login → simpan intent di sessionStorage, redirect ke /admin.
 //   - Setelah login/register berhasil → useEffect deteksi intent flag + user
-//     login → auto-buka CheckoutModalDoku.
+//     login → auto-buka CheckoutModalMidtrans.
 //
 // Pemakaian:
 //   <CartDrawer isOpen={isCartOpen} onClose={() => setIsCartOpen(false)} showToast={showToast} />
@@ -28,7 +28,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useCart, rupiah } from '../../context/CartContext';
 import { useAuth } from '../../context/AuthContext';
-import CheckoutModalDoku, { CHECKOUT_INTENT_KEY } from '../ui/CheckoutModalDoku';
+import CheckoutModalMidtrans, { CHECKOUT_INTENT_KEY } from '../ui/CheckoutModalMidtrans';
 
 // ── Minimalist line icons (1-color, stroke=currentColor) ──
 const IconClose = ({ className = 'w-5 h-5' }) => (
@@ -72,7 +72,7 @@ const CartDrawer = ({ isOpen, onClose, showToast }) => {
   const navigate = useNavigate();
   const location = useLocation();
 
-  // State untuk CheckoutModalDoku (modal pembayaran DOKU)
+  // State untuk CheckoutModalMidtrans (modal pembayaran Midtrans Snap)
   const [checkoutOpen, setCheckoutOpen] = useState(false);
 
   // ── Auto-open checkout modal setelah balik dari login ──
@@ -302,8 +302,8 @@ const CartDrawer = ({ isOpen, onClose, showToast }) => {
         )}
       </aside>
 
-      {/* Checkout Modal DOKU — di-render di sini supaya auto-open bisa di-trigger langsung */}
-      <CheckoutModalDoku
+      {/* Checkout Modal Midtrans — di-render di sini supaya auto-open bisa di-trigger langsung */}
+      <CheckoutModalMidtrans
         isOpen={checkoutOpen}
         onClose={() => setCheckoutOpen(false)}
         showToast={showToast}
