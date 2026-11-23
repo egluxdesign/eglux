@@ -27,7 +27,7 @@ import { useAuth }    from '../context/AuthContext';
 import { useToast }   from '../hooks/useToast';
 import CartPanel      from '../components/ui/CartPanel';
 import CheckoutModal         from '../components/ui/CheckoutModal';
-import CheckoutModalDoku     from '../components/ui/CheckoutModalDoku';
+import CheckoutModalMidtrans     from '../components/ui/CheckoutModalMidtrans';
 import TicketModal    from '../components/ui/TicketModal';
 import Toast          from '../components/ui/Toast';
 
@@ -191,7 +191,7 @@ const CartPage = ({ children }) => {
       )}
 
       {midtransCheckoutOpen && (
-        <CheckoutModalDoku
+        <CheckoutModalMidtrans
           isOpen={midtransCheckoutOpen}
           onClose={closeMidtransCheckout}
           showToast={showToast}
@@ -209,4 +209,4 @@ const CartPage = ({ children }) => {
   );
 };
 
-export default CartPage;
+export default CartPage;  

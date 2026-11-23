@@ -258,6 +258,11 @@ serve(async (req: Request) => {
       tax_percent: taxPercent,
       tax_base: taxBase,
       tax_amount: taxAmount,
+      // ⭐ v3.2 NEW: Payment method + admin fee (dari CheckoutModalMidtrans v2.2)
+      // Frontend kirim payment_method_selected + admin_fee (sudah include VAT).
+      // create-midtrans-transaction edge function baca ini untuk gross_amount calc.
+      payment_method_selected: order.payment_method_selected || null,
+      admin_fee: Number(order.admin_fee) || 0,
     });
     if (orderError) {
       // Cleanup: hapus customer yang baru di-insert (order gagal)

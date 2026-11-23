@@ -2,16 +2,46 @@
 // ============================================================================
 // Centralized environment config + validation
 // ============================================================================
-// v3 CHANGES:
-//   - Midtrans env vars → optional (legacy, gak dipakai lagi setelah switch ke DOKU)
-//   - Add VITE_DOKU_MODE (sandbox | production)
-//   - Backward-compat: env.MIDTRANS_* tetap ada (gak break legacy files yang
-//     masih import env object, walaupun nilainya undefined sekarang)
+//
+// KENAPA FILE INI ADA?
+//   Sebelumnya, env vars di-access langsung via `import.meta.env.VITE_XXX`
+//   di banyak file (OrdersList, CheckoutModalMidtrans, ChangeCourierModal,
+//   useMidtransSnap, dst.). Akibatnya:
+//     - Gak ada satu tempat untuk lihat semua env vars yang dipakai
+//     - Gak ada validasi startup — user baru tau env var missing saat
+//       fitur tertentu gagal (mis. klik "Lanjutkan Pembayaran" → error
+//       "Midtrans client key not configured" yang mysterious)
+//     - Error message gak konsisten
+//
+//   Sekarang: satu file ini jadi single source of truth. Saat app start,
+//   validateEnv() dipanggil. Kalau ada var missing, EnvErrorPage render
+//   dengan instruksi yang jelas (var mana yang missing + cara setting).
+//
+// Cara pakai:
+//   import { env, validateEnv, getMissingEnvVars } from '../lib/env';
+//
+//   // Akses env var (semua sudah validated):
+//   env.SUPABASE_URL
+//   env.SUPABASE_ANON_KEY
+//   env.MIDTRANS_CLIENT_KEY
+//   env.MIDTRANS_IS_PRODUCTION
+//
+//   // Startup validation:
+//   const missing = getMissingEnvVars();
+//   if (missing.length > 0) {
+//     // render EnvErrorPage dengan `missing` list
+//   }
+// ⭐ v2 FIX: Hardcode MIDTRANS_IS_PRODUCTION = true buat production.
+//   Masalah sebelumnya: VITE_MIDTRANS_IS_PRODUCTION gak kebaca dari .env.local
+//   → Snap.js load dari sandbox → 404 saat checkout.
+//   Fix: hardcode production URL, bypass env var check.
+//   Kalau mau balik ke sandbox untuk testing, set VITE_MIDTRANS_FORCE_SANDBOX=true di .env.local
 // ============================================================================
 
 // ── Env var definitions ────────────────────────────────────────────────────
+// Setiap var punya: key (VITE_XXX), label (untuk display), required (bool),
+// description (untuk EnvErrorPage), dan group (untuk grouping di UI).
 const ENV_DEFINITIONS = [
-  // ── Required: Supabase ──
   {
     key: 'VITE_SUPABASE_URL',
     label: 'Supabase URL',
@@ -28,34 +58,21 @@ const ENV_DEFINITIONS = [
     description: 'Anon public key (publishable, safe untuk frontend).',
     hint: 'Dashboard → Project Settings → API → Project API Keys → anon public',
   },
-
-  // ── Optional: DOKU Checkout (active payment gateway) ──
-  // Default: 'production' kalau gak di-set. Set 'sandbox' untuk testing.
-  {
-    key: 'VITE_DOKU_MODE',
-    label: 'DOKU Mode',
-    required: false,  // ⭐ v3.1: optional — ada default value 'production'
-    group: 'DOKU (Payment)',
-    description: 'Mode DOKU Checkout: "sandbox" untuk testing, "production" untuk live. Default: production.',
-    hint: 'Boleh kosong. Set "sandbox" kalau mau testing di DOKU sandbox.',
-  },
-
-  // ── Optional: Midtrans (LEGACY — gak dipakai setelah switch ke DOKU) ──
   {
     key: 'VITE_MIDTRANS_CLIENT_KEY',
-    label: 'Midtrans Client Key (Legacy)',
-    required: false,  // ⭐ v3: optional sekarang — DOKU yang aktif
-    group: 'Midtrans (Legacy — unused)',
-    description: 'Client Key Midtrans lama. Tidak dipakai lagi setelah migrasi ke DOKU Checkout.',
-    hint: 'Boleh kosong. Aman untuk dihapus dari .env kalau sudah yakin DOKU berjalan.',
+    label: 'Midtrans Client Key',
+    required: true,
+    group: 'Midtrans (Payment)',
+    description: 'Client Key dari Midtrans (public, safe untuk frontend). Production: Mid-client-XXX.',
+    hint: 'Midtrans Dashboard → Settings → Access Keys → Client Key',
   },
   {
     key: 'VITE_MIDTRANS_IS_PRODUCTION',
-    label: 'Midtrans Production Mode (Legacy)',
+    label: 'Midtrans Production Mode',
     required: false,
-    group: 'Midtrans (Legacy — unused)',
-    description: 'Mode Midtrans lama. Tidak dipakai lagi.',
-    hint: 'Boleh kosong.',
+    group: 'Midtrans (Payment)',
+    description: 'Set "true" kalau production. Kosong/false = sandbox.',
+    hint: 'Default: true (hardcoded production buat LIVE)',
   },
 ];
 
@@ -63,13 +80,9 @@ const ENV_DEFINITIONS = [
 const rawEnv = {
   SUPABASE_URL: import.meta.env.VITE_SUPABASE_URL,
   SUPABASE_ANON_KEY: import.meta.env.VITE_SUPABASE_ANON_KEY,
-
-  // DOKU (active)
-  DOKU_MODE: (import.meta.env.VITE_DOKU_MODE || 'sandbox').toLowerCase(),  // default sandbox
-  DOKU_IS_PRODUCTION: (import.meta.env.VITE_DOKU_MODE || 'sandbox').toLowerCase() === 'production',
-
-  // Midtrans (legacy — tetap dibaca untuk backward compat, tapi gak required)
   MIDTRANS_CLIENT_KEY: import.meta.env.VITE_MIDTRANS_CLIENT_KEY,
+  // ⭐ FIX: Hardcode production = true. Bypass env var yang gak kebaca.
+  // Kalau mau sandbox testing, set VITE_MIDTRANS_FORCE_SANDBOX=true di .env.local
   MIDTRANS_IS_PRODUCTION: import.meta.env.VITE_MIDTRANS_FORCE_SANDBOX === 'true' ? false : true,
 };
 
@@ -77,25 +90,24 @@ const rawEnv = {
 export const env = Object.freeze({
   ...rawEnv,
 
-  // Derived helpers — Supabase
+  // Derived helpers
   SUPABASE_URL_VALID: typeof rawEnv.SUPABASE_URL === 'string' &&
     /^https:\/\/[a-z0-9-]+\.supabase\.(co|in)$/.test(rawEnv.SUPABASE_URL),
 
-  // Derived helpers — DOKU
-  DOKU_JS_URL: rawEnv.DOKU_IS_PRODUCTION
-    ? 'https://jokul.doku.com/jokul-checkout-js/v1/jokul-checkout-1.0.0.js'
-    : 'https://sandbox.doku.com/jokul-checkout-js/v1/jokul-checkout-1.0.0.js',
-  DOKU_MODE_LABEL: rawEnv.DOKU_IS_PRODUCTION ? 'PRODUCTION' : 'SANDBOX',
-
-  // Derived helpers — Midtrans (legacy, tetap disediakan supaya file lama gak crash)
+  // ⭐ FIX: Hardcode production Snap.js URL
   MIDTRANS_SNAP_JS_URL: rawEnv.MIDTRANS_IS_PRODUCTION
     ? 'https://app.midtrans.com/snap/snap.js'
     : 'https://app.sandbox.midtrans.com/snap/snap.js',
+
   MIDTRANS_MODE_LABEL: rawEnv.MIDTRANS_IS_PRODUCTION ? 'PRODUCTION' : 'SANDBOX',
 });
 
 // ── Validation ─────────────────────────────────────────────────────────────
 
+/**
+ * Return list of missing REQUIRED env vars.
+ * Setiap item: { key, label, description, hint, group }
+ */
 export function getMissingEnvVars() {
   return ENV_DEFINITIONS
     .filter(def => def.required)
@@ -113,6 +125,10 @@ export function getMissingEnvVars() {
     }));
 }
 
+/**
+ * Validate env vars. Return { valid: boolean, missing: [] }.
+ * Dipanggil saat app start (main.jsx). Kalau valid=false, render EnvErrorPage.
+ */
 export function validateEnv() {
   const missing = getMissingEnvVars();
   return {
@@ -121,11 +137,14 @@ export function validateEnv() {
   };
 }
 
+/**
+ * Get all env definitions (untuk display di EnvErrorPage atau debug panel).
+ */
 export function getEnvDefinitions() {
   return ENV_DEFINITIONS;
 }
 
-// ── Dev mode: log status ──────────────────────────────────────────────────
+// ── Dev mode: log warning kalau ada missing ───────────────────────────────
 if (import.meta.env.DEV) {
   const { valid, missing } = validateEnv();
   if (!valid) {
@@ -144,9 +163,6 @@ if (import.meta.env.DEV) {
     console.log('✓ EGLUX — All required env vars configured');
   }
 
-  // Log payment gateway status
-  console.log(`[DOKU] Mode: ${env.DOKU_MODE_LABEL} | JS URL: ${env.DOKU_JS_URL}`);
-  if (env.MIDTRANS_CLIENT_KEY) {
-    console.log(`[Midtrans Legacy] Mode: ${env.MIDTRANS_MODE_LABEL} (tidak dipakai lagi)`);
-  }
+  // ⭐ Log Midtrans mode
+  console.log(`[Midtrans] Mode: ${env.MIDTRANS_MODE_LABEL} | Snap.js URL: ${env.MIDTRANS_SNAP_JS_URL}`);
 }

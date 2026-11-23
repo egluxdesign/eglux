@@ -2,7 +2,34 @@
 // ============================================================================
 // useMidtransSnap — Dynamic load Midtrans Snap.js dengan client key yang benar
 // ============================================================================
-// ⭐ v3 FIX: 
+//
+// Kenapa dynamic load (bukan <script> di index.html)?
+//   1. CSP issue: Static <script> tag dengan external src + data-client-key
+//      bikin Safari CSP engine behave inconsistent. Dynamic createElement
+//      lebih reliable.
+//   2. Client key: %VITE_*% di index.html kadang gak ke-replace Vite.
+//      Dynamic load pakai import.meta.env langsung — pasti benar.
+//   3. Race condition: Snap.js load di <head> sebelum React mount →
+//      window.snap bisa undefined saat checkout. Dynamic load pada saat
+//      dibutuhkan saja.
+//   4. Production switch: Sandbox vs production URL bisa switch otomatis
+//      berdasarkan env var.
+//
+// ⭐ v2: Pakai centralized env dari src/lib/env.js (single source of truth).
+//       Error message lebih actionable — kasih instruksi cara fix, bukan
+//       "Midtrans client key not configured" yang mysterious.
+//
+// Pemakaian:
+//   const { snapReady, loadError, reload } = useMidtransSnap();
+//   if (snapReady) { window.snap.pay(token, callbacks); }
+//   else { // fallback ke redirect mode }
+//
+//   // Atau Promise-based (di event handler, tanpa hook):
+//   import { ensureSnapLoaded } from '../hooks/useMidtransSnap';
+//   await ensureSnapLoaded();
+//   window.snap.pay(token, callbacks);
+//
+// ⭐ v3 FIX:
 //   1. Hardcode production mode (bypass VITE_MIDTRANS_IS_PRODUCTION env var)
 //   2. Cleanup existing sandbox Snap.js script tag sebelum load production
 //   3. Force reload Snap.js kalau existing script tag is from wrong domain
@@ -58,6 +85,17 @@ function cleanupExistingSnapScripts() {
 }
 
 /**
+ * Cek apakah URL script tag cocok dengan domain yang diharapkan (sandbox/production).
+ */
+function isCorrectDomain(src) {
+  if (!src) return false;
+  if (src === SNAP_JS_URL) return true;
+  if (src.includes('app.midtrans.com') && SNAP_JS_URL.includes('app.midtrans.com')) return true;
+  if (src.includes('sandbox') && SNAP_JS_URL.includes('sandbox')) return true;
+  return false;
+}
+
+/**
  * Load Snap.js dynamically dengan client key yang benar.
  * Return Promise yang resolve saat snap.js siap.
  */
@@ -87,6 +125,7 @@ function loadSnapScript() {
       snapLoadFailed = true;
       snapLoadError = err;
       console.error('[useMidtransSnap] Missing VITE_MIDTRANS_CLIENT_KEY');
+      snapLoadPromise = null;
       reject(err);
       return;
     }
@@ -98,7 +137,7 @@ function loadSnapScript() {
       return;
     }
 
-    // ⭐ NEW: Cleanup existing sandbox/production Snap.js scripts kalau ada mismatch
+    // ⭐ Cleanup existing sandbox/production Snap.js scripts kalau ada mismatch
     cleanupExistingSnapScripts();
 
     // Re-check after cleanup — maybe window.snap was reset
@@ -114,19 +153,15 @@ function loadSnapScript() {
     );
 
     if (existingScript) {
-      // Verify existing script is from correct domain
       const src = existingScript.getAttribute('src') || '';
-      const isCorrectDomain = src === SNAP_JS_URL ||
-        (src.includes('app.midtrans.com') && SNAP_JS_URL.includes('app.midtrans.com')) ||
-        (src.includes('sandbox') && SNAP_JS_URL.includes('sandbox'));
 
-      if (isCorrectDomain) {
-        // Script already exists from correct domain — wait for load
+      if (isCorrectDomain(src)) {
+        // Script sudah ada dari domain yang benar — tunggu load selesai
         existingScript.addEventListener('load', () => {
           if (window.snap && typeof window.snap.pay === 'function') {
             snapLoaded = true;
             console.log(
-              `[useMidtransSnap] ✓ Snap.js loaded (${env.MIDTRANS_MODE_LABEL} mode)`
+              `[useMidtransSnap] ✓ Snap.js loaded (${env.MIDTRANS_MODE_LABEL} mode) | URL: ${SNAP_JS_URL}`
             );
             resolve();
           } else {
@@ -146,7 +181,7 @@ function loadSnapScript() {
         });
         return;
       } else {
-        // Wrong domain — remove and create new
+        // Wrong domain — remove dan lanjut create script baru
         console.warn('[useMidtransSnap] ⚠️ Existing Snap.js from wrong domain — replacing');
         existingScript.remove();
       }

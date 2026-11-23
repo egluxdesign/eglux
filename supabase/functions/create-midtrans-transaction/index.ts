@@ -1,41 +1,50 @@
 // supabase/functions/create-midtrans-transaction/index.ts
 // ============================================================================
-// Create Midtrans Transaction v3.2
+// [v2] Updated: save Midtrans Snap response fields baru ke orders table
 // ============================================================================
-// ⭐ v3.2 CHANGES (dari v3.1):
-//   - Conditional enabled_payments based on midtrans_status from payment_methods table
-//   - If midtrans_status = 'active' → Snap opens directly with selected method (no selection screen)
-//   - If midtrans_status != 'active' → Snap shows all available methods (customer picks in popup)
-//   - Best of both worlds: works now + auto-upgrades when Midtrans activates methods
 //
-// v3.0 (sebelumnya):
-//   - Accept `payment_method` param + fetch admin fee from payment_methods table
-//   - Calculate admin_fee (base + VAT if not inclusive)
-//   - Update order total with admin_fee
+// New fields saved to orders table (per sql/002_orders_alignment.sql):
+//   - midtrans_payment_type     (qris, gopay, bca_va, dst.)
+//   - midtrans_settlement_time  (timestamp, diisi saat settlement via webhook)
+//   - midtrans_fraud_status     (accept, deny, challenge — credit card only)
+//   - midtrans_payment_code     (VA number / retail code)
+//   - midtrans_pdf_url          (URL PDF instruksi pembayaran)
 //
-// v2.1 (previous): Robust handling "order_id sudah digunakan" error
-// v2.0 (previous): Save Midtrans Snap response fields baru ke orders table
+// Catatan:
+//   - Pada saat create Snap token, Midtrans BELUM return payment_type,
+//     payment_code, pdf_url, settlement_time. Field-field ini baru muncul
+//     SETELAH customer bayar — di-update via Midtrans webhook notification.
+//   - Function ini hanya menyimpan: snap_token, snap_redirect_url,
+//     midtrans_transaction_status='pending', dan transaction_id kalau ada.
+//   - Untuk populate fields baru, perlu function `midtrans-webhook` (TODO).
+//
+// Flow lengkap:
+//   1. Frontend call create-midtrans-transaction → dapat snap_token
+//   2. Customer bayar via Snap popup
+//   3. Midtrans kirim webhook notification ke /functions/v1/midtrans-webhook
+//   4. midtrans-webhook update orders: payment_type, settlement_time,
+//      fraud_status, payment_code, pdf_url, transaction_status, dll.
 // ============================================================================
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { createHash } from "node:crypto";
 import { requireAuthenticated, json, corsHeaders } from "../_shared/auth.ts";
 
-const MIDTRANS_SNAP_URL =
+// ⭐ v3.3 FIX: Use let (not const) — overridden per-request based on frontend is_production flag.
+// This eliminates sandbox/production env var mismatch between frontend + edge function.
+let MIDTRANS_SNAP_URL =
   Deno.env.get("MIDTRANS_IS_PRODUCTION") === "true"
     ? "https://app.midtrans.com/snap/v1/transactions"
     : "https://app.sandbox.midtrans.com/snap/v1/transactions";
-const MIDTRANS_BASE_URL =
+let MIDTRANS_BASE_URL =
   Deno.env.get("MIDTRANS_IS_PRODUCTION") === "true"
     ? "https://api.midtrans.com"
     : "https://api.sandbox.midtrans.com";
-const MIDTRANS_SERVER_KEY = Deno.env.get("MIDTRANS_SERVER_KEY")!;
+let MIDTRANS_SERVER_KEY = Deno.env.get("MIDTRANS_SERVER_KEY")!;
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
-const VAT_PERCENTAGE = 0.11; // 11% PPN
-
+// "08123456789" → "628123456789", "+62 812-345-67890" → "628123456789"
 function normalizePhone(raw: string | null | undefined): string | undefined {
   if (!raw) return undefined;
   let p = String(raw).replace(/\D/g, "");
@@ -52,97 +61,41 @@ function splitName(fullName: string): { first_name: string; last_name: string } 
   };
 }
 
-function basicAuthHeader(): string {
-  return `Basic ${btoa(`${MIDTRANS_SERVER_KEY}:`)}`;
-}
+// ⭐ v3.10: Map EGLUX payment_methods.method_code → Midtrans enabled_payments array
+// Source: payment_methods_setup.sql method_code values
+// Docs: https://docs.midtrans.com/reference/snap-api
+const MIDTRANS_PAYMENT_MAP: Record<string, string[]> = {
+  // Credit card
+  credit_card: ["credit_card"],
+  amex: ["credit_card"],
+  google_pay: ["credit_card"],
+  // Bank transfer / VA
+  bca_va: ["bca_va"],
+  bni_va: ["bni_va"],
+  bri_va: ["bri_va"],
+  mandiri_va: ["echannel"],      // Mandiri = echannel di Midtrans
+  permata_va: ["permata_va"],
+  cimb_va: ["cimb_va"],
+  bsi_va: ["bsi_va"],
+  sea_bank_va: ["other_va"],
+  danamon_va: ["other_va"],
+  // E-wallet
+  gopay: ["gopay"],
+  shopeepay: ["shopeepay"],
+  ovo: ["ovo"],
+  dana: ["dana"],
+  // QRIS
+  qris: ["qris"],
+  // Retail / Convenience store
+  alfamart: ["cstore"],
+  // Cardless credit
+  akulaku: ["akulaku"],
+  kredivo: ["kredivo"],
+};
 
-// ============================================================================
-// ⭐ v3.0 NEW: Calculate admin fee from payment_methods table
-// ============================================================================
-function calculateAdminFee(
-  method: any,
-  baseAmount: number // subtotal + shipping_cost + tax_amount (pre-fee total)
-): { adminFee: number; baseFee: number; vatAmount: number } {
-  let baseFee = 0;
-
-  if (method.fee_type === "percentage") {
-    baseFee = Math.floor(baseAmount * Number(method.fee_percentage));
-  } else if (method.fee_type === "fixed") {
-    baseFee = Number(method.fee_fixed);
-  } else if (method.fee_type === "mixed") {
-    baseFee = Math.floor(baseAmount * Number(method.fee_percentage)) + Number(method.fee_fixed);
-  }
-
-  // Apply min amount
-  if (method.fee_min_amount && baseFee < Number(method.fee_min_amount)) {
-    baseFee = Number(method.fee_min_amount);
-  }
-  // Apply max amount (optional)
-  if (method.fee_max_amount && baseFee > Number(method.fee_max_amount)) {
-    baseFee = Number(method.fee_max_amount);
-  }
-
-  // Add VAT if fee is NOT VAT-inclusive
-  let vatAmount = 0;
-  let adminFee = baseFee;
-  if (!method.fee_vat_inclusive) {
-    vatAmount = Math.floor(baseFee * VAT_PERCENTAGE);
-    adminFee = baseFee + vatAmount;
-  }
-
-  return { adminFee, baseFee, vatAmount };
-}
-
-// ============================================================================
-// Status API helpers (from v2.1)
-// ============================================================================
-async function getMidtransStatus(orderId: string): Promise<{ transaction_status: string | null; raw: unknown } | null> {
-  try {
-    const resp = await fetch(`${MIDTRANS_BASE_URL}/v2/${orderId}/status`, {
-      method: "GET",
-      headers: { Authorization: basicAuthHeader(), Accept: "application/json" },
-    });
-    const data = await resp.json();
-    if (!resp.ok) return { transaction_status: null, raw: data };
-    return { transaction_status: data.transaction_status || null, raw: data };
-  } catch (err) {
-    return null;
-  }
-}
-
-async function cancelMidtransTransaction(orderId: string): Promise<{ success: boolean; status_code: number; message: string; raw_response: unknown }> {
-  try {
-    const resp = await fetch(`${MIDTRANS_BASE_URL}/v2/${orderId}/cancel`, {
-      method: "POST",
-      headers: { Authorization: basicAuthHeader(), Accept: "application/json", "Content-Type": "application/json" },
-    });
-    const data = await resp.json();
-    return { success: resp.ok, status_code: resp.status, message: data.status_message || `HTTP ${resp.status}`, raw_response: data };
-  } catch (err) {
-    return { success: false, status_code: 0, message: `Network error: ${err?.message}`, raw_response: null };
-  }
-}
-
-async function cleanupExistingTransaction(orderId: string): Promise<{ can_proceed: boolean; error?: string }> {
-  const statusResult = await getMidtransStatus(orderId);
-  if (!statusResult) return { can_proceed: true };
-
-  const status = statusResult.transaction_status;
-  if (status === null) return { can_proceed: true };
-
-  if (status === "settlement" || status === "capture") {
-    return { can_proceed: false, error: "Pesanan sudah dibayar (Midtrans confirmed)." };
-  }
-
-  if (status === "pending") {
-    const cancelResult = await cancelMidtransTransaction(orderId);
-    if (cancelResult.success) {
-      return { can_proceed: true };
-    }
-    return { can_proceed: true }; // Proceed anyway
-  }
-
-  return { can_proceed: true }; // deny/expire/cancel → safe to proceed
+function mapToMidtransEnabledPayments(methodCode: string): string[] | undefined {
+  if (!methodCode) return undefined;
+  return MIDTRANS_PAYMENT_MAP[methodCode] || undefined;
 }
 
 serve(async (req: Request) => {
@@ -150,17 +103,46 @@ serve(async (req: Request) => {
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
 
   try {
+    // ── AUTH: Cukup login (any role). Customer yang checkout butuh akses ini. ──
+    // Admin/Pro/Verified semua boleh, asal sudah login.
+    // Optional: bisa tambah verify ownership order_id untuk hardening.
     const authResult = await requireAuthenticated(req);
-    if (!authResult.success) return authResult.response!;
+    if (!authResult.success) {
+      return authResult.response!;
+    }
 
-    const { order_id, payment_method } = await req.json();
+    const { order_id, payment_method, is_production } = await req.json();
     if (!order_id) return json({ error: "order_id is required" }, 400);
+
+    // ⭐ v3.3 FIX: Override Midtrans env based on frontend is_production flag.
+    // Frontend knows its own Snap.js environment — send it here so edge function
+    // creates token in the SAME environment. Eliminates "token not found" mismatch.
+    if (typeof is_production === "boolean") {
+      MIDTRANS_SNAP_URL = is_production
+        ? "https://app.midtrans.com/snap/v1/transactions"
+        : "https://app.sandbox.midtrans.com/snap/v1/transactions";
+      MIDTRANS_BASE_URL = is_production
+        ? "https://api.midtrans.com"
+        : "https://api.sandbox.midtrans.com";
+      // Sandbox: use MIDTRANS_SERVER_KEY_SANDBOX if available, else fallback
+      const sandboxKey = Deno.env.get("MIDTRANS_SERVER_KEY_SANDBOX");
+      MIDTRANS_SERVER_KEY = is_production
+        ? Deno.env.get("MIDTRANS_SERVER_KEY")!
+        : (sandboxKey || Deno.env.get("MIDTRANS_SERVER_KEY")!);
+      console.log(`[create-midtrans-transaction] Environment: ${is_production ? "PRODUCTION" : "SANDBOX"} | Snap URL: ${MIDTRANS_SNAP_URL}`);
+    }
+
+    // ⭐ v3.10: payment_method (optional) → restrict Midtrans Snap to selected method only
+    // Matches payment_methods.method_code (e.g. "qris", "gopay", "bca_va", "credit_card")
+    const enabledPayments = mapToMidtransEnabledPayments(payment_method);
+    if (payment_method && !enabledPayments) {
+      console.warn(`[create-midtrans-transaction] Unknown payment_method "${payment_method}" — showing all methods`);
+    }
     if (!MIDTRANS_SERVER_KEY) return json({ error: "MIDTRANS_SERVER_KEY not set" }, 500);
-    if (!payment_method) return json({ error: "payment_method is required (e.g., 'gopay', 'bca_va', 'credit_card')" }, 400);
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-    // 1. Fetch order + customer + items
+    // 1. Fetch order + nested customer & items
     const { data: order, error: oe } = await supabase
       .from("orders")
       .select(`
@@ -170,6 +152,7 @@ serve(async (req: Request) => {
         payment_status, snap_token, midtrans_transaction_id,
         voucher_code, voucher_discount,
         tax_percent, tax_base, tax_amount,
+        admin_fee, payment_method_selected,
         customer:customers(name, phone, email),
         items:order_items(product_name_snapshot, variant_name_snapshot, unit_price_snapshot, quantity)
       `)
@@ -178,79 +161,184 @@ serve(async (req: Request) => {
 
     if (oe || !order) return json({ error: "Order not found", details: oe?.message }, 404);
 
+    // ⭐ ANTI-DOUBLE-PAYMENT CHECK: Cek status pembayaran order di DB
+    // Kalau payment_status = 'paid' → reject (pesanan sudah dibayar, gak perlu token baru)
+    // Kalau payment_status = 'unpaid' dan ada snap_token existing → cek Midtrans status:
+    //   - settlement/capture → reject (sudah dibayar, webhook mungkin belum update DB)
+    //   - pending → cancel dulu, lalu mint token baru (supaya user bisa pilih metode lain)
+    //   - deny/expire/cancel/failure → mint token baru
     if (order.payment_status === "paid") {
-      return json({ error: "Pesanan sudah dibayar." }, 400);
+      return json({
+        error: "Pesanan sudah dibayar. Tidak perlu membuat transaksi baru.",
+        order_id,
+        payment_status: order.payment_status,
+      }, 400);
     }
 
-    // ⭐ v3.0: Cleanup existing transaction
-    const cleanupResult = await cleanupExistingTransaction(order_id);
-    if (!cleanupResult.can_proceed) {
-      return json({ error: cleanupResult.error }, 400);
+    // Cek status di Midtrans kalau ada transaction existing
+    const existingSnapToken = (order as any).snap_token;
+    const existingTransactionId = (order as any).midtrans_transaction_id;
+    if (existingTransactionId || existingSnapToken) {
+      try {
+        const auth = btoa(`${MIDTRANS_SERVER_KEY}:`);
+        const statusResp = await fetch(`${MIDTRANS_BASE_URL}/v2/${order_id}/status`, {
+          method: "GET",
+          headers: { Authorization: `Basic ${auth}`, Accept: "application/json" },
+        });
+        if (statusResp.ok) {
+          const statusData = await statusResp.json();
+          const midtransStatus = statusData.transaction_status;
+          console.log("[create-midtrans-transaction] Midtrans existing status:", midtransStatus);
+
+          if (midtransStatus === "settlement" || midtransStatus === "capture") {
+            // Sudah dibayar di Midtrans tapi DB belum update → reject
+            return json({
+              error: "Pesanan sudah dibayar (Midtrans confirmed). Tunggu beberapa saat hingga status terupdate.",
+              order_id,
+              midtrans_status: midtransStatus,
+            }, 400);
+          }
+
+          if (midtransStatus === "pending") {
+            // Cancel dulu transaksi pending, supaya bisa mint token baru
+            console.log("[create-midtrans-transaction] Canceling pending transaction...");
+            try {
+              const cancelResp = await fetch(`${MIDTRANS_BASE_URL}/v2/${order_id}/cancel`, {
+                method: "POST",
+                headers: { Authorization: `Basic ${auth}`, Accept: "application/json" },
+              });
+              console.log("[create-midtrans-transaction] Cancel result:", cancelResp.status);
+            } catch (cancelErr) {
+              console.warn("[create-midtrans-transaction] Cancel failed (continue anyway):", cancelErr?.message);
+            }
+          }
+        }
+      } catch (statusErr) {
+        console.warn("[create-midtrans-transaction] Status check failed (continue anyway):", statusErr?.message);
+      }
     }
 
-    // ⭐ v3.0: Fetch payment method fee structure from DB
-    const { data: method, error: methodErr } = await supabase
-      .from("payment_methods")
-      .select("*")
-      .eq("method_code", payment_method)
-      .eq("is_active", true)
-      .maybeSingle();
-
-    if (methodErr || !method) {
-      return json({ error: `Payment method "${payment_method}" not found or inactive` }, 400);
-    }
-
-    // ⭐ v3.0: Calculate admin fee
-    // Base for percentage = subtotal + shipping_cost + tax_amount (pre-fee total)
-    const baseForPercentage = Number(order.subtotal) + Number(order.shipping_cost) + Number(order.tax_amount || 0);
-    const { adminFee, baseFee, vatAmount } = calculateAdminFee(method, baseForPercentage);
-
-    console.log("[midtrans] Payment method:", payment_method, "Admin fee:", adminFee, "(base:", baseFee, "+ VAT:", vatAmount, ")");
-
-    // 2. Build item_details
+    // 2. Build item_details (Midtrans requires id, name, price, quantity per item)
     const items = (order.items || []) as any[];
-    const item_details = items.map((it, i) => ({
-      id: `ITEM-${i + 1}`,
-      name: `${it.product_name_snapshot}${it.variant_name_snapshot ? " (" + it.variant_name_snapshot + ")" : ""}`.slice(0, 50),
-      price: Math.round(Number(it.unit_price_snapshot) || 0),
-      quantity: Math.max(1, Number(it.quantity) || 1),
-    }));
+    const item_details = items.map((it, i) => {
+      const name = `${it.product_name_snapshot}${it.variant_name_snapshot ? " (" + it.variant_name_snapshot + ")" : ""}`;
+      return {
+        id: `ITEM-${i + 1}`,
+        name: name.slice(0, 50),
+        price: Math.round(Number(it.unit_price_snapshot) || 0),
+        quantity: Math.max(1, Number(it.quantity) || 1),
+      };
+    });
 
-    // Shipping line item
+    // Shipping as a separate line item (so gross_amount = subtotal + shipping)
     const shippingCost = Math.round(Number(order.shipping_cost) || 0);
     if (shippingCost > 0) {
-      item_details.push({ id: "SHIPPING", name: "Ongkir", price: shippingCost, quantity: 1 });
-    }
-
-    // Tax line item
-    const taxAmount = Math.round(Number(order.tax_amount) || 0);
-    if (taxAmount > 0) {
-      const taxPercent = Number(order.tax_percent) || 3;
-      item_details.push({ id: "TAX", name: `Biaya Admin & Tax (${taxPercent}%)`.slice(0, 50), price: taxAmount, quantity: 1 });
-    }
-
-    // ⭐ v3.0: Add ADMIN_FEE line item
-    if (adminFee > 0) {
       item_details.push({
-        id: "ADMIN_FEE",
-        name: `Biaya Admin ${method.method_name}`.slice(0, 50),
+        id: "SHIPPING",
+        name: `Ongkir ${order.courier_code || ""} ${order.courier_service || ""}`.trim().slice(0, 50),
+        price: shippingCost,
+        quantity: 1,
+      });
+    }
+
+    // ⭐ Voucher discount as a NEGATIVE line item (so gross_amount = subtotal + shipping - voucher)
+    // Midtrans support negative price di item_details untuk discount.
+    const voucherDiscount = Math.round(Number((order as any).voucher_discount) || 0);
+    if (voucherDiscount > 0) {
+      item_details.push({
+        id: "VOUCHER",
+        name: `Voucher ${(order as any).voucher_code || ""}`.trim().slice(0, 50),
+        price: -voucherDiscount, // ⭐ NEGATIVE price untuk discount
+        quantity: 1,
+      });
+    }
+
+    // ⭐ Tax / Biaya Admin as a positive line item (so gross_amount includes tax)
+    // Midtrans item_details gak boleh kosong dan gak boleh nama kosong.
+    // Tax dihitung dari base price (original_unit_price × qty) × tax_percent%.
+    const taxAmount = Math.round(Number((order as any).tax_amount) || 0);
+    if (taxAmount > 0) {
+      const taxPercent = Number((order as any).tax_percent) || 3;
+      item_details.push({
+        id: "TAX",
+        name: `Biaya Admin & Tax (${taxPercent}%)`.slice(0, 50),
+        price: taxAmount,
+        quantity: 1,
+      });
+    }
+
+    // ⭐ Payment method admin fee (v2.2 CheckoutModalMidtrans adds this to total_amount)
+    // Frontend saves admin_fee separately from tax (e.g. QRIS 0.7%, GoPay 2%, VA Rp 4.000).
+    // Kalau gak di-include di item_details, gross_amount < total_amount → mismatch error.
+    const adminFee = Math.round(Number((order as any).admin_fee) || 0);
+    if (adminFee > 0) {
+      const methodName = String((order as any).payment_method_selected || "payment").slice(0, 30);
+      item_details.push({
+        id: "ADMINFEE",
+        name: `Biaya Admin ${methodName}`.slice(0, 50),
         price: adminFee,
         quantity: 1,
       });
     }
 
-    // 3. Calculate gross_amount = sum of all item_details
+    // 3. Sanity check: gross_amount MUST equal order.total_amount
+    // ⚠️ Toleransi mismatch sampai Rp 100 untuk handle rounding error dari
+    // update-order-courier (subtotal + shipping_cost baru vs total_amount lama).
+    // Kalau mismatch > Rp 100, return 400 dengan debug info.
     const gross_amount = item_details.reduce((s, i) => s + i.price * i.quantity, 0);
     const expected_total = Math.round(Number(order.total_amount) || 0);
+    const mismatch = Math.abs(gross_amount - expected_total);
 
-    // ⭐ v3.0: gross_amount includes admin_fee, so it should be > expected_total
-    const mismatch = Math.abs(gross_amount - (expected_total + adminFee));
+    console.log("[midtrans] total check", {
+      gross_amount,
+      expected_total,
+      mismatch,
+      subtotal: order.subtotal,
+      shipping_cost: order.shipping_cost,
+      tax_amount: (order as any).tax_amount,
+      admin_fee: (order as any).admin_fee,
+      payment_method_selected: (order as any).payment_method_selected,
+      voucher_discount: (order as any).voucher_discount,
+      total_amount: order.total_amount,
+      courier_rate: order.courier_rate,
+    });
+
     if (mismatch > 100) {
-      // Auto-fix: update order total with new gross_amount (includes admin fee)
-      console.log("[midtrans] Auto-fixing total_amount:", expected_total, "→", gross_amount, "(includes admin_fee:", adminFee, ")");
+      console.error("[midtrans] total mismatch > 100", {
+        gross_amount,
+        expected_total,
+        mismatch,
+      });
+      return json(
+        {
+          error: `Total mismatch (selisih Rp ${mismatch}). order.total_amount=${expected_total}, computed=${gross_amount}. Coba ubah kurir ulang via "Ubah Kurir" di rincian pesanan.`,
+          debug: {
+            gross_amount,
+            expected_total,
+            mismatch,
+            order_total: order.total_amount,
+            subtotal: order.subtotal,
+            shipping_cost: order.shipping_cost,
+            tax_amount: (order as any).tax_amount,
+            voucher_discount: (order as any).voucher_discount,
+            courier_rate: order.courier_rate,
+          },
+        },
+        400
+      );
     }
 
-    // 4. customer_details
+    // Kalau mismatch kecil (<= Rp 100), pakai gross_amount yang dihitung dari item_details
+    // (lebih akurat) supaya Midtrans accept. Auto-fix order.total_amount juga.
+    if (mismatch > 0) {
+      console.warn(`[midtrans] Small mismatch (Rp ${mismatch}), auto-fixing order.total_amount to ${gross_amount}`);
+      await supabase
+        .from("orders")
+        .update({ total_amount: gross_amount })
+        .eq("id", order_id);
+    }
+
+    // 4. customer_details + billing/shipping address (Midtrans spec)
     const customer = (order.customer || {}) as any;
     const phone = normalizePhone(customer.phone);
     const { first_name, last_name } = splitName(customer.name);
@@ -266,74 +354,96 @@ serve(async (req: Request) => {
       country_code: "IDN",
     };
 
-    // 5. Build Midtrans Snap payload
-    const finishRedirectUrl = Deno.env.get("STOREFRONT_URL")
-      ? `${Deno.env.get("STOREFRONT_URL")}/orders`
-      : undefined;
-
-    // ⭐ v3.2: Conditional enabled_payments — only restrict if method is confirmed Active in Midtrans
-    const isMethodActiveInMidtrans = method?.midtrans_status === 'active';
-    console.log("[midtrans] Payment method:", payment_method, "midtrans_status:", method?.midtrans_status, "restrict:", isMethodActiveInMidtrans);
+    // ⭐ Determine finish_redirect_url dari request origin
+    // Setelah user bayar di Midtrans Snap page (redirect mode), mereka akan
+    // di-redirect balik ke URL ini dengan query params: ?order_id=xxx&transaction_status=xxx
+    // Frontend (OrdersList) parse query params untuk show toast + realtime update status.
+    //
+    // Cara dapet origin: dari Origin header (browser set saat fetch cross-origin),
+    // fallback ke Referer header, fallback ke hardcoded production URL.
+    const requestOrigin =
+      req.headers.get("origin") ||
+      (req.headers.get("referer")
+        ? new URL(req.headers.get("referer") as string).origin
+        : null) ||
+      "https://eglux.vercel.app";
+    const finishRedirectUrl = `${requestOrigin}/orders`;
+    console.log("[create-midtrans-transaction] finish_redirect_url:", finishRedirectUrl);
 
     const payload = {
       transaction_details: { order_id, gross_amount },
-      item_details,
       customer_details: {
-        ...addressBlock,
+        first_name,
+        last_name,
+        email: customer.email || undefined,
+        phone,
         billing_address: addressBlock,
         shipping_address: addressBlock,
       },
-      // ⭐ v3.2: Only restrict if method is confirmed 'active' in Midtrans dashboard
-      // If active → Snap opens directly with selected method (no selection screen)
-      // If not active → Snap shows all available methods (customer picks in popup)
-      enabled_payments: isMethodActiveInMidtrans ? [payment_method] : undefined,
+      item_details,
+      // ⭐ v3.10: Restrict Snap popup to the payment method customer selected.
+      // Frontend (CheckoutModalMidtrans_FULL_v3) sends payment_method = method_code
+      // from payment_methods table. Map to Midtrans enabled_payments array.
+      // If method unknown or not provided → show all methods (backward compatible).
+      ...(enabledPayments ? { enabled_payments: enabledPayments } : {}),
+      custom_field1: order.courier_code ? `${order.courier_code}/${order.courier_service}` : null,
+      custom_field2: order.shipping_postal_code || null,
+      // ⭐ Redirect mode: setelah payment, user di-redirect balik ke /orders
+      // (Popup mode gak pakai field ini, tapi set tetap supaya konsisten)
       finish_redirect_url: finishRedirectUrl,
     };
 
-    // ⭐ v3.0: Update orders table dengan payment_method_selected + admin_fee + new total
-    await supabase.from("orders").update({
-      payment_method_selected: payment_method,
-      admin_fee: adminFee,
-      admin_fee_type: method.fee_type,
-      admin_fee_percentage: method.fee_percentage,
-      admin_fee_fixed: method.fee_fixed,
-      admin_fee_vat_inclusive: method.fee_vat_inclusive,
-      admin_fee_vat_amount: vatAmount,
-      total_amount: gross_amount, // Updated total includes admin_fee
-    }).eq("id", order_id);
-
-    // 6. POST to Midtrans Snap
+    // 5. POST to Midtrans Snap
+    const auth = btoa(`${MIDTRANS_SERVER_KEY}:`);
     const r = await fetch(MIDTRANS_SNAP_URL, {
       method: "POST",
-      headers: { Authorization: basicAuthHeader(), "Content-Type": "application/json", Accept: "application/json" },
+      headers: {
+        Authorization: `Basic ${auth}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
       body: JSON.stringify(payload),
     });
     const snap = await r.json();
 
     if (!r.ok || !snap.token) {
       console.error("[midtrans] snap API failed", { status: r.status, body: snap });
-      return json({ error: snap.error_messages?.[0] || "Midtrans Snap API error", raw: snap }, r.status || 502);
+      return json(
+        {
+          error: snap.error_messages?.[0] || "Midtrans Snap API error",
+          raw: snap,
+        },
+        r.status || 502
+      );
     }
 
-    // 7. Persist snap_token
-    await supabase.from("orders").update({
-      snap_token: snap.token,
-      snap_redirect_url: snap.redirect_url,
-      midtrans_transaction_status: "pending",
-    }).eq("id", order_id);
+    // 6. Persist snap_token + redirect_url + initial midtrans fields
+    // Catatan: Pada tahap ini (sebelum customer bayar), Midtrans Snap response
+    // hanya return: token, redirect_url. Field seperti payment_type, payment_code,
+    // settlement_time, pdf_url BELUM ada — diisi via webhook nanti.
+    const { error: updateError } = await supabase
+      .from("orders")
+      .update({
+        snap_token: snap.token,
+        snap_redirect_url: snap.redirect_url,
+        midtrans_transaction_status: "pending",
+        midtrans_payment_type: null,    // akan diisi via webhook
+        midtrans_settlement_time: null, // akan diisi via webhook
+        midtrans_fraud_status: null,    // akan diisi via webhook
+        midtrans_payment_code: null,    // akan diisi via webhook
+        midtrans_pdf_url: null,         // akan diisi via webhook
+      })
+      .eq("id", order_id);
 
-    console.log(`[midtrans] ✓ Snap token created for order ${order_id.slice(0, 8)}, method: ${payment_method}, admin_fee: ${adminFee}, total: ${gross_amount}`);
+    if (updateError) {
+      console.error("[midtrans] failed to update order with snap token:", updateError);
+      // Jangan fail request — token sudah dapat, customer masih bisa bayar
+    }
 
-    return json({
-      success: true,
-      token: snap.token,
-      redirect_url: snap.redirect_url,
-      payment_method: payment_method,
-      admin_fee: adminFee,
-      total_amount: gross_amount,
-    });
-  } catch (e: any) {
-    console.error("[midtrans] Unhandled exception:", e?.message, e?.stack);
+    // 7. Return token for window.snap.pay()
+    return json({ success: true, token: snap.token, redirect_url: snap.redirect_url });
+  } catch (e) {
+    console.error("[create-midtrans-transaction]", e);
     return json({ error: e.message }, 500);
   }
 });
