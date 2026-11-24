@@ -81,9 +81,10 @@ const rawEnv = {
   SUPABASE_URL: import.meta.env.VITE_SUPABASE_URL,
   SUPABASE_ANON_KEY: import.meta.env.VITE_SUPABASE_ANON_KEY,
   MIDTRANS_CLIENT_KEY: import.meta.env.VITE_MIDTRANS_CLIENT_KEY,
-  // ⭐ FIX: Hardcode production = true. Bypass env var yang gak kebaca.
-  // Kalau mau sandbox testing, set VITE_MIDTRANS_FORCE_SANDBOX=true di .env.local
-  MIDTRANS_IS_PRODUCTION: import.meta.env.VITE_MIDTRANS_FORCE_SANDBOX === 'true' ? false : true,
+  // ⭐ v3.4 SANDBOX: Hardcode production = false untuk testing sandbox.
+  // Snap.js akan load dari app.sandbox.midtrans.com (match dengan edge function sandbox).
+  // Kalau mau production: ganti ke — import.meta.env.VITE_MIDTRANS_FORCE_SANDBOX === 'true' ? false : true
+  MIDTRANS_IS_PRODUCTION: false,
 };
 
 // ── Public env object (frozen, type-safe) ──────────────────────────────────

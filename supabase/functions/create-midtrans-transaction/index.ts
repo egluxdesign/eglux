@@ -126,10 +126,25 @@ serve(async (req: Request) => {
         : "https://api.sandbox.midtrans.com";
       // Sandbox: use MIDTRANS_SERVER_KEY_SANDBOX if available, else fallback
       const sandboxKey = Deno.env.get("MIDTRANS_SERVER_KEY_SANDBOX");
-      MIDTRANS_SERVER_KEY = is_production
-        ? Deno.env.get("MIDTRANS_SERVER_KEY")!
-        : (sandboxKey || Deno.env.get("MIDTRANS_SERVER_KEY")!);
+      const prodKey = Deno.env.get("MIDTRANS_SERVER_KEY");
+      if (is_production) {
+        MIDTRANS_SERVER_KEY = prodKey!;
+      } else {
+        MIDTRANS_SERVER_KEY = (sandboxKey || prodKey)!;
+      }
+      // ⭐ v3.4 DIAGNOSTIC: Log which key is being used (masked) to debug 401 Unauthorized
+      const keySource = is_production
+        ? "MIDTRANS_SERVER_KEY (production)"
+        : (sandboxKey ? "MIDTRANS_SERVER_KEY_SANDBOX" : "MIDTRANS_SERVER_KEY (fallback — SANDBOX key not set!)");
+      const keyPrefix = MIDTRANS_SERVER_KEY ? MIDTRANS_SERVER_KEY.substring(0, 12) : "(empty)";
+      const keyLen = MIDTRANS_SERVER_KEY ? MIDTRANS_SERVER_KEY.length : 0;
+      const expectedPrefix = is_production ? "Mid-server-" : "SB-Mid-server";
+      const prefixMatch = MIDTRANS_SERVER_KEY?.startsWith(expectedPrefix) ?? false;
       console.log(`[create-midtrans-transaction] Environment: ${is_production ? "PRODUCTION" : "SANDBOX"} | Snap URL: ${MIDTRANS_SNAP_URL}`);
+      console.log(`[create-midtrans-transaction] Server Key: source=${keySource} | prefix="${keyPrefix}..." | length=${keyLen} | expected="${expectedPrefix}" | match=${prefixMatch}`);
+      if (!prefixMatch && MIDTRANS_SERVER_KEY) {
+        console.warn(`[create-midtrans-transaction] ⚠️ Server key prefix mismatch! Expected "${expectedPrefix}" but got "${keyPrefix}". This will cause 401 Unauthorized.`);
+      }
     }
 
     // ⭐ v3.10: payment_method (optional) → restrict Midtrans Snap to selected method only

@@ -307,6 +307,7 @@ const { data, error } = await supabase
 .from('payment_methods')
 .select('*')
 .eq('is_active', true)
+.eq('midtrans_status', 'select')
 .order('display_order', { ascending: true });
 if (error) {
 console.error('Failed to load payment methods:', error);
@@ -982,9 +983,11 @@ return;
 // ⭐ STEP 2: Mint fresh Snap token via edge function
 // ⭐ v3.3 FIX: Send is_production flag so edge function creates token in
 // the SAME environment as Snap.js (eliminates "token not found" mismatch)
+// ⭐ v3.4 SANDBOX: Hardcode is_production=false untuk testing sandbox.
+// Kalau mau production, ganti ke: import.meta.env.VITE_MIDTRANS_FORCE_SANDBOX !== 'true'
 const { data, error: fnError } = await supabase.functions.invoke(
 'create-midtrans-transaction',
-{ body: { order_id: currentOrderId, payment_method: selectedPaymentMethod, is_production: import.meta.env.VITE_MIDTRANS_FORCE_SANDBOX !== 'true' } }
+{ body: { order_id: currentOrderId, payment_method: selectedPaymentMethod, is_production: false } }
 );
 
 if (fnError || !data?.token) {
@@ -1813,7 +1816,7 @@ Metode Pembayaran
 </div>
 ) : (
 <div className="grid grid-cols-2 gap-2 max-h-[160px] overflow-y-auto">
-{paymentMethods.filter(m => m.is_active).map((method) => {
+{paymentMethods.filter(m => m.is_active && m.midtrans_status === 'select').map((method) => {
 const isSelected = selectedPaymentMethod === method.method_code;
 const baseAmount = totalPrice + shippingCostForDisplay + taxAmountForDisplay;
 const fee = calculateAdminFee(method, baseAmount);
