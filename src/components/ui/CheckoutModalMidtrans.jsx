@@ -1,3 +1,6 @@
+
+File
+CheckoutModalMidtrans.jsx
 // src/components/ui/CheckoutModalMidtrans.jsx
 // ============================================================================
 // EGLUX Checkout — Midtrans Snap (payment) + Biteship (shipping aggregator)
@@ -307,6 +310,7 @@ const { data, error } = await supabase
 .from('payment_methods')
 .select('*')
 .eq('is_active', true)
+.eq('midtrans_status', 'select')
 .order('display_order', { ascending: true });
 if (error) {
 console.error('Failed to load payment methods:', error);
@@ -982,9 +986,11 @@ return;
 // ⭐ STEP 2: Mint fresh Snap token via edge function
 // ⭐ v3.3 FIX: Send is_production flag so edge function creates token in
 // the SAME environment as Snap.js (eliminates "token not found" mismatch)
+// ⭐ v3.4 SANDBOX: Hardcode is_production=false untuk testing sandbox.
+// Kalau mau production, ganti ke: import.meta.env.VITE_MIDTRANS_FORCE_SANDBOX !== 'true'
 const { data, error: fnError } = await supabase.functions.invoke(
 'create-midtrans-transaction',
-{ body: { order_id: currentOrderId, payment_method: selectedPaymentMethod, is_production: 'false' } }
+{ body: { order_id: currentOrderId, payment_method: selectedPaymentMethod, is_production: false } }
 );
 
 if (fnError || !data?.token) {
@@ -1051,36 +1057,38 @@ pollingTimer = null;
 }
 };
 
+      // ⭐ STEP 4: Display Snap payment popup (DEFAULT mode per Midtrans docs).
+      // window.snap.pay(token, {callbacks}) is the standard integration.
+      // CSP console warnings from Midtrans iframe are non-fatal — popup still renders.
+      // If popup is blank: the selected payment method is likely not activated in
+      // Midtrans sandbox dashboard (midtrans_status="in_progress"). Fix: activate
+      // the method in Midtrans sandbox, OR test with an already-activated method.
       window.snap.pay(data.token, {
-        // ⭐ FIX: Auto-select payment method yang user pilih di checkout
-        selectedPaymentType: selectedPaymentMethod, // e.g., "qris", "credit_card", "bank_transfer", "gopay"
-onSuccess: (result) => {
-console.log('[Midtrans] Payment success (Snap callback):', result.transaction_id);
-document.body.style.overflow = '';
-stopPaymentPolling();  // Stop polling — payment confirmed
-showToast('✅ Pembayaran berhasil! Terima kasih.', 'success');
-window.dispatchEvent(new CustomEvent('eglux:payment-success', { detail: { orderId: data.order_id } }));
-},
-onPending: () => {
-document.body.style.overflow = '';
-showToast('Menunggu pembayaran. Cek WA/email untuk instruksi.', 'info');
-// ⭐ START polling — detect payment success untuk VA/QRIS yang telat
-startPaymentPolling(data.order_id);
-},
-onError: (result) => {
-console.error('[Midtrans] Payment error:', result);
-document.body.style.overflow = '';
-stopPaymentPolling();
-showToast('Pembayaran gagal. Bayar ulang via menu Pesanan Saya.', 'error');
-},
-onClose: () => {
-document.body.style.overflow = '';
-// ⭐ User close Snap popup tanpa bayar — keep polling jika ada pending payment
-// (user mungkin bayar via VA/QRIS di app lain)
-// Polling akan auto-stop kalau payment confirmed atau timeout 3 menit
-showToast('Order tersimpan. Bayar nanti via menu Pesanan Saya.', 'warning');
-},
-});
+        // ⭐ Auto-select payment method yang user pilih di checkout
+        selectedPaymentType: selectedPaymentMethod,
+        onSuccess: (result) => {
+          console.log('[Midtrans] Payment success:', result.transaction_id);
+          document.body.style.overflow = '';
+          stopPaymentPolling();
+          showToast('✅ Pembayaran berhasil! Terima kasih.', 'success');
+          window.dispatchEvent(new CustomEvent('eglux:payment-success', { detail: { orderId: data.order_id } }));
+        },
+        onPending: () => {
+          document.body.style.overflow = '';
+          showToast('Menunggu pembayaran. Cek WA/email untuk instruksi.', 'info');
+          startPaymentPolling(data.order_id);
+        },
+        onError: (result) => {
+          console.error('[Midtrans] Payment error:', result);
+          document.body.style.overflow = '';
+          stopPaymentPolling();
+          showToast('Pembayaran gagal. Bayar ulang via menu Pesanan Saya.', 'error');
+        },
+        onClose: () => {
+          document.body.style.overflow = '';
+          showToast('Order tersimpan. Bayar nanti via menu Pesanan Saya.', 'warning');
+        },
+      });
 } catch (err) {
 console.error('[Midtrans Checkout] Gagal:', err);
 showToast(`Gagal: ${err.message}`);
@@ -1813,7 +1821,7 @@ Metode Pembayaran
 </div>
 ) : (
 <div className="grid grid-cols-2 gap-2 max-h-[160px] overflow-y-auto">
-{paymentMethods.filter(m => m.is_active).map((method) => {
+{paymentMethods.filter(m => m.is_active && m.midtrans_status === 'select').map((method) => {
 const isSelected = selectedPaymentMethod === method.method_code;
 const baseAmount = totalPrice + shippingCostForDisplay + taxAmountForDisplay;
 const fee = calculateAdminFee(method, baseAmount);

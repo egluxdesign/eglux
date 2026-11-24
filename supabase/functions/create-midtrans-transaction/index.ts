@@ -117,7 +117,16 @@ serve(async (req: Request) => {
     // ⭐ v3.3 FIX: Override Midtrans env based on frontend is_production flag.
     // Frontend knows its own Snap.js environment — send it here so edge function
     // creates token in the SAME environment. Eliminates "token not found" mismatch.
+    // ⭐ v3.4 DIAGNOSTIC vars — hoisted so error response can include them
+    let keySource = "MIDTRANS_SERVER_KEY (default — is_production not sent)";
+    let keyPrefix = "";
+    let keyLen = 0;
+    let expectedPrefix = "SB-Mid-server";
+    let prefixMatch = false;
+    let frontendIsProduction: boolean | null = null;
+
     if (typeof is_production === "boolean") {
+      frontendIsProduction = is_production;
       MIDTRANS_SNAP_URL = is_production
         ? "https://app.midtrans.com/snap/v1/transactions"
         : "https://app.sandbox.midtrans.com/snap/v1/transactions";
@@ -133,13 +142,13 @@ serve(async (req: Request) => {
         MIDTRANS_SERVER_KEY = (sandboxKey || prodKey)!;
       }
       // ⭐ v3.4 DIAGNOSTIC: Log which key is being used (masked) to debug 401 Unauthorized
-      const keySource = is_production
+      keySource = is_production
         ? "MIDTRANS_SERVER_KEY (production)"
         : (sandboxKey ? "MIDTRANS_SERVER_KEY_SANDBOX" : "MIDTRANS_SERVER_KEY (fallback — SANDBOX key not set!)");
-      const keyPrefix = MIDTRANS_SERVER_KEY ? MIDTRANS_SERVER_KEY.substring(0, 12) : "(empty)";
-      const keyLen = MIDTRANS_SERVER_KEY ? MIDTRANS_SERVER_KEY.length : 0;
-      const expectedPrefix = is_production ? "Mid-server-" : "SB-Mid-server";
-      const prefixMatch = MIDTRANS_SERVER_KEY?.startsWith(expectedPrefix) ?? false;
+      keyPrefix = MIDTRANS_SERVER_KEY ? MIDTRANS_SERVER_KEY.substring(0, 12) : "(empty)";
+      keyLen = MIDTRANS_SERVER_KEY ? MIDTRANS_SERVER_KEY.length : 0;
+      expectedPrefix = is_production ? "Mid-server-" : "SB-Mid-server";
+      prefixMatch = MIDTRANS_SERVER_KEY?.startsWith(expectedPrefix) ?? false;
       console.log(`[create-midtrans-transaction] Environment: ${is_production ? "PRODUCTION" : "SANDBOX"} | Snap URL: ${MIDTRANS_SNAP_URL}`);
       console.log(`[create-midtrans-transaction] Server Key: source=${keySource} | prefix="${keyPrefix}..." | length=${keyLen} | expected="${expectedPrefix}" | match=${prefixMatch}`);
       if (!prefixMatch && MIDTRANS_SERVER_KEY) {
@@ -427,6 +436,21 @@ serve(async (req: Request) => {
         {
           error: snap.error_messages?.[0] || "Midtrans Snap API error",
           raw: snap,
+          // ⭐ v3.4 DIAGNOSTIC: Show key info in error response (visible in Network tab)
+          debug: {
+            environment: frontendIsProduction === null ? "not specified (default)" : (frontendIsProduction ? "PRODUCTION" : "SANDBOX"),
+            snap_url: MIDTRANS_SNAP_URL,
+            key_source: keySource,
+            key_prefix: keyPrefix + "...",
+            key_length: keyLen,
+            expected_prefix: expectedPrefix,
+            prefix_match: prefixMatch,
+            hint: !prefixMatch
+              ? `⚠️ Server key prefix mismatch! Expected "${expectedPrefix}" but got "${keyPrefix}". Check your Midtrans dashboard — sandbox keys start with "SB-Mid-server-", production keys start with "Mid-server-".`
+              : (keyLen === 0
+                ? "⚠️ Server key is EMPTY! Set the correct Supabase secret."
+                : "Key prefix looks correct. If still 401, the key value itself may be wrong (typo, expired, wrong dashboard)."),
+          },
         },
         r.status || 502
       );
