@@ -105,13 +105,72 @@ serve(async (req: Request) => {
   try {
     // ── AUTH: Cukup login (any role). Customer yang checkout butuh akses ini. ──
     // Admin/Pro/Verified semua boleh, asal sudah login.
-    // Optional: bisa tambah verify ownership order_id untuk hardening.
+    // ⭐ v3.8: Parse body FIRST (before auth) so self-test mode can run without login.
+    const requestBody = await req.json();
+    const { order_id, payment_method, is_production, mode } = requestBody;
+
+    // ⭐ v3.8 SELF-TEST MODE: Test keys already in Supabase secrets directly
+    // against Midtrans. No auth required — only exposes prefix/length/valid status.
+    // Invoke with: { "mode": "selftest" }
+    if (mode === "selftest") {
+      const sandboxKeyRaw = Deno.env.get("MIDTRANS_SERVER_KEY_SANDBOX");
+      const prodKeyRaw = Deno.env.get("MIDTRANS_SERVER_KEY");
+      const sandboxKey = sandboxKeyRaw?.trim();
+      const prodKey = prodKeyRaw?.trim();
+
+      const testKey = async (key: string | undefined, label: string, url: string) => {
+        if (!key) return { label, set: false, valid: false, error: "not set in secrets" };
+        const auth = btoa(`${key}:`);
+        const testOrderId = `selftest-${Date.now()}`;
+        try {
+          const r = await fetch(url, {
+            method: "POST",
+            headers: { Authorization: `Basic ${auth}`, "Content-Type": "application/json", Accept: "application/json" },
+            body: JSON.stringify({
+              transaction_details: { order_id: testOrderId, gross_amount: 10000 },
+              credit_card: { secure: true },
+            }),
+          });
+          const result = await r.json();
+          return {
+            label,
+            set: true,
+            valid: r.ok && !!result.token,
+            http_status: r.status,
+            key_prefix: key.substring(0, 13) + "...",
+            key_length: key.length,
+            had_whitespace: sandboxKeyRaw !== sandboxKey || prodKeyRaw !== prodKey,
+            response: result.token ? { token: result.token.substring(0, 20) + "...", redirect_url: result.redirect_url } : result,
+          };
+        } catch (e) {
+          return { label, set: true, valid: false, error: String(e) };
+        }
+      };
+
+      const sandboxResult = await testKey(sandboxKey, "MIDTRANS_SERVER_KEY_SANDBOX", "https://app.sandbox.midtrans.com/snap/v1/transactions");
+      const prodResult = await testKey(prodKey, "MIDTRANS_SERVER_KEY", "https://app.midtrans.com/snap/v1/transactions");
+
+      return json({
+        selftest: true,
+        timestamp: new Date().toISOString(),
+        sandbox: sandboxResult,
+        production: prodResult,
+        summary: {
+          sandbox_valid: sandboxResult.valid,
+          production_valid: prodResult.valid,
+          recommendation: sandboxResult.valid
+            ? "✅ Sandbox key is VALID. 401 issue is in how frontend calls the function (check is_production flag)."
+            : "❌ Sandbox key is INVALID. Re-copy Server Key from https://app.sandbox.midtrans.com/ → Settings → Access Keys → API Keys → Server Key (starts with SB-Mid-server-). Then: supabase secrets set MIDTRANS_SERVER_KEY_SANDBOX=<correct-key>",
+        },
+      }, 200);
+    }
+
+    // Auth check (skipped for self-test mode above)
     const authResult = await requireAuthenticated(req);
     if (!authResult.success) {
       return authResult.response!;
     }
 
-    const { order_id, payment_method, is_production } = await req.json();
     if (!order_id) return json({ error: "order_id is required" }, 400);
 
     // ⭐ v3.3 FIX: Override Midtrans env based on frontend is_production flag.
@@ -124,6 +183,7 @@ serve(async (req: Request) => {
     let expectedPrefix = "SB-Mid-server";
     let prefixMatch = false;
     let frontendIsProduction: boolean | null = null;
+    let hadWhitespace = false;
 
     if (typeof is_production === "boolean") {
       frontendIsProduction = is_production;
@@ -134,8 +194,11 @@ serve(async (req: Request) => {
         ? "https://api.midtrans.com"
         : "https://api.sandbox.midtrans.com";
       // Sandbox: use MIDTRANS_SERVER_KEY_SANDBOX if available, else fallback
-      const sandboxKey = Deno.env.get("MIDTRANS_SERVER_KEY_SANDBOX");
-      const prodKey = Deno.env.get("MIDTRANS_SERVER_KEY");
+      const sandboxKeyRaw = Deno.env.get("MIDTRANS_SERVER_KEY_SANDBOX");
+      const prodKeyRaw = Deno.env.get("MIDTRANS_SERVER_KEY");
+      // ⭐ v3.7 FIX: Trim whitespace (trailing space/newline from copy-paste causes 401)
+      const sandboxKey = sandboxKeyRaw?.trim();
+      const prodKey = prodKeyRaw?.trim();
       if (is_production) {
         MIDTRANS_SERVER_KEY = prodKey!;
       } else {
@@ -147,10 +210,13 @@ serve(async (req: Request) => {
         : (sandboxKey ? "MIDTRANS_SERVER_KEY_SANDBOX" : "MIDTRANS_SERVER_KEY (fallback — SANDBOX key not set!)");
       keyPrefix = MIDTRANS_SERVER_KEY ? MIDTRANS_SERVER_KEY.substring(0, 12) : "(empty)";
       keyLen = MIDTRANS_SERVER_KEY ? MIDTRANS_SERVER_KEY.length : 0;
+      // ⭐ v3.7: Detect whitespace issues (common cause of 401 despite correct prefix)
+      hadWhitespace = (sandboxKeyRaw !== sandboxKey) || (prodKeyRaw !== prodKey);
+      const hadWhitespaceLog = hadWhitespace ? " ⚠️ WHITESPACE DETECTED & TRIMMED" : "";
       expectedPrefix = is_production ? "Mid-server-" : "SB-Mid-server";
       prefixMatch = MIDTRANS_SERVER_KEY?.startsWith(expectedPrefix) ?? false;
       console.log(`[create-midtrans-transaction] Environment: ${is_production ? "PRODUCTION" : "SANDBOX"} | Snap URL: ${MIDTRANS_SNAP_URL}`);
-      console.log(`[create-midtrans-transaction] Server Key: source=${keySource} | prefix="${keyPrefix}..." | length=${keyLen} | expected="${expectedPrefix}" | match=${prefixMatch}`);
+      console.log(`[create-midtrans-transaction] Server Key: source=${keySource} | prefix="${keyPrefix}..." | length=${keyLen} | expected="${expectedPrefix}" | match=${prefixMatch}${hadWhitespaceLog}`);
       if (!prefixMatch && MIDTRANS_SERVER_KEY) {
         console.warn(`[create-midtrans-transaction] ⚠️ Server key prefix mismatch! Expected "${expectedPrefix}" but got "${keyPrefix}". This will cause 401 Unauthorized.`);
       }
@@ -419,16 +485,45 @@ serve(async (req: Request) => {
 
     // 5. POST to Midtrans Snap
     const auth = btoa(`${MIDTRANS_SERVER_KEY}:`);
-    const r = await fetch(MIDTRANS_SNAP_URL, {
-      method: "POST",
-      headers: {
-        Authorization: `Basic ${auth}`,
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      body: JSON.stringify(payload),
-    });
-    const snap = await r.json();
+
+    // ⭐ v3.9 FIX: Retry with unique suffix if "order_id has already been taken".
+    // Midtrans requires unique order_id per transaction. On retry checkout with
+    // same order, previous transaction may still exist (cancel failed / expired
+    // but not cleaned up). Append _t_<timestamp> to ensure uniqueness.
+    // Webhook strips _t_ suffix for DB lookup (backward compatible).
+    const postToMidtrans = async (orderIdToUse: string) => {
+      const retryPayload = { ...payload, transaction_details: { order_id: orderIdToUse, gross_amount } };
+      const resp = await fetch(MIDTRANS_SNAP_URL, {
+        method: "POST",
+        headers: {
+          Authorization: `Basic ${auth}`,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify(retryPayload),
+      });
+      return { resp, orderIdUsed: orderIdToUse };
+    };
+
+    // First attempt: use original order_id (UUID)
+    let { resp: r, orderIdUsed } = await postToMidtrans(order_id);
+    let snap = await r.json();
+
+    // If "order_id has already been taken" → retry with suffixed order_id
+    if (
+      (!r.ok || !snap.token) &&
+      snap.error_messages?.some((m: string) => m.includes("already been taken") || m.includes("order_id"))
+    ) {
+      const retryOrderId = `${order_id}_t_${Date.now()}`;
+      console.warn(`[midtrans] order_id "${order_id}" already taken — retrying with "${retryOrderId}"`);
+      const retryResult = await postToMidtrans(retryOrderId);
+      r = retryResult.resp;
+      orderIdUsed = retryResult.orderIdUsed;
+      snap = await r.json();
+    }
+
+    // Store the actual Midtrans order_id used (for webhook matching + status check)
+    console.log("[create-midtrans-transaction] Midtrans order_id used:", orderIdUsed);
 
     if (!r.ok || !snap.token) {
       console.error("[midtrans] snap API failed", { status: r.status, body: snap });
@@ -445,11 +540,14 @@ serve(async (req: Request) => {
             key_length: keyLen,
             expected_prefix: expectedPrefix,
             prefix_match: prefixMatch,
+            had_whitespace_trimmed: hadWhitespace,
             hint: !prefixMatch
               ? `⚠️ Server key prefix mismatch! Expected "${expectedPrefix}" but got "${keyPrefix}". Check your Midtrans dashboard — sandbox keys start with "SB-Mid-server-", production keys start with "Mid-server-".`
               : (keyLen === 0
                 ? "⚠️ Server key is EMPTY! Set the correct Supabase secret."
-                : "Key prefix looks correct. If still 401, the key value itself may be wrong (typo, expired, wrong dashboard)."),
+                : hadWhitespace
+                  ? "✅ Whitespace was detected and auto-trimmed. If still 401, the key value itself is wrong (wrong account, expired, or typo). Test with curl directly."
+                  : "Key prefix looks correct, no whitespace. If still 401, the key value itself is wrong (wrong account, expired, typo). Test with curl directly."),
           },
         },
         r.status || 502
