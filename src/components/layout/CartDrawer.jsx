@@ -2,33 +2,31 @@
 // ============================================================================
 // CartDrawer — slide-out panel dari kanan, menampilkan item keranjang.
 //
-// [v3.10] Switch kembali ke Midtrans Snap Checkout (dari DOKU):
-//   - Import & render CheckoutModalMidtrans (bukan CheckoutModalDoku)
-//   - CHECKOUT_INTENT_KEY di-import dari CheckoutModalMidtrans (exported there)
-//
-// [v3.1 FIX] updateQty + removeItem call signature:
-//   - OLD (BUGGY): updateQty(item.id, item.variantId, item.qty - 1)
-//                  → CartContext expect 2 args (id, delta), variantId jadi delta
-//                  → "abc-uuid" + qty = string concat → qty NaN → cart break
-//   - NEW (FIXED): updateQty(item.id, -1)  /  updateQty(item.id, 1)
-//                  → matches CartContext signature: updateQty(id, delta)
-//   - Same for removeItem: was removeItem(item.id, item.variantId) → now removeItem(item.id)
-//
-// Fitur auth-gated checkout:
+// Fitur auth-gated checkout (sesuai request user):
 //   - Tombol "Bayar Sekarang" cek auth terlebih dahulu.
 //   - Kalau belum login → simpan intent di sessionStorage, redirect ke /admin.
-//   - Setelah login/register berhasil → useEffect deteksi intent flag + user
-//     login → auto-buka CheckoutModalMidtrans.
+//   - Setelah login/register berhasil → AdminPage redirect balik ke page asal
+//     (state.from). useEffect di komponen ini deteksi intent flag + user login
+//     → auto-buka CheckoutModalMidtrans.
 //
 // Pemakaian:
 //   <CartDrawer isOpen={isCartOpen} onClose={() => setIsCartOpen(false)} showToast={showToast} />
+//
+// Catatan: CartDrawer juga dipakai sebagai "host" CheckoutModalMidtrans.
+//   Modal checkout di-render di sini (bukan di page parent), jadi auto-open
+//   logic juga tinggal di sini.
 // ============================================================================
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, lazy, Suspense } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useCart, rupiah } from '../../context/CartContext';
 import { useAuth } from '../../context/AuthContext';
-import CheckoutModalMidtrans, { CHECKOUT_INTENT_KEY } from '../ui/CheckoutModalMidtrans';
+// ⭐ v3.6 FIX: Lazy-load CheckoutModalMidtrans to break circular import.
+// Cycle was: CartDrawer → CheckoutModalMidtrans → CartContext → (transitive) → CartDrawer
+// Lazy import defers module evaluation to first render → no TDZ error.
+// CHECKOUT_INTENT_KEY imported from separate constants file (not from CheckoutModalMidtrans).
+import { CHECKOUT_INTENT_KEY } from '../../lib/checkoutConstants';
+const CheckoutModalMidtrans = lazy(() => import('../ui/CheckoutModalMidtrans'));
 
 // ── Minimalist line icons (1-color, stroke=currentColor) ──
 const IconClose = ({ className = 'w-5 h-5' }) => (
@@ -67,15 +65,17 @@ const IconBag = ({ className = 'w-16 h-16' }) => (
 );
 
 const CartDrawer = ({ isOpen, onClose, showToast }) => {
+  // ⭐ v3: pakai recomputeCartPrices untuk refresh prices saat drawer buka
   const { cart, totalQty, totalPrice, updateQty, removeItem, recomputeCartPrices } = useCart();
   const { user } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
-  // State untuk CheckoutModalMidtrans (modal pembayaran Midtrans Snap)
+  // State untuk CheckoutModalMidtrans (modal pembayaran)
   const [checkoutOpen, setCheckoutOpen] = useState(false);
 
   // ── Auto-open checkout modal setelah balik dari login ──
+  // Trigger: user balik ke page ini setelah login, dan intent flag masih ada.
   useEffect(() => {
     if (
       user &&
@@ -91,6 +91,7 @@ const CartDrawer = ({ isOpen, onClose, showToast }) => {
   useEffect(() => {
     if (isOpen) {
       document.body.style.overflow = 'hidden';
+      // ⭐ v3: Refresh cart prices saat drawer dibuka (discount mungkin expire/start)
       if (cart.length > 0) {
         recomputeCartPrices();
       }
@@ -101,14 +102,21 @@ const CartDrawer = ({ isOpen, onClose, showToast }) => {
   }, [isOpen, cart.length, recomputeCartPrices]);
 
   // ── Handler: tombol "Bayar Sekarang" ──
+  // Cek auth DULU sebelum buka checkout modal.
+  // Kalau belum login → simpan intent + redirect ke /admin.
+  // Kalau sudah login → tutup drawer DULU, baru buka checkout modal.
+  //   Urutan penting: onClose() harus dipanggil supaya drawer slide-out
+  //   dan tidak menumpuk di belakang modal checkout.
   const handleCheckout = () => {
     if (cart.length === 0) return;
 
     if (!user) {
       try {
         sessionStorage.setItem(CHECKOUT_INTENT_KEY, 'true');
-      } catch (e) {}
-      onClose?.();
+      } catch (e) {
+        // sessionStorage mungkin disabled — fail silently
+      }
+      onClose?.(); // tutup drawer
       navigate('/admin', {
         state: { from: location.pathname + location.search },
         replace: true,
@@ -116,6 +124,10 @@ const CartDrawer = ({ isOpen, onClose, showToast }) => {
       return;
     }
 
+    // User sudah login → tutup drawer, lalu buka checkout modal.
+    // onClose() trigger transition slide-out (300ms). Modal langsung buka
+    // barengan — visually clean karena drawer off-screen (translate-x-full)
+    // dan overlay-nya opacity-0 + pointer-events-none.
     onClose?.();
     setCheckoutOpen(true);
   };
@@ -141,7 +153,7 @@ const CartDrawer = ({ isOpen, onClose, showToast }) => {
 
       {/* Drawer panel */}
       <aside
-        className={`fixed top-0 right-0 h-[100dvh] w-[420px] max-w-full bg-white z-[3001]
+        className={`fixed top-0 right-0 h-[100dvh] w-full max-w-[420px] bg-white z-[3001]
                     shadow-2xl flex flex-col transition-transform duration-300 ease-out
                     ${isOpen ? 'translate-x-0' : 'translate-x-full'}`}
         role="dialog"
@@ -210,6 +222,7 @@ const CartDrawer = ({ isOpen, onClose, showToast }) => {
                     {item.variantName && (
                       <p className="text-[0.72rem] text-gray-500 mt-0.5">{item.variantName}</p>
                     )}
+                    {/* ⭐ v3: Price display dengan strike original + discounted + badge */}
                     <div className="flex items-baseline gap-1.5 mt-1 flex-wrap">
                       {item.isDiscounted && item.originalPrice > item.price && (
                         <>
@@ -229,16 +242,10 @@ const CartDrawer = ({ isOpen, onClose, showToast }) => {
                     </div>
 
                     <div className="flex items-center justify-between mt-2">
+                      {/* Qty stepper */}
                       <div className="flex items-center border border-[#eee] rounded-lg overflow-hidden">
-                        {/* ────────────────────────────────────────────────────────────────
-                            v3.1 FIX: updateQty call signature
-                            OLD (BUGGY): updateQty(item.id, item.variantId, item.qty - 1)
-                                         → CartContext expect 2 args (id, delta)
-                                         → variantId (UUID) jadi delta → qty + "uuid" = NaN
-                            NEW (FIXED): updateQty(item.id, -1)  ← matches CartContext
-                            ──────────────────────────────────────────────────────────────── */}
                         <button
-                          onClick={() => updateQty(item.id, -1)}
+                          onClick={() => updateQty(item.id, item.variantId, item.qty - 1)}
                           aria-label="Kurangi jumlah"
                           className="w-11 h-11 min-w-[44px] min-h-[44px] flex items-center justify-center text-eglux-primary hover:bg-[#faf6ef] transition-colors cursor-pointer border-none bg-transparent"
                         >
@@ -247,9 +254,8 @@ const CartDrawer = ({ isOpen, onClose, showToast }) => {
                         <span className="w-8 text-center text-[0.82rem] font-semibold text-eglux-primary">
                           {item.qty}
                         </span>
-                        {/* v3.1 FIX: updateQty(item.id, 1) instead of (item.id, variantId, qty+1) */}
                         <button
-                          onClick={() => updateQty(item.id, 1)}
+                          onClick={() => updateQty(item.id, item.variantId, item.qty + 1)}
                           aria-label="Tambah jumlah"
                           className="w-11 h-11 min-w-[44px] min-h-[44px] flex items-center justify-center text-eglux-primary hover:bg-[#faf6ef] transition-colors cursor-pointer border-none bg-transparent"
                         >
@@ -257,9 +263,9 @@ const CartDrawer = ({ isOpen, onClose, showToast }) => {
                         </button>
                       </div>
 
-                      {/* v3.1 FIX: removeItem(item.id) instead of (item.id, variantId) */}
+                      {/* Remove */}
                       <button
-                        onClick={() => removeItem(item.id)}
+                        onClick={() => removeItem(item.id, item.variantId)}
                         aria-label="Hapus item"
                         className="p-2.5 min-w-[44px] min-h-[44px] flex items-center justify-center text-gray-400 hover:text-red-500 transition-colors cursor-pointer border-none bg-transparent"
                       >
@@ -302,12 +308,15 @@ const CartDrawer = ({ isOpen, onClose, showToast }) => {
         )}
       </aside>
 
-      {/* Checkout Modal Midtrans — di-render di sini supaya auto-open bisa di-trigger langsung */}
-      <CheckoutModalMidtrans
-        isOpen={checkoutOpen}
-        onClose={() => setCheckoutOpen(false)}
-        showToast={showToast}
-      />
+      {/* Checkout Modal — di-render di sini supaya auto-open bisa di-trigger langsung */}
+      {/* ⭐ v3.6: Suspense wrapper required for lazy-loaded CheckoutModalMidtrans */}
+      <Suspense fallback={null}>
+        <CheckoutModalMidtrans
+          isOpen={checkoutOpen}
+          onClose={() => setCheckoutOpen(false)}
+          showToast={showToast}
+        />
+      </Suspense>
     </>
   );
 };

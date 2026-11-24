@@ -1,6 +1,3 @@
-
-File
-CheckoutModalMidtrans.jsx
 // src/components/ui/CheckoutModalMidtrans.jsx
 // ============================================================================
 // EGLUX Checkout — Midtrans Snap (payment) + Biteship (shipping aggregator)
@@ -48,15 +45,12 @@ import { ensureSnapLoaded } from '../../hooks/useMidtransSnap';
 import VoucherClaimModal from './VoucherClaimModal';
 import CourierLogo from './CourierLogo';
 import useAppSettings from '../../hooks/useAppSettings';
+// ⭐ v3.6 FIX: Import shared constants from separate file to break circular import.
+// CartDrawer/CartPage import these from here (re-exported below for backward compat).
+import { CHECKOUT_INTENT_KEY, TAX_PERCENT_FALLBACK } from '../../lib/checkoutConstants';
 
-// Key untuk sessionStorage — sinyal agar parent page auto-buka checkout modal
-// setelah user berhasil login dari halaman /admin.
-export const CHECKOUT_INTENT_KEY = 'eglux_checkout_intent';
-
-// ⭐ Tax fallback — dipakai HANYA kalau settings DB gagal load.
-// Default 3% (sesuai default SQL 043 app_settings.tax_percent)
-// Untuk ubah tax permanently tanpa admin panel: edit nilai ini + update DB.
-export const TAX_PERCENT_FALLBACK = 3;
+// Re-export for backward compat (files yang masih import dari CheckoutModalMidtrans)
+export { CHECKOUT_INTENT_KEY, TAX_PERCENT_FALLBACK };
 
 const INITIAL_FORM = {
 name: '',
